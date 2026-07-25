@@ -40,10 +40,10 @@ import {
   assertSheetsWebhookFresh,
   isSheetsWebhookConfigured,
   patchJobDkHaberInSheet,
-  formatSheetKazanc,
   patchJobSonDurumInSheet,
   SHEET_SON_DURUM,
 } from '@/features/jobs/services/sheetsExport'
+import { buildDailyReportCompanySheetFields } from '@/features/reporter/utils/dailyReportSheetSync'
 import type { JobDocument } from '@/features/jobs/types/job'
 import type { UserRole } from '@/config/roles'
 
@@ -146,14 +146,7 @@ async function syncDailyReportToSheetAndShot(
     }
     if (!job) continue
 
-    // Per-firma toplam gelir (UI “Toplam gelir”) → sheet KAZANÇ
-    const toplamGelirKurus =
-      Math.max(0, Number(company.vatBaseKurus) || 0) +
-      Math.max(0, Number(company.vatKurus) || 0)
-    const haberKazancKurus =
-      company.hasNews && company.newsTotalKurus != null
-        ? Math.max(0, Number(company.newsTotalKurus) || 0)
-        : 0
+    const sheetFields = buildDailyReportCompanySheetFields(company)
 
     try {
       // 1) Money + minutes in one patch (Apps Script v10+ writes KAZANÇ; status-only follows).
@@ -161,9 +154,7 @@ async function syncDailyReportToSheetAndShot(
         jobId: job.id,
         firmaAdi: job.companyName,
         tarih: formatJobScheduleTr(job.acquiredDate),
-        dk: String(Number(company.shootMinutes) || 0),
-        haber: haberKazancKurus > 0 ? formatSheetKazanc(haberKazancKurus) : '',
-        kazanc: toplamGelirKurus > 0 ? formatSheetKazanc(toplamGelirKurus) : '',
+        ...sheetFields,
       })
     } catch (error) {
       toast.warning(

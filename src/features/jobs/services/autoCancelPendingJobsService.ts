@@ -14,10 +14,20 @@ import type { UserRole } from '@/config/roles'
 const THROTTLE_MS = 15 * 60 * 1000
 const FETCH_LIMIT = 50
 const STORAGE_KEY = 'brain.autoCancelPendingJobs.lastRunMs'
-const STALE_AFTER_MS = 48 * 60 * 60 * 1000
+/** Pending jobs older than this are auto-cancelled. */
+export const STALE_PENDING_AFTER_MS = 48 * 60 * 60 * 1000
 
 export const AUTO_CANCEL_REVIEW_NOTE =
   'Otomatik iptal: 48 saat içinde konfirme edilmedi.'
+
+/** Pure check — used by auto-cancel and unit tests. */
+export function isStalePendingJob(
+  createdAtMs: number | null | undefined,
+  nowMs = Date.now(),
+): boolean {
+  if (createdAtMs == null || !Number.isFinite(createdAtMs)) return false
+  return nowMs - createdAtMs >= STALE_PENDING_AFTER_MS
+}
 
 function readLastRunMs(): number {
   try {
@@ -80,7 +90,7 @@ export async function autoCancelStalePendingJobs(
   for (const docSnap of snap.docs) {
     const job = docSnap.data()
     const createdMs = job.createdAt?.toMillis?.()
-    if (createdMs == null || now - createdMs < STALE_AFTER_MS) continue
+    if (!isStalePendingJob(createdMs, now)) continue
     try {
       await cancelJob(docSnap.id, actor, AUTO_CANCEL_REVIEW_NOTE)
       cancelled += 1
