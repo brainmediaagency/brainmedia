@@ -34,7 +34,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
   return (
     <div className="space-y-8">
       <AccordionSection
-        number="01"
+        number="02"
         title="Konfirme Bekleyen İşler"
         description={`${roleLabel} olarak medya planlama uzmanlarının gönderdiği işleri inceleyin. Her kayıtta işi ekleyen kullanıcı görünür.`}
         defaultOpen
@@ -49,7 +49,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
       </AccordionSection>
 
       <AccordionSection
-        number="02"
+        number="03"
         title="Çekim Durumu"
         description="Zamanı gelen konfirme işler burada listelenir; durum otomatik değişmez. Çekildi veya iptal için manuel onay gerekir."
         defaultOpen
@@ -75,7 +75,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
       </AccordionSection>
 
       <AccordionSection
-        number="03"
+        number="04"
         title="Konfirme İşler"
         description="Konfirme, çekilmiş veya iptal edilmiş iş kayıtları. Muhabire ilet ile takvime düşer; İstanbul 09:00–21:00 arasında iletilmeyenler otomatik iletilir."
       >
@@ -91,7 +91,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
       </AccordionSection>
 
       <AccordionSection
-        number="04"
+        number="05"
         title="Reddedilen İşler"
         description="Reddedilmiş iş kayıtları."
       >
