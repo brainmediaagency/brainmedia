@@ -1,4 +1,4 @@
-import { AlertCircle, ExternalLink, FileSpreadsheet } from 'lucide-react'
+import { ExternalLink, FileSpreadsheet } from 'lucide-react'
 import { getGoogleSheetsEmbedConfig } from '@/config/googleSheets'
 import { cn } from '@/lib/classNames'
 
@@ -74,45 +74,6 @@ export function SheetsExcelPanel({ className }: SheetsExcelPanelProps) {
           Sheets’te aç
           <ExternalLink className="size-3.5" aria-hidden="true" />
         </a>
-      </div>
-
-      <div
-        className="flex gap-3 rounded-[var(--radius-md)] border border-brand-cyan/40 bg-brand-cyan/10 px-3.5 py-3.5 text-sm leading-relaxed text-text-primary sm:border-brand-cyan/30 sm:bg-brand-cyan/8 sm:py-3"
-        role="note"
-      >
-        <AlertCircle
-          className="mt-0.5 size-4 shrink-0 text-brand-blue"
-          aria-hidden="true"
-        />
-        <div className="min-w-0 space-y-2">
-          <p className="sm:hidden">
-            <span className="font-semibold">Mobilde önerilen yol:</span>{' '}
-            gömülü pencere genelde oturum/çerez yüzünden çalışmaz.{' '}
-            <a
-              href={config.openUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-brand-blue underline decoration-brand-cyan/60 underline-offset-2"
-            >
-              Sheets’te aç
-            </a>{' '}
-            ile Google hesabınızda düzenleyin.
-          </p>
-          <p className="hidden sm:block">
-            <span className="font-medium">Fatura / tik çalışmıyorsa:</span>{' '}
-            gömülü pencerede Google oturumu veya üçüncü taraf çerezleri
-            engellenebiliyor (özellikle Safari / mobil).{' '}
-            <a
-              href={config.openUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-brand-blue underline decoration-brand-cyan/50 underline-offset-2 hover:decoration-brand-cyan"
-            >
-              Sheets’te aç
-            </a>{' '}
-            ile Google hesabınızla giriş yapıp kutuyu orada işaretleyin.
-          </p>
-        </div>
       </div>
 
       {/* Narrow viewports: de-emphasize iframe; full Sheets CTA is primary. */}
