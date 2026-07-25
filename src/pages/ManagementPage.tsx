@@ -25,8 +25,6 @@ export function ManagementPage() {
         subtitle="İş konfirmeleri, günlük takvim, bölge seçimi, ses kayıtları, kasa, aylık özet, Excel ve hesap yönetimi."
       />
 
-      <StorageUsageCard className="max-w-md" />
-
       <TabNav
         className="lg:hidden"
         items={[...MANAGEMENT_SECTIONS]}
@@ -39,7 +37,12 @@ export function ManagementPage() {
         {tab === 'approvals' && <ReviewDashboard roleLabel="Yönetim" />}
         {tab === 'schedule' && <DailyHourCalendar sectionNumber="01" />}
         {tab === 'regions' && <RegionPlannerPanel />}
-        {tab === 'voice' && <VoiceRecordingsListPanel sectionNumber="01" />}
+        {tab === 'voice' && (
+          <div className="space-y-6">
+            <StorageUsageCard className="max-w-md" />
+            <VoiceRecordingsListPanel sectionNumber="01" />
+          </div>
+        )}
         {tab === 'cash' && <CashRegisterPanel sectionNumber={1} />}
         {tab === 'stats' && <MonthlyStatsPanel sectionNumber="01" />}
         {tab === 'excel' && <SheetsExcelPanel />}
