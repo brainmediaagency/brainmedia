@@ -30,6 +30,8 @@ export type AppNotification = {
   body: string
   link: string
   createdAt: Timestamp | null
+  /** Actor who triggered the notification — inbox hides this from them. */
+  createdByUid: string
   /** UIDs who marked this read (shared + personal collections). */
   readByUids: string[]
   source: NotificationSource

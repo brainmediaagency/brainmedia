@@ -44,11 +44,20 @@ function mapNotification(
     body: String(data.body ?? ''),
     link: sanitizeAppPath(String(data.link ?? '/management')),
     createdAt: (data.createdAt as Timestamp | null | undefined) ?? null,
+    createdByUid: String(data.createdByUid ?? ''),
     readByUids: Array.isArray(readBy)
       ? readBy.map((u) => String(u)).filter(Boolean)
       : [],
     source,
   }
+}
+
+/** True when this inbox row was created by the viewing user (should not notify them). */
+export function isOwnActionNotification(
+  item: AppNotification,
+  uid: string,
+): boolean {
+  return Boolean(uid) && item.createdByUid === uid
 }
 
 function inboxPayload(input: {
@@ -83,6 +92,7 @@ export async function notifyManagement(
   input: NotifyManagementInput,
 ): Promise<void> {
   const payload = inboxPayload(input)
+  const actorUid = input.createdByUid.trim()
 
   try {
     await addDoc(collection(getDb(), MANAGEMENT_COLLECTION), payload)
@@ -95,6 +105,7 @@ export async function notifyManagement(
     body: payload.body,
     link: payload.link,
     audience: 'all',
+    excludeExternalIds: actorUid ? [actorUid] : undefined,
   })
 }
 
@@ -105,6 +116,7 @@ export async function notifyBroadcast(
   input: NotifyBroadcastInput,
 ): Promise<void> {
   const payload = inboxPayload(input)
+  const actorUid = input.createdByUid.trim()
 
   try {
     await addDoc(collection(getDb(), BROADCAST_COLLECTION), payload)
@@ -117,6 +129,7 @@ export async function notifyBroadcast(
     body: payload.body,
     link: payload.link,
     audience: 'all',
+    excludeExternalIds: actorUid ? [actorUid] : undefined,
   })
 }
 
@@ -126,6 +139,9 @@ export async function notifyBroadcast(
 export async function notifyUser(input: NotifyUserInput): Promise<void> {
   const recipientUid = input.recipientUid.trim()
   if (!recipientUid) return
+
+  // Never notify the actor about their own action.
+  if (recipientUid === input.createdByUid.trim()) return
 
   const payload = inboxPayload(input)
 

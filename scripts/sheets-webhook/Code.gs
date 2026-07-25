@@ -7,6 +7,7 @@
  * v14: pushNotify audience = all five app roles (OR), optional externalIds.
  * v15: onesignalUpsertUsers — create Audience users by Firebase uid + role tag.
  * v16: wipeBrainUploads — trash all files/folders under BrainUploads (management/coordinator).
+ * v17: pushNotify excludeExternalIds → OneSignal exclude_aliases.external_id (skip actor).
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -29,8 +30,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v16'
-var SCRIPT_VERSION = 'v16'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v17'
+var SCRIPT_VERSION = 'v17'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -980,6 +981,7 @@ function ensureJobIdHeader_(sheet) {
  * 1. body.externalIds: string[] → include_aliases.external_id (Firebase uid)
  * 2. body.roles: string[] → OR tag filters for those roles
  * 3. body.audience === 'all' or omitted → all five app roles (OR)
+ * Optional: body.excludeExternalIds → exclude_aliases.external_id (skip actor)
  */
 function handlePushNotify_(body) {
   var props = PropertiesService.getScriptProperties()
@@ -1020,13 +1022,28 @@ function handlePushNotify_(body) {
     firefox_icon: 'https://brain-c5fcb.web.app/brand/pwa/icon-192.png',
   }
 
-  var externalIds = normalizeExternalIds_(body.externalIds)
+  var excludeIds = normalizeExternalIds_(body.excludeExternalIds)
+  var externalIds = normalizeExternalIds_(body.externalIds).filter(function (id) {
+    return excludeIds.indexOf(id) === -1
+  })
   if (externalIds.length > 0) {
     // Targeted push by Firebase uid (OneSignal login / external_id)
     payload.include_aliases = { external_id: externalIds }
+  } else if (body.externalIds && normalizeExternalIds_(body.externalIds).length > 0) {
+    // All targeted recipients were excluded — no-op
+    return jsonResponse_({
+      ok: true,
+      skipped: true,
+      reason: 'all_recipients_excluded',
+      service: SCRIPT_SERVICE,
+      version: SCRIPT_VERSION,
+    })
   } else {
     var roles = normalizePushRoles_(body.roles, body.audience, ALL_PUSH_ROLES)
     payload.filters = buildRoleOrFilters_(roles)
+    if (excludeIds.length > 0) {
+      payload.exclude_aliases = { external_id: excludeIds }
+    }
   }
 
   var response = UrlFetchApp.fetch(

@@ -21,6 +21,8 @@ export async function sendOneSignalPush(input: {
   link: string
   /** When set, targets those Firebase uids (OneSignal external_id). Ignores role filters. */
   externalIds?: string[]
+  /** Firebase uids to exclude (OneSignal exclude_aliases.external_id). */
+  excludeExternalIds?: string[]
   /** Role tag filter; ignored when externalIds is set. Default: audience all five roles. */
   roles?: UserRole[]
   /** Explicit all-roles audience (Apps Script default). Ignored when externalIds is set. */
@@ -42,6 +44,11 @@ export async function sendOneSignalPush(input: {
     .filter(Boolean)
     .slice(0, 20)
 
+  const excludeExternalIds = (input.excludeExternalIds ?? [])
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+
   const payload: Record<string, unknown> = {
     idToken,
     action: 'pushNotify',
@@ -51,12 +58,20 @@ export async function sendOneSignalPush(input: {
   }
 
   if (externalIds.length > 0) {
-    payload.externalIds = externalIds
+    const targets = externalIds.filter((id) => !excludeExternalIds.includes(id))
+    if (targets.length === 0) return
+    payload.externalIds = targets
   } else if (input.roles && input.roles.length > 0) {
     payload.roles = input.roles
+    if (excludeExternalIds.length > 0) {
+      payload.excludeExternalIds = excludeExternalIds
+    }
   } else {
     // Default: all subscribed app roles (management|coordinator|media_planning|reporter|human_resources)
     payload.audience = input.audience ?? 'all'
+    if (excludeExternalIds.length > 0) {
+      payload.excludeExternalIds = excludeExternalIds
+    }
   }
 
   const body = JSON.stringify(payload)

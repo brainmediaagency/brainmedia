@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import {
   isNotificationUnread,
+  isOwnActionNotification,
   markAllNotificationsRead,
   markNotificationRead,
   mergeNotificationFeeds,
@@ -68,7 +69,7 @@ export function useNotificationInbox() {
         managementRef.current,
         broadcastRef.current,
         personalRef.current,
-      ])
+      ]).filter((item) => !isOwnActionNotification(item, uid))
       setItems(next)
       setError(null)
 
