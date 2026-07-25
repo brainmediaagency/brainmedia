@@ -273,7 +273,7 @@ export function DailyHourCalendar({
         </p>
       ) : null}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex min-w-0 flex-wrap items-end gap-2">
+        <div className="flex min-w-0 flex-nowrap items-end gap-2">
           <Button
             type="button"
             size="sm"
@@ -287,7 +287,7 @@ export function DailyHourCalendar({
           <FormField
             label="Gün"
             htmlFor={`daily-hour-calendar-day-${scope}`}
-            className="min-w-[10.5rem] flex-1 sm:max-w-[14rem] sm:flex-none"
+            className="w-auto min-w-0 max-w-[14rem] flex-1 basis-[10.5rem] sm:flex-none"
           >
             <DateInput
               id={`daily-hour-calendar-day-${scope}`}
