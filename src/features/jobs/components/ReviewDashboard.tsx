@@ -29,7 +29,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
     loadMorePending,
     loadMoreApproved,
     loadMoreRejected,
-    replaceJob,
+    syncJob,
   } = useApprovalQueues(true)
 
   return (
@@ -46,7 +46,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={pendingHasMore}
           loadingMore={pendingLoadingMore}
           onLoadMore={() => void loadMorePending()}
-          onJobUpdated={replaceJob}
+          onJobUpdated={syncJob}
         />
       </AccordionSection>
 
@@ -63,7 +63,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={approvedHasMore}
           loadingMore={approvedLoadingMore}
           onLoadMore={() => void loadMoreApproved()}
-          onJobUpdated={replaceJob}
+          onJobUpdated={syncJob}
         />
       </AccordionSection>
 
@@ -77,6 +77,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           jobs={approvedJobs}
           loading={approvedLoading}
           mode="actions"
+          onJobUpdated={syncJob}
         />
         {approvedHasMore ? (
           <div className="mt-3 flex justify-center">
@@ -106,7 +107,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={rejectedHasMore}
           loadingMore={rejectedLoadingMore}
           onLoadMore={() => void loadMoreRejected()}
-          onJobUpdated={replaceJob}
+          onJobUpdated={syncJob}
         />
       </AccordionSection>
     </div>

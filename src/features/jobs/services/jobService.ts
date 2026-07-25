@@ -589,21 +589,30 @@ async function transitionJob(
 
 const REVIEWER_ROLES: UserRole[] = ['coordinator', 'management']
 
+async function requireFreshJob(jobId: string): Promise<JobDocument> {
+  const fresh = await getJob(jobId)
+  if (!fresh) {
+    throw new UserFacingError('İş kaydı bulunamadı.')
+  }
+  return fresh
+}
+
 export async function approveJob(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
   plannedExecutionDate: string,
   reviewNote?: string,
-): Promise<void> {
+): Promise<JobDocument> {
   await transitionJob(jobId, 'approved', actor, reviewNote ?? null, {
     allowedRoles: REVIEWER_ROLES,
     plannedExecutionDate,
   })
 
+  const fresh = await requireFreshJob(jobId)
+
   try {
-    const snap = await getDoc(jobDocRef(jobId))
-    const company = snap.exists() ? String(snap.data().companyName ?? 'İş') : 'İş'
-    const ownerUid = snap.exists() ? String(snap.data().createdByUid ?? '') : ''
+    const company = fresh.companyName || 'İş'
+    const ownerUid = fresh.createdByUid
 
     void notifyManagement({
       type: 'job_approved',
@@ -628,37 +637,41 @@ export async function approveJob(
   } catch {
     /* notify is best-effort */
   }
+
+  return fresh
 }
 
 export async function rejectJob(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
   reviewNote?: string,
-): Promise<void> {
+): Promise<JobDocument> {
   await transitionJob(jobId, 'rejected', actor, reviewNote ?? null, {
     allowedRoles: REVIEWER_ROLES,
   })
 
-  try {
-    const snap = await getDoc(jobDocRef(jobId))
-    if (!snap.exists()) return
-    const company = String(snap.data().companyName ?? 'İş')
-    const ownerUid = String(snap.data().createdByUid ?? '')
-    if (!ownerUid) return
+  const fresh = await requireFreshJob(jobId)
 
-    const note = reviewNote?.trim() ?? ''
-    void notifyUser({
-      recipientUid: ownerUid,
-      type: 'job_rejected',
-      title: `"${company}" işiniz reddedildi.`,
-      body: note,
-      link: '/media-planning',
-      createdByUid: actor.uid,
-      createdByNameSnapshot: actor.fullName,
-    })
+  try {
+    const company = fresh.companyName || 'İş'
+    const ownerUid = fresh.createdByUid
+    if (ownerUid) {
+      const note = reviewNote?.trim() ?? ''
+      void notifyUser({
+        recipientUid: ownerUid,
+        type: 'job_rejected',
+        title: `"${company}" işiniz reddedildi.`,
+        body: note,
+        link: '/media-planning',
+        createdByUid: actor.uid,
+        createdByNameSnapshot: actor.fullName,
+      })
+    }
   } catch {
     /* notify is best-effort */
   }
+
+  return fresh
 }
 
 /** Move an approved job back to the pending approval queue. */
@@ -666,21 +679,23 @@ export async function revertJobToPending(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
   note?: string,
-): Promise<void> {
+): Promise<JobDocument> {
   await transitionJob(jobId, 'pending', actor, note ?? null, {
     allowedRoles: REVIEWER_ROLES,
   })
+  return requireFreshJob(jobId)
 }
 
 export async function markJobAsShot(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
-): Promise<void> {
+): Promise<JobDocument> {
   await transitionJob(jobId, 'shot', actor, null, {
     allowedRoles: REVIEWER_ROLES,
   })
 
   void notifyJobOwnerShot(jobId, actor)
+  return requireFreshJob(jobId)
 }
 
 const DAILY_REPORT_SHOT_ROLES: UserRole[] = [
@@ -760,7 +775,7 @@ export async function cancelJob(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
   reviewNote?: string,
-): Promise<void> {
+): Promise<JobDocument> {
   const note = reviewNote?.trim() ?? ''
   if (note.length < 3) {
     throw new UserFacingError('İptal için en az 3 karakterlik bir neden girin.')
@@ -768,6 +783,7 @@ export async function cancelJob(
   await transitionJob(jobId, 'cancelled', actor, note, {
     allowedRoles: REVIEWER_ROLES,
   })
+  return requireFreshJob(jobId)
 }
 
 /**

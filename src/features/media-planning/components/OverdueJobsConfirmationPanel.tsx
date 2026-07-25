@@ -33,12 +33,15 @@ export type OverdueJobsConfirmationPanelProps = {
    * `readonly` — media planner status view only.
    */
   mode?: 'actions' | 'readonly'
+  /** Keep parent queues in sync after shot / cancel. */
+  onJobUpdated?: (job: JobDocument) => void
 }
 
 export function OverdueJobsConfirmationPanel({
   jobs,
   loading,
   mode = 'actions',
+  onJobUpdated,
 }: OverdueJobsConfirmationPanelProps) {
   const { profile, claims, isOnline } = useAuth()
   const [now, setNow] = useState(() => new Date())
@@ -99,7 +102,8 @@ export function OverdueJobsConfirmationPanel({
     if (!confirming || !actor || !isOnline) return
     setSubmitting(true)
     try {
-      await markJobAsShot(confirming.id, actor)
+      const updated = await markJobAsShot(confirming.id, actor)
+      onJobUpdated?.(updated)
       toast.success('İş çekildi olarak işaretlendi.')
       void updateJobSonDurumInSheet(confirming, SHEET_SON_DURUM.shot).catch((error) => {
         toast.warning(
@@ -126,7 +130,8 @@ export function OverdueJobsConfirmationPanel({
     }
     setSubmitting(true)
     try {
-      await cancelJob(cancelling.id, actor, reason)
+      const updated = await cancelJob(cancelling.id, actor, reason)
+      onJobUpdated?.(updated)
       toast.success('İş iptal edildi.')
       void exportJobReviewToSheet(cancelling, 'cancelled', {
         reviewedByName: actor.fullName,

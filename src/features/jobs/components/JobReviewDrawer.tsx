@@ -178,7 +178,13 @@ export function JobReviewDrawer({
     try {
       const plannedExecutionDate = combineJobDateAndTime(plannedDate, executionTime)
       const reviewNote = note.trim() || undefined
-      await approveJob(job.id, actor, plannedExecutionDate, reviewNote)
+      const updated = await approveJob(
+        job.id,
+        actor,
+        plannedExecutionDate,
+        reviewNote,
+      )
+      onJobUpdated?.(updated)
       toast.success('İş konfirme edildi.')
       void exportJobReviewToSheet(job, 'approved', {
         plannedExecutionDate,
@@ -206,7 +212,8 @@ export function JobReviewDrawer({
     setSubmitting(true)
     try {
       const reviewNote = note.trim() || undefined
-      await rejectJob(job.id, actor, reviewNote)
+      const updated = await rejectJob(job.id, actor, reviewNote)
+      onJobUpdated?.(updated)
       toast.success('İş reddedildi.')
       void upsertJobRowToSheet(job, SHEET_SON_DURUM.rejected, {
         reviewedByName: actor.fullName,
@@ -232,7 +239,12 @@ export function JobReviewDrawer({
     if (!actor || !isOnline || !canReview) return
     setSubmitting(true)
     try {
-      await revertJobToPending(job.id, actor, note.trim() || undefined)
+      const updated = await revertJobToPending(
+        job.id,
+        actor,
+        note.trim() || undefined,
+      )
+      onJobUpdated?.(updated)
       toast.success('İş konfirme beklemeye geri alındı.')
       resetLocalState()
       onClose()

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import { toast } from 'sonner'
 import {
   fetchAllApprovedJobsPage,
@@ -24,6 +31,56 @@ const emptyQueue = (): QueueState => ({
   loading: true,
   loadingMore: false,
 })
+
+function withoutJob(jobs: JobDocument[], jobId: string): JobDocument[] {
+  return jobs.filter((j) => j.id !== jobId)
+}
+
+function upsertFront(jobs: JobDocument[], job: JobDocument): JobDocument[] {
+  return [job, ...withoutJob(jobs, job.id)]
+}
+
+/**
+ * Route a fresh job into the correct one-shot queue after any mutation
+ * (approve / reject / revert / forward / shot / cancel / field edit).
+ */
+function applyJobToQueues(
+  job: JobDocument,
+  setPending: Dispatch<SetStateAction<QueueState>>,
+  setApproved: Dispatch<SetStateAction<QueueState>>,
+  setRejected: Dispatch<SetStateAction<QueueState>>,
+) {
+  const id = job.id
+
+  if (job.status === 'pending') {
+    setPending((s) => ({ ...s, jobs: upsertFront(s.jobs, job) }))
+    setApproved((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    setRejected((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    return
+  }
+
+  if (job.status === 'rejected') {
+    setRejected((s) => ({ ...s, jobs: upsertFront(s.jobs, job) }))
+    setPending((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    setApproved((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    return
+  }
+
+  if (
+    job.status === 'approved' ||
+    job.status === 'shot' ||
+    job.status === 'cancelled'
+  ) {
+    setApproved((s) => ({ ...s, jobs: upsertFront(s.jobs, job) }))
+    setPending((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    setRejected((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    return
+  }
+
+  setPending((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+  setApproved((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+  setRejected((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+}
 
 export function useApprovalQueues(enabled = true) {
   const [pending, setPending] = useState<QueueState>(emptyQueue)
@@ -149,15 +206,12 @@ export function useApprovalQueues(enabled = true) {
     }
   }, [rejected.hasMore, rejected.loadingMore, rejected.cursor])
 
-  /** Keep one-shot queue lists in sync after inline pending-job edits. */
-  const replaceJob = useCallback((job: JobDocument) => {
-    const patch = (s: QueueState): QueueState => ({
-      ...s,
-      jobs: s.jobs.map((j) => (j.id === job.id ? job : j)),
-    })
-    setPending(patch)
-    setApproved(patch)
-    setRejected(patch)
+  /**
+   * Keep pending / approved / rejected lists aligned with Firestore after
+   * any mutation on this page (status moves included).
+   */
+  const syncJob = useCallback((job: JobDocument) => {
+    applyJobToQueues(job, setPending, setApproved, setRejected)
   }, [])
 
   return {
@@ -176,6 +230,8 @@ export function useApprovalQueues(enabled = true) {
     loadMorePending,
     loadMoreApproved,
     loadMoreRejected,
-    replaceJob,
+    syncJob,
+    /** @deprecated Prefer syncJob — same behavior for in-place field edits. */
+    replaceJob: syncJob,
   }
 }
