@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import type { JobDocument } from '@/features/jobs/types/job'
-import { forwardJobToReporter } from '@/features/jobs/services/jobService'
+import {
+  forwardJobToReporter,
+  getJob,
+} from '@/features/jobs/services/jobService'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { MobileDataCard } from '@/components/ui/MobileDataCard'
@@ -209,6 +212,7 @@ export type ReviewedJobsQueueProps = {
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
+  onJobUpdated?: (job: JobDocument) => void
 }
 
 function toBadgeStatus(status: JobDocument['status']): StatusBadgeStatus {
@@ -223,9 +227,10 @@ export function ReviewedJobsQueue({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  onJobUpdated,
 }: ReviewedJobsQueueProps) {
   const { profile, claims } = useAuth()
-  const [selectedJob, setSelectedJob] = useState<JobDocument | null>(null)
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [forwardingId, setForwardingId] = useState<string | null>(null)
   const {
     page,
@@ -238,6 +243,17 @@ export function ReviewedJobsQueue({
     showControls,
   } = useClientPagination(jobs)
 
+  const selectedJob =
+    selectedJobId === null
+      ? null
+      : (jobs.find((job) => job.id === selectedJobId) ?? null)
+
+  useEffect(() => {
+    if (selectedJobId && !jobs.some((job) => job.id === selectedJobId)) {
+      setSelectedJobId(null)
+    }
+  }, [jobs, selectedJobId])
+
   const actorRole = claims?.role ?? profile?.role
   const canForward =
     actorRole === 'management' || actorRole === 'coordinator'
@@ -246,15 +262,23 @@ export function ReviewedJobsQueue({
     if (!profile || !actorRole || !canForward) return
     setForwardingId(job.id)
     try {
-      await forwardJobToReporter(job.id, {
+      const updated = await forwardJobToReporter(job.id, {
         uid: profile.uid,
         fullName: profile.fullName,
         role: actorRole,
       })
+      onJobUpdated?.(updated)
       toast.success('İş muhabir çekim takvimine iletildi.')
       // Muhabire ilet Excel SON DURUM yazmaz (yalnızca Konfirme/Reddedildi/Çekildi/İptal).
     } catch (error) {
-      toast.error(mapAppError(error, 'İş muhabire iletilemedi.'))
+      // Recover stale list if Firestore already forwarded but UI had not refreshed.
+      const fresh = await getJob(job.id).catch(() => null)
+      if (fresh?.forwardedToReporter) {
+        onJobUpdated?.(fresh)
+        toast.success('İş muhabir çekim takvimine iletildi.')
+      } else {
+        toast.error(mapAppError(error, 'İş muhabire iletilemedi.'))
+      }
     } finally {
       setForwardingId(null)
     }
@@ -326,7 +350,7 @@ export function ReviewedJobsQueue({
                       type="button"
                       size="sm"
                       variant="secondary"
-                      onClick={() => setSelectedJob(job)}
+                      onClick={() => setSelectedJobId(job.id)}
                     >
                       Detay
                     </Button>
@@ -387,7 +411,7 @@ export function ReviewedJobsQueue({
                   size="sm"
                   variant="secondary"
                   className="w-full"
-                  onClick={() => setSelectedJob(job)}
+                  onClick={() => setSelectedJobId(job.id)}
                 >
                   Detay
                 </Button>
@@ -441,9 +465,10 @@ export function ReviewedJobsQueue({
 
       <JobReviewDrawer
         job={selectedJob}
-        open={selectedJob !== null}
-        onClose={() => setSelectedJob(null)}
+        open={selectedJobId !== null}
+        onClose={() => setSelectedJobId(null)}
         mode="reviewed"
+        onJobUpdated={onJobUpdated}
       />
     </>
   )

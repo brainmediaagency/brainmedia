@@ -811,7 +811,7 @@ export async function cancelOwnJob(
 export async function forwardJobToReporter(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
-): Promise<void> {
+): Promise<JobDocument> {
   if (!REVIEWER_ROLES.includes(actor.role)) {
     throw new UserFacingError('Bu işlem yalnızca yönetim veya koordinatör içindir.')
   }
@@ -836,6 +836,12 @@ export async function forwardJobToReporter(
       updatedAt: serverTimestamp(),
     })
   })
+
+  const fresh = await getJob(jobId)
+  if (!fresh) {
+    throw new UserFacingError('İş muhabire iletildi ancak yeniden okunamadı.')
+  }
+  return fresh
 }
 
 /** Muhabir çekim takvimi: yalnızca iletilmiş konfirme işler. */

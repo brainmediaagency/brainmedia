@@ -63,6 +63,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={approvedHasMore}
           loadingMore={approvedLoadingMore}
           onLoadMore={() => void loadMoreApproved()}
+          onJobUpdated={replaceJob}
         />
       </AccordionSection>
 
@@ -105,6 +106,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={rejectedHasMore}
           loadingMore={rejectedLoadingMore}
           onLoadMore={() => void loadMoreRejected()}
+          onJobUpdated={replaceJob}
         />
       </AccordionSection>
     </div>
