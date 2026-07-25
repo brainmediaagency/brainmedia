@@ -34,7 +34,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
   return (
     <div className="space-y-8">
       <AccordionSection
-        number="02"
+        number="01"
         title="Konfirme Bekleyen İşler"
         description={`${roleLabel} olarak medya planlama uzmanlarının gönderdiği işleri inceleyin. Her kayıtta işi ekleyen kullanıcı görünür.`}
         defaultOpen
@@ -45,6 +45,22 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={pendingHasMore}
           loadingMore={pendingLoadingMore}
           onLoadMore={() => void loadMorePending()}
+        />
+      </AccordionSection>
+
+      <AccordionSection
+        number="02"
+        title="Konfirme İşler"
+        description="Konfirme, çekilmiş veya iptal edilmiş iş kayıtları. Muhabire ilet ile takvime düşer; İstanbul 09:00–21:00 arasında iletilmeyenler otomatik iletilir."
+      >
+        <ReviewedJobsQueue
+          jobs={approvedJobs}
+          loading={approvedLoading}
+          emptyTitle="Konfirme iş yok"
+          emptyDescription="Henüz konfirme iş kaydı bulunmuyor."
+          hasMore={approvedHasMore}
+          loadingMore={approvedLoadingMore}
+          onLoadMore={() => void loadMoreApproved()}
         />
       </AccordionSection>
 
@@ -76,22 +92,6 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
 
       <AccordionSection
         number="04"
-        title="Konfirme İşler"
-        description="Konfirme, çekilmiş veya iptal edilmiş iş kayıtları. Muhabire ilet ile takvime düşer; İstanbul 09:00–21:00 arasında iletilmeyenler otomatik iletilir."
-      >
-        <ReviewedJobsQueue
-          jobs={approvedJobs}
-          loading={approvedLoading}
-          emptyTitle="Konfirme iş yok"
-          emptyDescription="Henüz konfirme iş kaydı bulunmuyor."
-          hasMore={approvedHasMore}
-          loadingMore={approvedLoadingMore}
-          onLoadMore={() => void loadMoreApproved()}
-        />
-      </AccordionSection>
-
-      <AccordionSection
-        number="05"
         title="Reddedilen İşler"
         description="Reddedilmiş iş kayıtları."
       >
