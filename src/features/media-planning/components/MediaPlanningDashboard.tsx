@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { Card } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -10,6 +11,8 @@ import { OverdueJobsConfirmationPanel } from '@/features/media-planning/componen
 import { TeyitYonergesiCard } from '@/features/media-planning/components/TeyitYonergesiCard'
 import { useJobLists } from '@/features/media-planning/hooks/useJobLists'
 import { useMediaPlannerSelection } from '@/features/media-planning/hooks/useMediaPlannerSelection'
+import { subscribeScheduleJobs } from '@/features/jobs/services/jobService'
+import type { JobDocument } from '@/features/jobs/types/job'
 import type { MEDIA_PLANNING_SECTIONS } from '@/config/navSections'
 import { Users } from 'lucide-react'
 
@@ -23,10 +26,13 @@ function MediaPlannerOwnDashboard({ tab }: MediaPlannerOwnDashboardProps) {
   const { user, profile, claims } = useAuth()
   const viewerRole = claims?.role ?? profile?.role
   const isMediaPlanning = viewerRole === 'media_planning'
+  const isHr = viewerRole === 'human_resources'
+  /** İK çekim durumunda tüm işleri görür — planlamacı seçici yok. */
+  const hrOrgOverdue = isHr && tab === 'overdue'
   const canSelectPlanner =
     viewerRole === 'management' ||
     viewerRole === 'coordinator' ||
-    viewerRole === 'human_resources'
+    (isHr && !hrOrgOverdue)
 
   const selection = useMediaPlannerSelection()
   const viewedUid = isMediaPlanning
@@ -34,7 +40,26 @@ function MediaPlannerOwnDashboard({ tab }: MediaPlannerOwnDashboardProps) {
     : selection.selectedUid
 
   const { pendingJobs, approvedJobs, pendingLoading, approvedLoading } =
-    useJobLists(viewedUid)
+    useJobLists(hrOrgOverdue ? null : viewedUid)
+
+  const [orgScheduleJobs, setOrgScheduleJobs] = useState<JobDocument[]>([])
+  const [orgScheduleLoading, setOrgScheduleLoading] = useState(false)
+
+  useEffect(() => {
+    if (!hrOrgOverdue) {
+      setOrgScheduleJobs([])
+      setOrgScheduleLoading(false)
+      return
+    }
+    setOrgScheduleLoading(true)
+    return subscribeScheduleJobs(
+      (jobs) => {
+        setOrgScheduleJobs(jobs)
+        setOrgScheduleLoading(false)
+      },
+      () => setOrgScheduleLoading(false),
+    )
+  }, [hrOrgOverdue])
 
   if (!user?.uid) {
     return (
@@ -74,7 +99,7 @@ function MediaPlannerOwnDashboard({ tab }: MediaPlannerOwnDashboardProps) {
         <EmptyState
           icon={Users}
           title="Planlamacı seçin"
-          description="Çekim durumu, iş kayıtları ve MPU tablosu için bir medya planlamacı seçin."
+          description="İş kayıtları ve MPU tablosu için bir medya planlamacı seçin."
         />
       ) : null}
 
@@ -84,12 +109,16 @@ function MediaPlannerOwnDashboard({ tab }: MediaPlannerOwnDashboardProps) {
             <SectionHeader
               number="01"
               title="Çekim Durumu"
-              description="Planlanan çekim zamanı geçmiş işlerin durumunu takip edin. Zamanı gelince otomatik Çekildi olmaz; sonuçlandırma koordinatör veya yönetim tarafından yapılır."
+              description={
+                hrOrgOverdue
+                  ? 'Tüm planlamacıların planlanan çekim zamanı geçmiş işleri. Sonuçlandırma koordinatör veya yönetim tarafından yapılır.'
+                  : 'Planlanan çekim zamanı geçmiş işlerin durumunu takip edin. Zamanı gelince otomatik Çekildi olmaz; sonuçlandırma koordinatör veya yönetim tarafından yapılır.'
+              }
             />
             <div className="mt-4">
               <OverdueJobsConfirmationPanel
-                jobs={approvedJobs}
-                loading={approvedLoading}
+                jobs={hrOrgOverdue ? orgScheduleJobs : approvedJobs}
+                loading={hrOrgOverdue ? orgScheduleLoading : approvedLoading}
                 mode="readonly"
               />
             </div>
