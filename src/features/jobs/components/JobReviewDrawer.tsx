@@ -50,6 +50,8 @@ export type JobReviewDrawerProps = {
   open: boolean
   onClose: () => void
   mode: 'pending' | 'reviewed'
+  /** Called after a successful pending-field edit (fresh job from Firestore). */
+  onJobUpdated?: (job: JobDocument) => void
 }
 
 /** Matches günlük takvim window: full + half hours 09:00–21:00. */
@@ -91,6 +93,7 @@ export function JobReviewDrawer({
   open,
   onClose,
   mode,
+  onJobUpdated,
 }: JobReviewDrawerProps) {
   const { profile, claims, isOnline } = useAuth()
   const [note, setNote] = useState('')
@@ -105,7 +108,11 @@ export function JobReviewDrawer({
   const canEditFields =
     mode === 'pending' && canReview && isOnline && job?.status === 'pending'
 
-  const fieldEdit = useJobReviewFieldEdit(job, Boolean(canEditFields))
+  const fieldEdit = useJobReviewFieldEdit(
+    job,
+    Boolean(canEditFields),
+    onJobUpdated,
+  )
 
   useEffect(() => {
     setNote('')
@@ -271,7 +278,7 @@ export function JobReviewDrawer({
           const nameField = `contactName:${index}` as const
           const phoneField = `contactPhone:${index}` as const
           return (
-            <div key={`${contact.mobilePhone}-${index}`} className="border-b border-border py-3">
+            <div key={`contact-${index}`} className="border-b border-border py-3">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
                 Yetkili {index + 1}
               </p>

@@ -166,7 +166,11 @@ function validateAndBuildPayload(
   return base
 }
 
-export function useJobReviewFieldEdit(job: JobDocument | null, enabled: boolean) {
+export function useJobReviewFieldEdit(
+  job: JobDocument | null,
+  enabled: boolean,
+  onUpdated?: (job: JobDocument) => void,
+) {
   const [editingField, setEditingField] = useState<JobReviewEditField | null>(null)
   const [draft, setDraftState] = useState<DraftValue>('')
   const [error, setError] = useState<string | null>(null)
@@ -207,7 +211,8 @@ export function useJobReviewFieldEdit(job: JobDocument | null, enabled: boolean)
     setError(null)
     try {
       const payload = validateAndBuildPayload(job, editingField, draft)
-      await updatePendingJob(payload)
+      const updated = await updatePendingJob(payload)
+      onUpdated?.(updated)
       toast.success('İş kaydı güncellendi.')
       setEditingField(null)
       setDraftState('')
@@ -218,7 +223,7 @@ export function useJobReviewFieldEdit(job: JobDocument | null, enabled: boolean)
     } finally {
       setSaving(false)
     }
-  }, [draft, editingField, enabled, job])
+  }, [draft, editingField, enabled, job, onUpdated])
 
   return {
     editingField,

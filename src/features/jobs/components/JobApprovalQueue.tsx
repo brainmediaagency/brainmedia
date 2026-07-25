@@ -23,6 +23,7 @@ export type JobApprovalQueueProps = {
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
+  onJobUpdated?: (job: JobDocument) => void
 }
 
 export function JobApprovalQueue({
@@ -31,6 +32,7 @@ export function JobApprovalQueue({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  onJobUpdated,
 }: JobApprovalQueueProps) {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const {
@@ -193,6 +195,7 @@ export function JobApprovalQueue({
         open={selectedJobId !== null}
         onClose={() => setSelectedJobId(null)}
         mode="pending"
+        onJobUpdated={onJobUpdated}
       />
     </>
   )

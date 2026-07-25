@@ -29,6 +29,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
     loadMorePending,
     loadMoreApproved,
     loadMoreRejected,
+    replaceJob,
   } = useApprovalQueues(true)
 
   return (
@@ -45,6 +46,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           hasMore={pendingHasMore}
           loadingMore={pendingLoadingMore}
           onLoadMore={() => void loadMorePending()}
+          onJobUpdated={replaceJob}
         />
       </AccordionSection>
 

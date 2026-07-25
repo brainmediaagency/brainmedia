@@ -149,6 +149,17 @@ export function useApprovalQueues(enabled = true) {
     }
   }, [rejected.hasMore, rejected.loadingMore, rejected.cursor])
 
+  /** Keep one-shot queue lists in sync after inline pending-job edits. */
+  const replaceJob = useCallback((job: JobDocument) => {
+    const patch = (s: QueueState): QueueState => ({
+      ...s,
+      jobs: s.jobs.map((j) => (j.id === job.id ? job : j)),
+    })
+    setPending(patch)
+    setApproved(patch)
+    setRejected(patch)
+  }, [])
+
   return {
     pendingJobs: pending.jobs,
     approvedJobs: approved.jobs,
@@ -165,5 +176,6 @@ export function useApprovalQueues(enabled = true) {
     loadMorePending,
     loadMoreApproved,
     loadMoreRejected,
+    replaceJob,
   }
 }

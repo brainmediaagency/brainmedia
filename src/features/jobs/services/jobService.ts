@@ -265,7 +265,9 @@ export type UpdatePendingJobInput = {
   agreedAmountKurus: number
 }
 
-export async function updatePendingJob(input: UpdatePendingJobInput): Promise<void> {
+export async function updatePendingJob(
+  input: UpdatePendingJobInput,
+): Promise<JobDocument> {
   const first = input.contacts[0]
   if (!first) {
     throw new UserFacingError('En az bir yetkili girilmelidir.')
@@ -290,7 +292,7 @@ export async function updatePendingJob(input: UpdatePendingJobInput): Promise<vo
     contacts: input.contacts.map((c) => ({
       name: c.name.trim(),
       mobilePhone: c.mobilePhone,
-      workPhone: c.workPhone,
+      workPhone: c.workPhone ?? null,
     })),
     province: input.province,
     district: input.district,
@@ -301,6 +303,12 @@ export async function updatePendingJob(input: UpdatePendingJobInput): Promise<vo
     agreedAmountKurus: input.agreedAmountKurus,
     updatedAt: serverTimestamp(),
   })
+
+  const fresh = await getJob(input.jobId)
+  if (!fresh) {
+    throw new UserFacingError('İş kaydı güncellendi ancak yeniden okunamadı.')
+  }
+  return fresh
 }
 
 export function subscribePendingJobs(
