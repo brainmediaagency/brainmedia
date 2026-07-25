@@ -119,6 +119,84 @@
   textarea {
     font: inherit;
   }
+
+  /*
+   * Native date/time fields ignore normal `color` in WebKit when disabled.
+   * Force readable fill colors for both themes (incl. locked create-form dates).
+   */
+  input[type='date'],
+  input[type='datetime-local'],
+  input[type='time'],
+  input[type='month'] {
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+    color-scheme: light;
+    opacity: 1;
+  }
+
+  html.dark input[type='date'],
+  html.dark input[type='datetime-local'],
+  html.dark input[type='time'],
+  html.dark input[type='month'] {
+    color-scheme: dark;
+  }
+
+  input[type='date']:disabled,
+  input[type='date']:read-only,
+  input[type='datetime-local']:disabled,
+  input[type='datetime-local']:read-only,
+  input[type='time']:disabled,
+  input[type='time']:read-only,
+  input[type='month']:disabled,
+  input[type='month']:read-only {
+    opacity: 1;
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+    background-color: var(--surface-muted);
+    border-color: var(--border);
+  }
+
+  input[type='date']::-webkit-datetime-edit,
+  input[type='date']::-webkit-datetime-edit-fields-wrapper,
+  input[type='date']::-webkit-datetime-edit-text,
+  input[type='date']::-webkit-datetime-edit-month-field,
+  input[type='date']::-webkit-datetime-edit-day-field,
+  input[type='date']::-webkit-datetime-edit-year-field,
+  input[type='datetime-local']::-webkit-datetime-edit,
+  input[type='datetime-local']::-webkit-datetime-edit-fields-wrapper,
+  input[type='datetime-local']::-webkit-datetime-edit-text,
+  input[type='datetime-local']::-webkit-datetime-edit-month-field,
+  input[type='datetime-local']::-webkit-datetime-edit-day-field,
+  input[type='datetime-local']::-webkit-datetime-edit-year-field,
+  input[type='datetime-local']::-webkit-datetime-edit-hour-field,
+  input[type='datetime-local']::-webkit-datetime-edit-minute-field,
+  input[type='datetime-local']::-webkit-datetime-edit-ampm-field,
+  input[type='time']::-webkit-datetime-edit,
+  input[type='time']::-webkit-datetime-edit-fields-wrapper,
+  input[type='time']::-webkit-datetime-edit-text,
+  input[type='time']::-webkit-datetime-edit-hour-field,
+  input[type='time']::-webkit-datetime-edit-minute-field,
+  input[type='time']::-webkit-datetime-edit-ampm-field {
+    color: var(--text-primary);
+    -webkit-text-fill-color: var(--text-primary);
+    opacity: 1;
+  }
+
+  input[type='date']::-webkit-calendar-picker-indicator,
+  input[type='datetime-local']::-webkit-calendar-picker-indicator,
+  input[type='time']::-webkit-calendar-picker-indicator,
+  input[type='month']::-webkit-calendar-picker-indicator {
+    opacity: 0.75;
+    cursor: pointer;
+  }
+
+  input[type='date']:disabled::-webkit-calendar-picker-indicator,
+  input[type='datetime-local']:disabled::-webkit-calendar-picker-indicator,
+  input[type='time']:disabled::-webkit-calendar-picker-indicator,
+  input[type='month']:disabled::-webkit-calendar-picker-indicator {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 }
 
 @layer utilities {
