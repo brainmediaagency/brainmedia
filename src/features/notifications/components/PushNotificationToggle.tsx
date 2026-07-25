@@ -94,7 +94,6 @@ export function PushNotificationToggle({
         checked={optedIn}
         onChange={(v) => void onChange(v)}
         disabled={busy || !ready}
-        label="Push bildirimleri"
         aria-label={
           optedIn ? 'Push bildirimlerini kapat' : 'Push bildirimlerini aç'
         }
