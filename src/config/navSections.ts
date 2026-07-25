@@ -58,6 +58,7 @@ export const COORDINATOR_SECTIONS = [
 
 export const HR_OWN_SECTIONS = [
   { id: 'attendance', label: 'Mesai', icon: Clock },
+  { id: 'schedule', label: 'Çekim Takvimi', icon: CalendarDays },
   { id: 'jobs', label: 'İş Özeti', icon: BarChart3 },
   { id: 'reports', label: 'Raporlar', icon: FileText },
   { id: 'hiring', label: 'İşe Alım', icon: UserRound },

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
@@ -182,6 +182,7 @@ export function DailyHourCalendar({
   const [loading, setLoading] = useState(true)
   const [fetchTruncated, setFetchTruncated] = useState(false)
   const [fetchLimit, setFetchLimit] = useState(0)
+  const didAutoJumpRef = useRef(false)
 
   useEffect(() => {
     if (initialDay) setDay(initialDay)
@@ -216,6 +217,28 @@ export function DailyHourCalendar({
     )
   }, [isReporterScope])
 
+  /**
+   * Reporter/İK calendar defaults to “today”. If all forwarded jobs are on
+   * another day, jump once to the nearest day that has work so the list is not
+   * mistaken for a permissions/empty bug.
+   */
+  useEffect(() => {
+    if (loading || didAutoJumpRef.current || initialDay) return
+    if (!isReporterScope || jobs.length === 0) return
+
+    const today = todayDateOnlyIstanbul()
+    if (day !== today) return
+    if (jobs.some((job) => jobDay(job) === today)) return
+
+    const days = [...new Set(jobs.map(jobDay))].sort()
+    const upcoming = days.find((d) => d >= today)
+    const target = upcoming ?? days[days.length - 1]
+    if (target && target !== day) {
+      didAutoJumpRef.current = true
+      setDay(target)
+    }
+  }, [loading, jobs, day, initialDay, isReporterScope])
+
   const dayJobs = useMemo(() => {
     return jobs
       .filter((job) => jobDay(job) === day)
@@ -226,6 +249,12 @@ export function DailyHourCalendar({
         if (byTime !== 0) return byTime
         return a.companyName.localeCompare(b.companyName, 'tr')
       })
+  }, [jobs, day])
+
+  const otherDaysWithJobs = useMemo(() => {
+    return [...new Set(jobs.map(jobDay))]
+      .filter((d) => d !== day)
+      .sort()
   }, [jobs, day])
 
   const slots = useMemo(() => buildCalendarSlots(dayJobs), [dayJobs])
@@ -331,7 +360,27 @@ export function DailyHourCalendar({
           ))}
         </div>
       ) : dayJobs.length === 0 ? (
-        <EmptyState title="Bu günde iş yok" description={emptyDescription} />
+        <div className="space-y-3">
+          <EmptyState title="Bu günde iş yok" description={emptyDescription} />
+          {otherDaysWithJobs.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-border bg-surface-muted/40 px-3 py-3">
+              <p className="w-full text-sm text-text-secondary">
+                Başka günlerde {jobs.length} iş var:
+              </p>
+              {otherDaysWithJobs.slice(0, 6).map((d) => (
+                <Button
+                  key={d}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setDay(d)}
+                >
+                  {formatDateOnlyLongTr(d)}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-md)] border border-border bg-surface shadow-[var(--shadow-sm)]">
           <ul className="divide-y divide-border">

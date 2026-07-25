@@ -14,6 +14,7 @@ import { HrReportsPanel } from '@/features/hr/components/HrReportsPanel'
 import { HiringNotesPanel } from '@/features/hr/components/HiringNotesPanel'
 import { HrStaffAttendanceViewer } from '@/features/hr/components/HrStaffAttendanceViewer'
 import { ManagementHrInbox } from '@/features/hr/components/ManagementHrInbox'
+import { ReporterJobsPanel } from '@/features/reporter/components/ReporterJobsPanel'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { usePageTab } from '@/hooks/usePageTab'
 
@@ -58,7 +59,7 @@ function HrViewerPage() {
 const OWN_SECTIONS = visibleNavSections(HR_OWN_SECTIONS)
 const HR_OWN_TAB_IDS = OWN_SECTIONS.map((section) => section.id)
 type HrOwnTab = (typeof HR_OWN_SECTIONS)[number]['id']
-const HR_OWN_DEFAULT_TAB: HrOwnTab = SHOW_MESAI_UI ? 'attendance' : 'jobs'
+const HR_OWN_DEFAULT_TAB: HrOwnTab = SHOW_MESAI_UI ? 'attendance' : 'schedule'
 
 export function HumanResourcesPage() {
   const { user, profile } = useAuth()
@@ -75,8 +76,8 @@ export function HumanResourcesPage() {
         title="İnsan Kaynakları"
         subtitle={
           SHOW_MESAI_UI
-            ? 'Mesai, iş özeti, raporlar, işe alım notları ve hesap yönetimi.'
-            : 'İş özeti, raporlar, işe alım notları ve hesap yönetimi.'
+            ? 'Mesai, çekim takvimi, iş özeti, raporlar, işe alım notları ve hesap yönetimi.'
+            : 'Çekim takvimi, iş özeti, raporlar, işe alım notları ve hesap yönetimi.'
         }
         action={
           SHOW_MESAI_UI && user?.uid ? (
@@ -97,6 +98,7 @@ export function HumanResourcesPage() {
         {SHOW_MESAI_UI && tab === 'attendance' && (
           <AttendanceLogsDashboard startNumber={1} />
         )}
+        {tab === 'schedule' && <ReporterJobsPanel embedded />}
         {tab === 'jobs' && <HrJobStatsPanel sectionNumber="01" defaultOpen />}
         {tab === 'reports' && <HrReportsPanel sectionNumber="01" defaultOpen />}
         {tab === 'hiring' && <HiringNotesPanel sectionNumber="01" defaultOpen />}
