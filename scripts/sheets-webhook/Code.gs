@@ -9,6 +9,8 @@
  * v16: wipeBrainUploads — trash all files/folders under BrainUploads (management/coordinator).
  * v17: pushNotify excludeExternalIds → OneSignal exclude_aliases.external_id (skip actor).
  * v18: Turkish Drive folder names + rename legacy English folders.
+ * v19: resetUserPassword — İK/yönetim/koordinatör temporary Auth password reset
+ *      (requires FIREBASE_SERVICE_ACCOUNT_JSON Script property).
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -23,6 +25,7 @@
  * Auth (v12+): Firebase ID token via accounts:lookup (preferred).
  * Script properties:
  *   FIREBASE_WEB_API_KEY = Firebase web API key (same as VITE_FIREBASE_API_KEY; server-side only)
+ *   FIREBASE_SERVICE_ACCOUNT_JSON = full Firebase/Google SA JSON (required for resetUserPassword)
  *   WEBHOOK_SECRET = optional legacy fallback for one version (remove after clients ship idToken)
  *   ONESIGNAL_APP_ID = OneSignal App ID (optional; for pushNotify)
  *   ONESIGNAL_REST_API_KEY = OneSignal REST API Key (optional; for pushNotify)
@@ -31,8 +34,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v18'
-var SCRIPT_VERSION = 'v18'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v19'
+var SCRIPT_VERSION = 'v19'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -214,6 +217,9 @@ function doPost(e) {
     if (body.action === 'onesignalUpsertUsers') {
       return handleOnesignalUpsertUsers_(body)
     }
+    if (body.action === 'resetUserPassword') {
+      return handleResetUserPassword_(body, auth.user)
+    }
 
     if (body.islem === 'approved' || body.islem === 'cancelled') {
       if (!body.sonDurum) {
@@ -226,7 +232,7 @@ function doPost(e) {
     return jsonResponse_({
       ok: false,
       error:
-        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers)',
+        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     }, 400)
@@ -268,6 +274,7 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'wipeBrainUploads',
         'pushNotify',
         'onesignalUpsertUsers',
+        'resetUserPassword',
         'firebaseIdTokenAuth',
       ],
       auth: 'firebase-id-token',
@@ -376,6 +383,17 @@ function verifyFirebaseIdToken_(idToken) {
 }
 
 function roleAllowedForAction_(action, role) {
+  // Password reset: known non-admin roles blocked here; empty claim deferred to
+  // handler (resolves role from Firestore via service account).
+  if (action === 'resetUserPassword') {
+    if (!role) return true
+    return (
+      role === 'management' ||
+      role === 'coordinator' ||
+      role === 'human_resources'
+    )
+  }
+
   // No custom claim → allow any verified user for non-push; push also allowed
   // when claim missing (Firestore remains authoritative for app RBAC).
   if (!role) return true
@@ -440,6 +458,23 @@ function authorizeMutatingRequest_(payload, action, e) {
       }
     }
     return { ok: true, user: verified, auth: 'idToken' }
+  }
+
+  // Password reset never accepts legacy webhook secret.
+  if (action === 'resetUserPassword') {
+    return {
+      ok: false,
+      response: jsonResponse_(
+        {
+          ok: false,
+          error: 'Unauthorized',
+          detail: 'idToken required for resetUserPassword',
+          service: SCRIPT_SERVICE,
+          version: SCRIPT_VERSION,
+        },
+        401,
+      ),
+    }
   }
 
   // Legacy fallback (v12 only) — prefer idToken; remove WEBHOOK_SECRET later.
@@ -1260,6 +1295,340 @@ function buildRoleOrFilters_(roles) {
     })
   }
   return filters
+}
+
+/**
+ * İK / yönetim / koordinatör: generate temporary password and set it on Auth.
+ * Requires Script property FIREBASE_SERVICE_ACCOUNT_JSON (full SA JSON string).
+ * Returns the password once in the JSON response (never stored in Sheets/Drive).
+ */
+function handleResetUserPassword_(body, actor) {
+  var targetUid = String((body && body.targetUid) || '').trim()
+  if (!targetUid) {
+    return jsonResponse_({ ok: false, error: 'targetUid required' }, 400)
+  }
+  if (!actor || !actor.uid) {
+    return jsonResponse_({ ok: false, error: 'Unauthorized' }, 401)
+  }
+  if (actor.uid === targetUid) {
+    return jsonResponse_(
+      { ok: false, error: 'Cannot reset your own password via this action' },
+      400,
+    )
+  }
+
+  var accessToken
+  try {
+    accessToken = getFirebaseAdminAccessToken_()
+  } catch (saErr) {
+    return jsonResponse_(
+      {
+        ok: false,
+        error: 'FIREBASE_SERVICE_ACCOUNT_JSON not configured',
+        detail: saErr && saErr.message ? String(saErr.message) : 'SA error',
+        service: SCRIPT_SERVICE,
+        version: SCRIPT_VERSION,
+      },
+      503,
+    )
+  }
+
+  var actorRole = String((actor && actor.role) || '')
+  if (!actorRole) {
+    actorRole = fetchFirestoreUserRole_(accessToken, actor.uid) || ''
+  }
+  if (
+    actorRole !== 'management' &&
+    actorRole !== 'coordinator' &&
+    actorRole !== 'human_resources'
+  ) {
+    return jsonResponse_({ ok: false, error: 'Forbidden' }, 403)
+  }
+
+  var target = lookupAuthUserByUid_(accessToken, targetUid)
+  if (!target.ok) {
+    return jsonResponse_(
+      {
+        ok: false,
+        error: target.error || 'User not found',
+        service: SCRIPT_SERVICE,
+        version: SCRIPT_VERSION,
+      },
+      target.status || 404,
+    )
+  }
+
+  var targetRole = String(target.role || '')
+  if (!canManageTargetRoleForPasswordReset_(actorRole, targetRole)) {
+    return jsonResponse_(
+      {
+        ok: false,
+        error: 'Forbidden',
+        detail: 'Cannot reset password for this role',
+        service: SCRIPT_SERVICE,
+        version: SCRIPT_VERSION,
+      },
+      403,
+    )
+  }
+
+  var temporaryPassword = generateTemporaryPassword_()
+  var updated = updateAuthUserPassword_(accessToken, targetUid, temporaryPassword)
+  if (!updated.ok) {
+    return jsonResponse_(
+      {
+        ok: false,
+        error: updated.error || 'Password update failed',
+        service: SCRIPT_SERVICE,
+        version: SCRIPT_VERSION,
+      },
+      500,
+    )
+  }
+
+  // Best-effort audit fields on users/{uid} (Admin REST bypasses rules).
+  try {
+    patchUserPasswordResetAudit_(accessToken, targetUid, actor.uid)
+  } catch (auditErr) {
+    // Password already updated — do not fail the response.
+  }
+
+  return jsonResponse_({
+    ok: true,
+    targetUid: targetUid,
+    email: target.email || '',
+    temporaryPassword: temporaryPassword,
+    service: SCRIPT_SERVICE,
+    version: SCRIPT_VERSION,
+  })
+}
+
+function canManageTargetRoleForPasswordReset_(actorRole, targetRole) {
+  if (actorRole === 'management') {
+    return (
+      targetRole === 'media_planning' ||
+      targetRole === 'reporter' ||
+      targetRole === 'human_resources' ||
+      targetRole === 'coordinator' ||
+      targetRole === 'management'
+    )
+  }
+  if (actorRole === 'coordinator' || actorRole === 'human_resources') {
+    return (
+      targetRole === 'media_planning' ||
+      targetRole === 'reporter' ||
+      targetRole === 'human_resources'
+    )
+  }
+  return false
+}
+
+/** 10-char unambiguous temp password (min Auth length 8). */
+function generateTemporaryPassword_() {
+  var alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  var out = ''
+  for (var i = 0; i < 10; i++) {
+    var idx = Math.floor(Math.random() * alphabet.length)
+    out += alphabet.charAt(idx)
+  }
+  return out
+}
+
+function base64UrlEncodeString_(value) {
+  return String(Utilities.base64EncodeWebSafe(value)).replace(/=+$/, '')
+}
+
+function base64UrlEncodeBytes_(bytes) {
+  return String(Utilities.base64EncodeWebSafe(bytes)).replace(/=+$/, '')
+}
+
+/**
+ * OAuth access token for Firebase Auth Admin + Firestore from SA JSON.
+ * Script property: FIREBASE_SERVICE_ACCOUNT_JSON
+ */
+function getFirebaseAdminAccessToken_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(
+    'FIREBASE_SERVICE_ACCOUNT_JSON',
+  )
+  if (!raw || !String(raw).trim()) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON missing')
+  }
+  var sa
+  try {
+    sa = JSON.parse(String(raw))
+  } catch (parseErr) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON invalid JSON')
+  }
+  if (!sa.client_email || !sa.private_key) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON missing client_email/private_key')
+  }
+
+  var now = Math.floor(Date.now() / 1000)
+  var header = base64UrlEncodeString_(
+    JSON.stringify({ alg: 'RS256', typ: 'JWT' }),
+  )
+  var claimSet = base64UrlEncodeString_(
+    JSON.stringify({
+      iss: sa.client_email,
+      scope:
+        'https://www.googleapis.com/auth/identitytoolkit https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform',
+      aud: 'https://oauth2.googleapis.com/token',
+      exp: now + 3600,
+      iat: now,
+    }),
+  )
+  var unsigned = header + '.' + claimSet
+  var signature = Utilities.computeRsaSha256Signature(unsigned, sa.private_key)
+  var jwt = unsigned + '.' + base64UrlEncodeBytes_(signature)
+
+  var tokenResp = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post',
+    contentType: 'application/x-www-form-urlencoded',
+    payload: {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    },
+    muteHttpExceptions: true,
+  })
+  var code = tokenResp.getResponseCode()
+  var text = tokenResp.getContentText()
+  if (code < 200 || code >= 300) {
+    throw new Error('SA token exchange failed (' + code + ')')
+  }
+  var data = JSON.parse(text)
+  if (!data.access_token) {
+    throw new Error('SA token exchange missing access_token')
+  }
+  return String(data.access_token)
+}
+
+function lookupAuthUserByUid_(accessToken, uid) {
+  var resp = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/projects/' +
+      encodeURIComponent(FIREBASE_PROJECT_ID) +
+      '/accounts:lookup',
+    {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + accessToken },
+      payload: JSON.stringify({ localId: [uid] }),
+      muteHttpExceptions: true,
+    },
+  )
+  var code = resp.getResponseCode()
+  var text = resp.getContentText()
+  if (code < 200 || code >= 300) {
+    return { ok: false, error: 'Auth lookup failed', status: 502 }
+  }
+  var data
+  try {
+    data = JSON.parse(text)
+  } catch (e) {
+    return { ok: false, error: 'Auth lookup invalid response', status: 502 }
+  }
+  var users = data.users || []
+  if (!users.length) {
+    return { ok: false, error: 'User not found', status: 404 }
+  }
+  var user = users[0]
+  var claims = {}
+  if (user.customAttributes) {
+    try {
+      claims = JSON.parse(user.customAttributes) || {}
+    } catch (attrErr) {
+      claims = {}
+    }
+  }
+  // Prefer Auth claim; fall back to Firestore profile role when claims missing.
+  var role = claims.role ? String(claims.role) : ''
+  if (!role) {
+    role = fetchFirestoreUserRole_(accessToken, uid) || ''
+  }
+  return {
+    ok: true,
+    uid: user.localId || uid,
+    email: user.email || '',
+    role: role,
+    disabled: Boolean(user.disabled),
+  }
+}
+
+function fetchFirestoreUserRole_(accessToken, uid) {
+  var url =
+    'https://firestore.googleapis.com/v1/projects/' +
+    encodeURIComponent(FIREBASE_PROJECT_ID) +
+    '/databases/(default)/documents/users/' +
+    encodeURIComponent(uid)
+  var resp = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    muteHttpExceptions: true,
+  })
+  if (resp.getResponseCode() < 200 || resp.getResponseCode() >= 300) {
+    return ''
+  }
+  try {
+    var doc = JSON.parse(resp.getContentText())
+    var fields = doc.fields || {}
+    if (fields.role && fields.role.stringValue) {
+      return String(fields.role.stringValue)
+    }
+  } catch (e) {}
+  return ''
+}
+
+function updateAuthUserPassword_(accessToken, uid, password) {
+  var resp = UrlFetchApp.fetch(
+    'https://identitytoolkit.googleapis.com/v1/projects/' +
+      encodeURIComponent(FIREBASE_PROJECT_ID) +
+      '/accounts:update',
+    {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + accessToken },
+      payload: JSON.stringify({
+        localId: uid,
+        password: password,
+        // Invalidate existing refresh tokens so old sessions cannot stay signed in.
+        validSince: String(Math.floor(Date.now() / 1000)),
+      }),
+      muteHttpExceptions: true,
+    },
+  )
+  var code = resp.getResponseCode()
+  if (code < 200 || code >= 300) {
+    var detail = resp.getContentText()
+    return {
+      ok: false,
+      error: 'Auth password update failed (' + code + '): ' + detail,
+    }
+  }
+  return { ok: true }
+}
+
+function patchUserPasswordResetAudit_(accessToken, uid, actorUid) {
+  var url =
+    'https://firestore.googleapis.com/v1/projects/' +
+    encodeURIComponent(FIREBASE_PROJECT_ID) +
+    '/databases/(default)/documents/users/' +
+    encodeURIComponent(uid) +
+    '?updateMask.fieldPaths=passwordResetAt' +
+    '&updateMask.fieldPaths=passwordResetByUid' +
+    '&updateMask.fieldPaths=updatedAt'
+  var now = new Date().toISOString()
+  UrlFetchApp.fetch(url, {
+    method: 'patch',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + accessToken },
+    payload: JSON.stringify({
+      fields: {
+        passwordResetAt: { timestampValue: now },
+        passwordResetByUid: { stringValue: String(actorUid || '') },
+        updatedAt: { timestampValue: now },
+      },
+    }),
+    muteHttpExceptions: true,
+  })
 }
 
 function jsonResponse_(obj, status) {

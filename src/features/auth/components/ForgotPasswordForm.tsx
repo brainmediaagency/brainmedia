@@ -4,7 +4,7 @@ import { APP_ROUTES } from '@/config/routes'
 /**
  * Internal @brain.com logins have no real inbox — no Firebase email reset.
  * Self-service: Hesap (name + password) while logged in.
- * Locked out: ask management/HR for a temporary Console password.
+ * Locked out: İK / yönetim / koordinatör “Şifre sıfırla” ile geçici şifre verir.
  */
 export function ForgotPasswordForm() {
   return (
@@ -20,8 +20,9 @@ export function ForgotPasswordForm() {
       <div className="rounded-[var(--radius-md)] border border-border bg-surface-muted/60 px-4 py-3">
         <p className="font-medium text-text-primary">Şifrenizi unuttunuz mu?</p>
         <p className="mt-1">
-          Yönetim veya insan kaynaklarından yeni bir geçici şifre isteyin. Size
-          iletilen şifreyle giriş yaptıktan sonra hemen değiştirin.
+          İnsan kaynakları, yönetim veya koordinatörden geçici şifre isteyin
+          (Hesaplar → Şifre sıfırla). Size iletilen şifreyle giriş yaptıktan
+          sonra hemen üst çubuktan değiştirin.
         </p>
       </div>
 

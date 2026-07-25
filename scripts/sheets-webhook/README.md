@@ -55,8 +55,17 @@ with `{ "idToken": "..." }`. The web API key is project-scoped (`brain-c5fcb`) a
 | Script property | Required | Notes |
 |-----------------|----------|--------|
 | `FIREBASE_WEB_API_KEY` | **yes** (v12+) | Same value as `VITE_FIREBASE_API_KEY` |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | for password reset (v19+) | Full Firebase service account JSON. Used only by `resetUserPassword` |
 | `WEBHOOK_SECRET` | optional | **Legacy fallback for one version** — remove after all clients send `idToken` |
 | `ONESIGNAL_APP_ID` / `ONESIGNAL_REST_API_KEY` | optional | pushNotify |
+
+### Password reset (İK / yönetim / koordinatör) — v19+
+
+In the app: **Hesaplar → Şifre sıfırla**. Webhook generates a random temporary password, sets it on Firebase Auth, writes audit fields `passwordResetAt` / `passwordResetByUid` on `users/{uid}`, and returns the password once to the admin UI.
+
+1. Deploy latest [`Code.gs`](./Code.gs) → **New version** (`features` must include `resetUserPassword`, version `v19+`)
+2. Script property `FIREBASE_SERVICE_ACCOUNT_JSON` = entire service account JSON (same file as `GOOGLE_APPLICATION_CREDENTIALS` for admin scripts). SA needs **Firebase Authentication Admin** + Firestore/Datastore access on `brain-c5fcb`.
+3. Actor must be `human_resources`, `coordinator`, or `management` and may only reset roles they can manage (same rules as freeze/create).
 
 `doGet` ping stays **public** (version/features only — no secrets).
 
@@ -67,6 +76,7 @@ with `{ "idToken": "..." }`. The web API key is project-scoped (`brain-c5fcb`) a
 | Sheet upsert / son durum / dk haber | reporter, media_planning, coordinator, management |
 | Drive upload / uploadResult / storage | + human_resources |
 | pushNotify | all of the above (callers of notify*; default audience = all five role tags; optional `externalIds`) |
+| resetUserPassword | human_resources, coordinator, management (+ manageable target role) |
 
 If custom claims are missing, any verified Firebase user is allowed for mutating actions (Firestore remains authoritative for app RBAC). Sync claims after UI account create:
 

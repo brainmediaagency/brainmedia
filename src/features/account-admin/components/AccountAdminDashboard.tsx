@@ -37,8 +37,8 @@ export function AccountAdminDashboard({
         title="Hesaplar"
         description={
           canDelete
-            ? 'Dondurulan hesaplar giriş yapamaz. Silme soft-delete uygular. Şifre unutulursa Firebase Console’dan geçici şifre tanımlayın; kullanıcı giriş sonrası üst çubuktan değiştirir.'
-            : 'Dondurulan hesaplar giriş yapamaz. Şifre unutulursa Firebase Console’dan geçici şifre tanımlayın; kullanıcı giriş sonrası üst çubuktan değiştirir.'
+            ? 'Dondurulan hesaplar giriş yapamaz. Silme soft-delete uygular. Şifre unutulursa “Şifre sıfırla” ile rastgele geçici şifre oluşturun; kullanıcı giriş sonrası üst çubuktan değiştirir.'
+            : 'Dondurulan hesaplar giriş yapamaz. Şifre unutulursa “Şifre sıfırla” ile rastgele geçici şifre oluşturun; kullanıcı giriş sonrası üst çubuktan değiştirir.'
         }
       >
         <AccountsList />

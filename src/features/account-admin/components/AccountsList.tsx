@@ -8,6 +8,8 @@ import {
   subscribeManagedUsers,
   unfreezeManagedAccount,
 } from '@/features/account-admin/services/accountAdminService'
+import { TemporaryPasswordDialog } from '@/features/account-admin/components/TemporaryPasswordDialog'
+import { resetManagedAccountPassword } from '@/features/account-admin/services/passwordResetService'
 import { canSoftDeleteAccounts } from '@/features/account-admin/utils/accountPermissions'
 import { ROLE_DISPLAY_NAMES } from '@/config/roles'
 import { Button } from '@/components/ui/Button'
@@ -26,6 +28,12 @@ export function AccountsList() {
   const [loading, setLoading] = useState(true)
   const [busyUid, setBusyUid] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<UserProfile | null>(null)
+  const [resetTarget, setResetTarget] = useState<UserProfile | null>(null)
+  const [issuedPassword, setIssuedPassword] = useState<{
+    fullName: string
+    email: string
+    temporaryPassword: string
+  } | null>(null)
 
   useEffect(() => {
     if (!actorRole) {
@@ -64,6 +72,24 @@ export function AccountsList() {
       toast.success(successMessage)
     } catch (error) {
       toast.error(mapAppError(error, 'İşlem başarısız.'))
+    } finally {
+      setBusyUid(null)
+    }
+  }
+
+  const runPasswordReset = async (user: UserProfile) => {
+    setBusyUid(user.uid)
+    try {
+      const result = await resetManagedAccountPassword(user.uid, actor)
+      setResetTarget(null)
+      setIssuedPassword({
+        fullName: user.fullName,
+        email: result.email || user.email,
+        temporaryPassword: result.temporaryPassword,
+      })
+      toast.success('Geçici şifre oluşturuldu.')
+    } catch (error) {
+      toast.error(mapAppError(error, 'Şifre sıfırlanamadı.'))
     } finally {
       setBusyUid(null)
     }
@@ -154,6 +180,17 @@ export function AccountsList() {
                               Aktifleştir
                             </Button>
                           )}
+                          {user.isActive && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() => setResetTarget(user)}
+                            >
+                              Şifre sıfırla
+                            </Button>
+                          )}
                           {canDelete && (
                             <Button
                               type="button"
@@ -237,6 +274,18 @@ export function AccountsList() {
                         Aktifleştir
                       </Button>
                     )}
+                    {user.isActive && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="w-full"
+                        disabled={busy}
+                        onClick={() => setResetTarget(user)}
+                      >
+                        Şifre sıfırla
+                      </Button>
+                    )}
                     {canDelete && (
                       <Button
                         type="button"
@@ -256,6 +305,31 @@ export function AccountsList() {
           )
         })}
       </div>
+
+      <ConfirmDialog
+        open={resetTarget !== null}
+        onClose={() => setResetTarget(null)}
+        title="Şifre sıfırla"
+        description={
+          resetTarget
+            ? `${resetTarget.fullName} (${resetTarget.email}) için yeni rastgele şifre oluşturulsun mu? Eski şifre ve oturumlar geçersiz olur. Geçici şifre bir kez gösterilir.`
+            : undefined
+        }
+        confirmLabel="Yeni şifre oluştur"
+        loading={busyUid === resetTarget?.uid}
+        onConfirm={() => {
+          if (!resetTarget) return
+          void runPasswordReset(resetTarget)
+        }}
+      />
+
+      <TemporaryPasswordDialog
+        open={issuedPassword !== null}
+        onClose={() => setIssuedPassword(null)}
+        fullName={issuedPassword?.fullName ?? ''}
+        email={issuedPassword?.email ?? ''}
+        temporaryPassword={issuedPassword?.temporaryPassword ?? ''}
+      />
 
       {canDelete && (
         <ConfirmDialog
