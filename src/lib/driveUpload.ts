@@ -15,6 +15,7 @@ export type DriveUploadFolder =
   | 'hiring'
   | 'z-reports'
   | 'voice-recordings'
+  | 'hr-reports'
 
 export type DriveUploadProgress = {
   phase: 'encoding' | 'uploading' | 'finishing'

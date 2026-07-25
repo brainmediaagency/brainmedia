@@ -4,6 +4,11 @@ Same Apps Script Web App handles:
 
 1. **Job status log** → Google Sheet (upsert by **JOB ID** preferred, else **FİRMA ADI + TARİH**)
 2. **File upload** → Google Drive folders under `BrainUploads/` (`action: "uploadFile"`)
+   - `hiring` → **İş görüşmesi raporu**
+   - `z-reports` → **Z raporu**
+   - `voice-recordings` → **Ses kayıtları**
+   - `hr-reports` → **Günlük İK raporu** (reserved)
+   - Legacy English names (`Hiring`, `ZReports`, …) are renamed on next upload after **v18** deploy
 3. **Drive quota** → account used/limit (`action: "driveStorageUsage"`)
 4. **OneSignal push** → all subscribed roles / optional externalIds (`action: "pushNotify"`) — see [`../onesignal/README.md`](../onesignal/README.md)
 

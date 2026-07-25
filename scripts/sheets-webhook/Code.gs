@@ -8,6 +8,7 @@
  * v15: onesignalUpsertUsers — create Audience users by Firebase uid + role tag.
  * v16: wipeBrainUploads — trash all files/folders under BrainUploads (management/coordinator).
  * v17: pushNotify excludeExternalIds → OneSignal exclude_aliases.external_id (skip actor).
+ * v18: Turkish Drive folder names + rename legacy English folders.
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -30,8 +31,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v17'
-var SCRIPT_VERSION = 'v17'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v18'
+var SCRIPT_VERSION = 'v18'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -99,10 +100,20 @@ var COL = {
   JOB_ID: 13,
 }
 
+/** Drive subfolder display names (Turkish). Keys stay stable in client uploads. */
 var FOLDER_NAMES = {
-  hiring: 'Hiring',
-  'z-reports': 'ZReports',
-  'voice-recordings': 'VoiceRecordings',
+  hiring: 'İş görüşmesi raporu',
+  'z-reports': 'Z raporu',
+  'voice-recordings': 'Ses kayıtları',
+  'hr-reports': 'Günlük İK raporu',
+}
+
+/** Old English folder names → renamed to FOLDER_NAMES on first upload after deploy. */
+var FOLDER_LEGACY_NAMES = {
+  hiring: ['Hiring'],
+  'z-reports': ['ZReports', 'Z Reports'],
+  'voice-recordings': ['VoiceRecordings', 'Voice Recordings'],
+  'hr-reports': ['HrReports', 'HRReports', 'HR Reports'],
 }
 
 function doGet(e) {
@@ -744,8 +755,8 @@ function handleUpload_(body) {
 
   try {
     var folderKey = body.folder || 'misc'
-    var subName = FOLDER_NAMES[folderKey] || 'Misc'
-    var folder = getOrCreateUploadFolder_(subName)
+    var subName = FOLDER_NAMES[folderKey] || 'Diğer'
+    var folder = getOrCreateUploadFolder_(subName, folderKey)
     var bytes = Utilities.base64Decode(body.base64)
     var blob = Utilities.newBlob(
       bytes,
@@ -863,7 +874,7 @@ function sumFolder_(folder) {
 }
 
 /**
- * Trash everything under BrainUploads (Hiring / ZReports / VoiceRecordings / …).
+ * Trash everything under BrainUploads (İş görüşmesi raporu / Z raporu / …).
  * Optionally empty Drive trash when Advanced Drive service is enabled.
  */
 function handleWipeBrainUploads_() {
@@ -923,11 +934,12 @@ function wipeFolderContents_(folder, counts) {
   }
 }
 
-function getOrCreateUploadFolder_(subName) {
+function getOrCreateUploadFolder_(subName, folderKey) {
   var rootName =
     PropertiesService.getScriptProperties().getProperty('DRIVE_ROOT_FOLDER') ||
     DEFAULT_DRIVE_ROOT
   var root = getOrCreateFolderByName_(DriveApp.getRootFolder(), rootName)
+  renameLegacyUploadFolder_(root, folderKey, subName)
   return getOrCreateFolderByName_(root, subName)
 }
 
@@ -935,6 +947,21 @@ function getOrCreateFolderByName_(parent, name) {
   var it = parent.getFoldersByName(name)
   if (it.hasNext()) return it.next()
   return parent.createFolder(name)
+}
+
+/** Rename first matching legacy English folder to the Turkish display name. */
+function renameLegacyUploadFolder_(root, folderKey, newName) {
+  if (!folderKey || !FOLDER_LEGACY_NAMES[folderKey]) return
+  var current = root.getFoldersByName(newName)
+  if (current.hasNext()) return
+  var legacy = FOLDER_LEGACY_NAMES[folderKey]
+  for (var i = 0; i < legacy.length; i += 1) {
+    var it = root.getFoldersByName(legacy[i])
+    if (it.hasNext()) {
+      it.next().setName(newName)
+      return
+    }
+  }
 }
 
 function getOrCreateLogSheet_() {
