@@ -10,8 +10,6 @@ import {
   createJobFormDefaultValues,
   editJobFormSchema,
   emptyContact,
-  fixedCreateJobDates,
-  jobFormSchema,
   MAX_JOB_CONTACTS,
   type JobFormValues,
 } from '@/features/media-planning/schemas/jobFormSchema'
@@ -86,11 +84,8 @@ export function NewJobForm({
   const [submitting, setSubmitting] = useState(false)
   const idempotencyKeyRef = useRef(createIdempotencyKey())
   const isEditMode = Boolean(job)
-  /**
-   * Create: acquired/planned dates are fixed (today / next business day).
-   * Edit: dates remain editable.
-   */
-  const datesLocked = !isEditMode
+  /** Temporarily unlocked for testing — create + edit both allow date changes. */
+  const datesLocked = false
   const skipNextAcquiredAutoFill = useRef(isEditMode)
 
   const {
@@ -102,7 +97,8 @@ export function NewJobForm({
     reset,
     formState: { errors },
   } = useForm<JobFormValues>({
-    resolver: zodResolver(isEditMode ? editJobFormSchema : jobFormSchema),
+    // edit schema also on create so past planned dates work for testing.
+    resolver: zodResolver(editJobFormSchema),
     defaultValues: job ? jobToFormValues(job) : createJobFormDefaultValues(),
   })
 
@@ -184,12 +180,10 @@ export function NewJobForm({
     try {
       const contacts = buildContacts(values)
       const contactCount = toContactCount(contacts.length)
-      const dates = datesLocked
-        ? fixedCreateJobDates()
-        : {
-            acquiredDate: values.acquiredDate,
-            plannedExecutionDate: values.plannedExecutionDate,
-          }
+      const dates = {
+        acquiredDate: values.acquiredDate,
+        plannedExecutionDate: values.plannedExecutionDate,
+      }
 
       const instagram = values.instagram.trim() ? values.instagram.trim() : null
 
