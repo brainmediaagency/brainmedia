@@ -555,33 +555,29 @@ export function NewJobForm({
           />
         </FormField>
 
-        {!isEditMode ? (
-          <div
-            className={cn(
-              'flex items-center justify-between gap-4 rounded-[var(--radius-md)] border px-4 py-3 transition-colors',
-              confirmed
-                ? 'border-brand-cyan/40 bg-brand-cyan/5'
-                : 'border-border bg-surface-muted/50',
+        <div
+          className={cn(
+            'flex items-center justify-between gap-4 rounded-[var(--radius-md)] border px-4 py-3 transition-colors',
+            confirmed
+              ? 'border-brand-cyan/40 bg-brand-cyan/5'
+              : 'border-border bg-surface-muted/50',
+          )}
+        >
+          <p className="text-sm font-medium text-text-primary">Teyit</p>
+          <Controller
+            name="confirmed"
+            control={control}
+            render={({ field }) => (
+              <Toggle
+                id="confirmed"
+                checked={field.value}
+                onChange={field.onChange}
+                disabled={submitting || !isOnline}
+                label={confirmed ? 'Teyit edildi' : 'Teyit et'}
+              />
             )}
-          >
-            <p className="text-sm font-medium text-text-primary">Teyit</p>
-            <Controller
-              name="confirmed"
-              control={control}
-              render={({ field }) => (
-                <Toggle
-                  id="confirmed"
-                  checked={field.value}
-                  onChange={field.onChange}
-                  disabled={submitting || !isOnline}
-                  label={confirmed ? 'Teyit edildi' : 'Teyit et'}
-                />
-              )}
-            />
-          </div>
-        ) : (
-          <input type="hidden" {...register('confirmed')} />
-        )}
+          />
+        </div>
       </div>
 
       {!isOnline && (
