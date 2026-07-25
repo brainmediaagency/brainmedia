@@ -117,6 +117,37 @@ export async function requestOneSignalPushPermission(): Promise<boolean> {
   }
 }
 
+/** Current Web Push subscription state (false if SDK unavailable). */
+export async function isOneSignalPushOptedIn(): Promise<boolean> {
+  const os = await initOneSignal()
+  if (!os) return false
+  try {
+    return Boolean(os.User.PushSubscription.optedIn)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Turn Web Push on/off for this device.
+ * Opt-in may show the browser permission prompt.
+ */
+export async function setOneSignalPushOptedIn(
+  enabled: boolean,
+): Promise<boolean> {
+  const os = await initOneSignal()
+  if (!os) return false
+  try {
+    if (enabled) {
+      return requestOneSignalPushPermission()
+    }
+    await os.User.PushSubscription.optOut()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function logoutOneSignal(): Promise<void> {
   if (!getOneSignalAppId()) return
   await withOneSignal(async (OneSignal) => {

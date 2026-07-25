@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { Drawer } from '@/components/ui/Drawer'
+import { PushNotificationToggle } from '@/features/notifications/components/PushNotificationToggle'
 import { useNotificationInbox } from '@/features/notifications/hooks/useNotificationInbox'
 import { isNotificationUnread } from '@/features/notifications/services/notificationService'
 import type { AppNotification } from '@/features/notifications/types'
@@ -92,6 +93,7 @@ function NotificationDesktopPopover({
   items,
   uid,
   onSelect,
+  pushToggle,
 }: {
   open: boolean
   onClose: () => void
@@ -101,6 +103,7 @@ function NotificationDesktopPopover({
   items: AppNotification[]
   uid: string
   onSelect: (item: AppNotification) => void
+  pushToggle: ReactNode
 }) {
   const [coords, setCoords] = useState({ top: 0, right: 0 })
 
@@ -159,6 +162,7 @@ function NotificationDesktopPopover({
         <div className="max-h-80 overflow-y-auto">
           <NotificationList items={items} uid={uid} onSelect={onSelect} />
         </div>
+        {pushToggle}
       </div>
     </div>,
     document.body,
@@ -207,6 +211,8 @@ export function NotificationBell() {
       </button>
     ) : null
 
+  const pushToggle = <PushNotificationToggle active={open} />
+
   return (
     <div className="relative">
       <Button
@@ -240,6 +246,7 @@ export function NotificationBell() {
           items={items}
           uid={uid}
           onSelect={handleSelect}
+          pushToggle={pushToggle}
         />
       ) : (
         <Drawer
@@ -256,6 +263,7 @@ export function NotificationBell() {
             <div className="mb-3 flex justify-end">{markAllButton}</div>
           ) : null}
           <NotificationList items={items} uid={uid} onSelect={handleSelect} />
+          {pushToggle}
         </Drawer>
       )}
     </div>
