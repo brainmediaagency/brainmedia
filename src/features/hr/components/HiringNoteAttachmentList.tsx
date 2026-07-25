@@ -14,23 +14,30 @@ function formatFileSize(bytes: number): string {
   })} MB`
 }
 
+function triggerBrowserDownload(url: string, fileName: string) {
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName || 'ek'
+  anchor.rel = 'noopener noreferrer'
+  // Cross-origin Drive URLs ignore `download`; _blank still starts the download
+  // without the broken about:blank → location.href pattern.
+  anchor.target = '_blank'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
 export function HiringNoteAttachmentList({
   attachments,
 }: HiringNoteAttachmentListProps) {
   if (attachments.length === 0) return null
 
-  const openAttachment = async (attachment: HiringNoteAttachment) => {
-    const popup = window.open('', '_blank', 'noopener,noreferrer')
+  const downloadAttachment = async (attachment: HiringNoteAttachment) => {
     try {
       const url = await getHiringNoteAttachmentUrl(attachment)
-      if (popup) {
-        popup.location.href = url
-      } else {
-        window.open(url, '_blank', 'noopener,noreferrer')
-      }
+      triggerBrowserDownload(url, attachment.name)
     } catch (error) {
-      popup?.close()
-      toast.error(mapAppError(error, 'Dosya açılamadı.'))
+      toast.error(mapAppError(error, 'Dosya indirilemedi.'))
     }
   }
 
@@ -44,7 +51,7 @@ export function HiringNoteAttachmentList({
           <li key={attachment.id}>
             <button
               type="button"
-              onClick={() => void openAttachment(attachment)}
+              onClick={() => void downloadAttachment(attachment)}
               className="flex w-full items-center gap-3 rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-brand-cyan/50 hover:bg-brand-cyan/5"
             >
               <FileText className="size-5 shrink-0 text-brand-pink" aria-hidden="true" />

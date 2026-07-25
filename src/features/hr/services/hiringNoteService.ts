@@ -337,6 +337,11 @@ export async function updateHiringNote(input: {
   }
 }
 
+/** Direct Google Drive download URL (avoids /view which often needs a signed-in session). */
+export function hiringNoteDriveDownloadUrl(driveFileId: string): string {
+  return `https://drive.google.com/uc?export=download&id=${encodeURIComponent(driveFileId)}`
+}
+
 export async function getHiringNoteAttachmentUrl(
   attachment: HiringNoteAttachment | string,
 ): Promise<string> {
@@ -345,9 +350,9 @@ export async function getHiringNoteAttachmentUrl(
       'Bu ek eski Storage kaydı; Drive bağlantısı yok. Yeniden yükleyin.',
     )
   }
-  if (attachment.url) return attachment.url
   if (attachment.driveFileId) {
-    return `https://drive.google.com/file/d/${attachment.driveFileId}/view`
+    return hiringNoteDriveDownloadUrl(attachment.driveFileId)
   }
+  if (attachment.url) return attachment.url
   throw new UserFacingError('Dosya bağlantısı bulunamadı.')
 }
