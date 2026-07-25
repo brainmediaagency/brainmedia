@@ -177,12 +177,6 @@ export function OverdueJobsConfirmationPanel({
 
   return (
     <>
-      <div className="mb-4 rounded-[var(--radius-md)] border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-text-secondary">
-        {canAct
-          ? 'Planlanan çekim zamanı geçen işler burada görünür; durum Konfirme kalır ve otomatik olarak Çekildi olmaz. Sonuçlandırmak için Çekildi veya İptal ile manuel onay verin.'
-          : 'Planlanan çekim zamanı geçmiş işlerinizin durumunu buradan takip edebilirsiniz. Durum otomatik değişmez; sonuçlandırma koordinatör veya yönetim tarafından yapılır.'}
-      </div>
-
       <div className="hidden md:block">
         <Table>
           <TableHead>
