@@ -6,6 +6,7 @@
  * (Firestore job id) was approved for stable row identity (FUNC-02 / v13).
  * v14: pushNotify audience = all five app roles (OR), optional externalIds.
  * v15: onesignalUpsertUsers — create Audience users by Firebase uid + role tag.
+ * v16: wipeBrainUploads — trash all files/folders under BrainUploads (management/coordinator).
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -28,8 +29,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v15'
-var SCRIPT_VERSION = 'v15'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v16'
+var SCRIPT_VERSION = 'v16'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -180,6 +181,9 @@ function doPost(e) {
     if (body.action === 'driveStorageUsage') {
       return handleDriveStorageUsage_()
     }
+    if (body.action === 'wipeBrainUploads') {
+      return handleWipeBrainUploads_()
+    }
     if (body.action === 'uploadResult') {
       return handleUploadResult_(body.token || '')
     }
@@ -210,7 +214,7 @@ function doPost(e) {
     return jsonResponse_({
       ok: false,
       error:
-        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadResult/driveStorageUsage/pushNotify/onesignalUpsertUsers)',
+        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers)',
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     }, 400)
@@ -249,6 +253,7 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'uploadFile',
         'uploadResult',
         'driveStorageUsage',
+        'wipeBrainUploads',
         'pushNotify',
         'onesignalUpsertUsers',
         'firebaseIdTokenAuth',
@@ -366,7 +371,7 @@ function roleAllowedForAction_(action, role) {
   if (action === 'pushNotify') {
     return Boolean(ROLES_PUSH[role])
   }
-  if (action === 'onesignalUpsertUsers') {
+  if (action === 'onesignalUpsertUsers' || action === 'wipeBrainUploads') {
     return role === 'management' || role === 'coordinator'
   }
   if (
@@ -854,6 +859,67 @@ function sumFolder_(folder) {
     count += nested.count
   }
   return { bytes: bytes, count: count }
+}
+
+/**
+ * Trash everything under BrainUploads (Hiring / ZReports / VoiceRecordings / …).
+ * Optionally empty Drive trash when Advanced Drive service is enabled.
+ */
+function handleWipeBrainUploads_() {
+  var rootName =
+    PropertiesService.getScriptProperties().getProperty('DRIVE_ROOT_FOLDER') ||
+    DEFAULT_DRIVE_ROOT
+  var roots = DriveApp.getRootFolder().getFoldersByName(rootName)
+  if (!roots.hasNext()) {
+    return jsonResponse_({
+      ok: true,
+      deletedFiles: 0,
+      deletedFolders: 0,
+      emptiedTrash: false,
+      message: rootName + ' folder not found',
+      service: SCRIPT_SERVICE,
+      version: SCRIPT_VERSION,
+    })
+  }
+
+  var root = roots.next()
+  var counts = { deletedFiles: 0, deletedFolders: 0 }
+  wipeFolderContents_(root, counts)
+
+  var emptiedTrash = false
+  try {
+    if (typeof Drive !== 'undefined' && Drive.Files && Drive.Files.emptyTrash) {
+      Drive.Files.emptyTrash()
+      emptiedTrash = true
+    }
+  } catch (trashErr) {
+    emptiedTrash = false
+  }
+
+  return jsonResponse_({
+    ok: true,
+    deletedFiles: counts.deletedFiles,
+    deletedFolders: counts.deletedFolders,
+    emptiedTrash: emptiedTrash,
+    rootFolder: rootName,
+    service: SCRIPT_SERVICE,
+    version: SCRIPT_VERSION,
+  })
+}
+
+function wipeFolderContents_(folder, counts) {
+  var files = folder.getFiles()
+  while (files.hasNext()) {
+    files.next().setTrashed(true)
+    counts.deletedFiles += 1
+  }
+  var folders = folder.getFolders()
+  while (folders.hasNext()) {
+    var sub = folders.next()
+    wipeFolderContents_(sub, counts)
+    sub.setTrashed(true)
+    counts.deletedFolders += 1
+  }
 }
 
 function getOrCreateUploadFolder_(subName) {

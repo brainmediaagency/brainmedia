@@ -7,6 +7,17 @@ Same Apps Script Web App handles:
 3. **Drive quota** → account used/limit (`action: "driveStorageUsage"`)
 4. **OneSignal push** → all subscribed roles / optional externalIds (`action: "pushNotify"`) — see [`../onesignal/README.md`](../onesignal/README.md)
 
+## Wipe BrainUploads (admin)
+
+After deploying **v16+** (`wipeBrainUploads` in `doGet` features):
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
+  npx tsx scripts/admin/wipe-drive-uploads.ts
+```
+
+Trashes all files/folders under `BrainUploads/`. If Advanced Drive service is not enabled in Apps Script, also empty trash once at [drive.google.com](https://drive.google.com) → Trash for quota to drop.
+
 ## Fix “Unauthorized” / Drive kotası alınamadı (most common)
 
 Live webhook needs Script Property **`FIREBASE_WEB_API_KEY`**. Without it every Drive/Sheets/push call returns Unauthorized (looks like a role bug; it is not).
