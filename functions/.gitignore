@@ -1,0 +1,5 @@
+# Compiled JavaScript
+lib/
+node_modules/
+*.local
+.runtimeconfig.json

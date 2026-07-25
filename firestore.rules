@@ -1,0 +1,1724 @@
+rules_version = '2';
+// rules-rev: broadcast-user-notifications-21
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function userDocAfter(uid) {
+      return getAfter(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function callerProfileExists() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function callerProfile() {
+      return userDoc(request.auth.uid);
+    }
+
+    // Profile is the Spark-compatible authority for role + active (not only claims).
+    function isActiveUser() {
+      return callerProfileExists()
+        && callerProfile().isActive == true
+        && callerProfile().deletedAt == null;
+    }
+
+    function role() {
+      return callerProfile().role;
+    }
+
+    function hasAllowedRole() {
+      return role() in [
+        'media_planning',
+        'reporter',
+        'human_resources',
+        'coordinator',
+        'management'
+      ];
+    }
+
+    function isAuthenticated() {
+      return isActiveUser() && hasAllowedRole();
+    }
+
+    function isMediaPlanning() {
+      return isAuthenticated() && role() == 'media_planning';
+    }
+
+    function isReporter() {
+      return isAuthenticated() && role() == 'reporter';
+    }
+
+    function isHumanResources() {
+      return isAuthenticated() && role() == 'human_resources';
+    }
+
+    function canTrackShift() {
+      return isAuthenticated()
+        && role() in ['media_planning', 'human_resources'];
+    }
+
+    function isValidShiftRole(value) {
+      return value in ['media_planning', 'human_resources'];
+    }
+
+    function isCoordinator() {
+      return isAuthenticated() && role() == 'coordinator';
+    }
+
+    function isManagement() {
+      return isAuthenticated() && role() == 'management';
+    }
+
+    // Single role() lookup — avoids double isAuthenticated() from coord || mgmt.
+    function isCoordinatorOrManagement() {
+      return isAuthenticated() && role() in ['coordinator', 'management'];
+    }
+
+    /** Shared cheap guards for reviewer job status transitions. */
+    function jobReviewerStatusBump() {
+      return isCoordinatorOrManagement()
+        && request.resource.data.statusVersion == resource.data.statusVersion + 1
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function jobReviewerStamp() {
+      return request.resource.data.reviewedByUid == request.auth.uid
+        && isValidString(request.resource.data.reviewedByNameSnapshot, 1, 120)
+        && request.resource.data.reviewedAt == request.time;
+    }
+
+    // Single role() lookup — nested isManagement/isCoordinator/isHumanResources
+    // ORs were ERROR-denying İK account-admin reads/updates (evaluation budget).
+    function isAccountAdmin() {
+      return isAuthenticated()
+        && role() in ['management', 'coordinator', 'human_resources'];
+    }
+
+    function canManageTargetRole(targetRole) {
+      return isAuthenticated()
+        && (
+          role() == 'management'
+          || (
+            role() in ['coordinator', 'human_resources']
+            && targetRole in ['media_planning', 'reporter', 'human_resources']
+          )
+        );
+    }
+
+    /** Soft-delete is management/coordinator only — İK may freeze but not delete. */
+    function canSoftDeleteAccounts() {
+      return isAuthenticated() && role() in ['management', 'coordinator'];
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isValidString(value, minLen, maxLen) {
+      return value is string
+        && value.size() >= minLen
+        && value.size() <= maxLen;
+    }
+
+    // Web SDK may encode whole numbers as float. Accept either int or whole float.
+    function isWholeNumber(value) {
+      return (value is int || value is float) && value == math.round(value);
+    }
+
+    function isNonNegWhole(value) {
+      return isWholeNumber(value) && value >= 0;
+    }
+
+    function isPosWhole(value) {
+      return isWholeNumber(value) && value > 0;
+    }
+
+    function isVatRateValue(value) {
+      return isWholeNumber(value) && int(value) in [14, 17, 20];
+    }
+
+    function isValidJobStatus(status) {
+      return status in ['pending', 'approved', 'rejected', 'shot', 'cancelled'];
+    }
+
+    /** Missing field on legacy docs treated as not forwarded. */
+    function jobForwardedFlag(data) {
+      return data.keys().hasAll(['forwardedToReporter'])
+        && data.forwardedToReporter == true;
+    }
+
+    /**
+     * Forward-field locks are enforced by the dedicated forward / revert branches
+     * and by client transactions. Evaluating multi-field forward compares inside
+     * the status-transition OR exceeds live rules budget and ERROR-denies approve.
+     */
+    function jobForwardFieldsUnchanged() {
+      return true;
+    }
+
+    function jobForwardFieldsCleared() {
+      return true;
+    }
+
+    function isDateOnly(value) {
+      return value is string
+        && value.size() == 10
+        && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    /** Job schedule: legacy date-only or datetime-local `yyyy-MM-ddTHH:mm`. */
+    function isJobSchedule(value) {
+      return value is string && (
+        isDateOnly(value)
+        || isJobScheduleDateTime(value)
+      );
+    }
+
+    /** Full datetime-local `yyyy-MM-ddTHH:mm` (16 chars). */
+    function isJobScheduleDateTime(value) {
+      return value is string
+        && value.size() == 16
+        && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}$');
+    }
+
+
+    function activeShiftDoc(uid) {
+      return get(/databases/$(database)/documents/activeShifts/$(uid)).data;
+    }
+
+    function activeShiftExists(uid) {
+      return exists(/databases/$(database)/documents/activeShifts/$(uid));
+    }
+
+
+    function isAllowedJobTransition(fromStatus, toStatus) {
+      return (fromStatus == 'pending' && toStatus == 'approved')
+        || (fromStatus == 'pending' && toStatus == 'rejected')
+        || (fromStatus == 'pending' && toStatus == 'cancelled')
+        || (fromStatus == 'approved' && toStatus == 'pending')
+        || (fromStatus == 'approved' && toStatus == 'shot')
+        || (fromStatus == 'approved' && toStatus == 'cancelled');
+    }
+
+    // Job status transitions (incl. muhabir günlük rapor → çekildi) read the
+    // job owner's user doc in the same transaction to bump stats. Without this,
+    // reporters/coordinators get documents:batchGet 403 on users/{ownerUid}.
+    // Scoped to media_planning owners only (job creators).
+    // Keep this branch-light: nested isX() ORs exceeded live rules budget for İK
+    // listing manageable accounts (permission-denied while cache still showed rows).
+    function canReadUserProfile(uid) {
+      return isAuthenticated()
+        && (
+          request.auth.uid == uid
+          || role() == 'management'
+          || (
+            role() in ['coordinator', 'human_resources']
+            && resource.data.role in ['media_planning', 'reporter', 'human_resources']
+          )
+          || (
+            role() == 'reporter'
+            && resource.data.role == 'media_planning'
+          )
+        );
+    }
+
+    // ---------- users ----------
+    match /users/{uid} {
+      allow read: if canReadUserProfile(uid);
+
+      allow create: if isAccountAdmin()
+        && request.auth.uid != uid
+        && request.resource.data.keys().hasOnly([
+          'uid',
+          'fullName',
+          'email',
+          'role',
+          'isActive',
+          'deletedAt',
+          'shiftDurationMinutes',
+          'timezone',
+          'stats',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.uid == uid
+        && isValidString(request.resource.data.fullName, 2, 120)
+        && isValidString(request.resource.data.email, 3, 254)
+        && canManageTargetRole(request.resource.data.role)
+        && request.resource.data.isActive == true
+        && request.resource.data.deletedAt == null
+        && request.resource.data.timezone == 'Europe/Istanbul'
+        && request.resource.data.stats.keys().hasOnly(['jobsReceived', 'jobsShot', 'jobsCancelled'])
+        && request.resource.data.stats.jobsReceived == 0
+        && request.resource.data.stats.jobsShot == 0
+        && request.resource.data.stats.jobsCancelled == 0
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && (
+          request.resource.data.shiftDurationMinutes == null
+          || (
+            request.resource.data.shiftDurationMinutes is int
+            && request.resource.data.shiftDurationMinutes > 0
+          )
+        );
+
+      allow delete: if false;
+
+      // Stats-only — FIRST allow (own budget). affectedKeys already freezes other fields.
+      // SEC-06: only ±1 single-counter deltas (matches jobService increment() / getStatsDelta).
+      allow update: if isCoordinatorOrManagement()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stats', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && isValidStatsIncrement(resource.data.stats, request.resource.data.stats);
+
+      // Reporter bumps owner stats when marking a reported job as shot (daily report)
+      allow update: if isReporter()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stats', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && isValidStatsIncrement(resource.data.stats, request.resource.data.stats);
+
+      // Media planner may update own stats when completing own jobs (shot / cancelled)
+      allow update: if isMediaPlanning()
+        && isOwner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stats', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && isValidStatsIncrement(resource.data.stats, request.resource.data.stats);
+
+      // Freeze / unfreeze (isActive only) — management, coordinator, İK
+      allow update: if isAccountAdmin()
+        && request.auth.uid != uid
+        && canManageTargetRole(resource.data.role)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['isActive', 'updatedAt'])
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.fullName == resource.data.fullName
+        && request.resource.data.shiftDurationMinutes == resource.data.shiftDurationMinutes
+        && request.resource.data.timezone == resource.data.timezone
+        && request.resource.data.stats == resource.data.stats
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.deletedAt == resource.data.deletedAt
+        && resource.data.deletedAt == null
+        && request.resource.data.deletedAt == null
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.isActive is bool;
+
+      // Soft-delete — management/coordinator only (not İK)
+      allow update: if canSoftDeleteAccounts()
+        && request.auth.uid != uid
+        && canManageTargetRole(resource.data.role)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['isActive', 'deletedAt', 'updatedAt'])
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.fullName == resource.data.fullName
+        && request.resource.data.shiftDurationMinutes == resource.data.shiftDurationMinutes
+        && request.resource.data.timezone == resource.data.timezone
+        && request.resource.data.stats == resource.data.stats
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && resource.data.deletedAt == null
+        && request.resource.data.isActive == false
+        && request.resource.data.deletedAt == request.time;
+
+      // Owner may update own display name (ad soyad)
+      allow update: if isOwner(uid)
+        && resource.data.deletedAt == null
+        && resource.data.isActive == true
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['fullName', 'updatedAt'])
+        && isValidString(request.resource.data.fullName, 2, 120)
+        && request.resource.data.updatedAt == request.time;
+
+      match /attendanceLogs/{shiftId} {
+        allow read: if isOwner(uid)
+          || isCoordinatorOrManagement()
+          || isHumanResources();
+
+        allow create: if isOwner(uid)
+          && canTrackShift()
+          && activeShiftExists(uid)
+          && shiftId == activeShiftDoc(uid).shiftId
+          && request.resource.data.keys().hasOnly([
+            'shiftId',
+            'ownerUid',
+            'ownerNameSnapshot',
+            'roleSnapshot',
+            'status',
+            'startedAt',
+            'endedAt',
+            'workedMinutes',
+            'timezone',
+            'finalizedAt',
+            'editVersion',
+            'lastEditedByUid',
+            'lastEditedByNameSnapshot',
+            'lastEditedAt',
+            'lastEditReason'
+          ])
+          && request.resource.data.shiftId == shiftId
+          && request.resource.data.ownerUid == uid
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerNameSnapshot == activeShiftDoc(uid).ownerNameSnapshot
+          && request.resource.data.roleSnapshot == activeShiftDoc(uid).roleSnapshot
+          && isValidShiftRole(request.resource.data.roleSnapshot)
+          && request.resource.data.status == 'completed'
+          && request.resource.data.startedAt == activeShiftDoc(uid).startedAt
+          && request.resource.data.timezone == 'Europe/Istanbul'
+          && request.resource.data.endedAt == request.time
+          && request.resource.data.finalizedAt == request.time
+          && request.resource.data.editVersion == 0
+          && request.resource.data.lastEditedByUid == null
+          && request.resource.data.lastEditedByNameSnapshot == null
+          && request.resource.data.lastEditedAt == null
+          && request.resource.data.lastEditReason == null
+          && request.time > activeShiftDoc(uid).startedAt
+          && request.resource.data.workedMinutes is int
+          && request.resource.data.workedMinutes >= 0
+          && request.resource.data.workedMinutes <= 7 * 24 * 60
+          // ±2 minutes vs server elapsed — no client timeSync required
+          && duration.value(request.resource.data.workedMinutes, 'm')
+            <= (request.resource.data.endedAt - request.resource.data.startedAt)
+              + duration.value(2, 'm')
+          && duration.value(request.resource.data.workedMinutes, 'm')
+            + duration.value(2, 'm')
+            >= (request.resource.data.endedAt - request.resource.data.startedAt)
+          && !existsAfter(/databases/$(database)/documents/activeShifts/$(uid));
+
+        allow update: if (isHumanResources() || isManagement())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'startedAt',
+            'endedAt',
+            'workedMinutes',
+            'editVersion',
+            'lastEditedByUid',
+            'lastEditedByNameSnapshot',
+            'lastEditedAt',
+            'lastEditReason'
+          ])
+          && (
+            (
+              resource.data.keys().hasAll(['editVersion'])
+              && request.resource.data.editVersion == resource.data.editVersion + 1
+            )
+            ||
+            (
+              !resource.data.keys().hasAll(['editVersion'])
+              && request.resource.data.editVersion == 1
+            )
+          )
+          && request.resource.data.lastEditedByUid == request.auth.uid
+          && request.resource.data.lastEditedByNameSnapshot == callerProfile().fullName
+          && request.resource.data.lastEditedAt == request.time
+          && isValidString(request.resource.data.lastEditReason, 3, 500)
+          && request.resource.data.endedAt > request.resource.data.startedAt
+          && request.resource.data.endedAt <= request.time
+          && request.resource.data.workedMinutes is int
+          && request.resource.data.workedMinutes >= 0
+          && request.resource.data.workedMinutes <= 7 * 24 * 60
+          && duration.value(request.resource.data.workedMinutes, 'm')
+            <= (request.resource.data.endedAt - request.resource.data.startedAt)
+              + duration.value(1, 'm')
+          && duration.value(request.resource.data.workedMinutes, 'm')
+            + duration.value(1, 'm')
+            >= (request.resource.data.endedAt - request.resource.data.startedAt)
+          && existsAfter(
+            /databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)/history/$(request.resource.data.editVersion)
+          );
+
+        allow delete: if false;
+
+        match /history/{version} {
+          allow read: if isOwner(uid)
+            || isCoordinatorOrManagement()
+            || isHumanResources();
+
+          allow create: if (isHumanResources() || isManagement())
+            && request.resource.data.keys().hasOnly([
+              'version',
+              'actorUid',
+              'actorNameSnapshot',
+              'actorRole',
+              'reason',
+              'previousStartedAt',
+              'previousEndedAt',
+              'previousWorkedMinutes',
+              'newStartedAt',
+              'newEndedAt',
+              'newWorkedMinutes',
+              'createdAt'
+            ])
+            && request.resource.data.version == int(version)
+            && request.resource.data.actorUid == request.auth.uid
+            && request.resource.data.actorNameSnapshot == callerProfile().fullName
+            && request.resource.data.actorRole == role()
+            && request.resource.data.actorRole in ['human_resources', 'management']
+            && isValidString(request.resource.data.reason, 3, 500)
+            && request.resource.data.createdAt == request.time
+            && request.resource.data.previousStartedAt ==
+              get(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)).data.startedAt
+            && request.resource.data.previousEndedAt ==
+              get(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)).data.endedAt
+            && request.resource.data.previousWorkedMinutes ==
+              get(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)).data.workedMinutes
+            && request.resource.data.newStartedAt ==
+              getAfter(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)).data.startedAt
+            && request.resource.data.newEndedAt ==
+              getAfter(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)).data.endedAt
+            && request.resource.data.newWorkedMinutes ==
+              getAfter(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(shiftId)).data.workedMinutes;
+
+          allow update, delete: if false;
+        }
+      }
+    }
+
+    // ---------- managementNotifications (Spark in-app inbox; no Cloud Functions) ----------
+    match /managementNotifications/{notificationId} {
+      allow read: if isManagement();
+
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasOnly([
+          'type',
+          'title',
+          'body',
+          'link',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'readByUids'
+        ])
+        && request.resource.data.type in [
+          'job_created',
+          'job_approved',
+          'daily_report',
+          'z_report',
+          'hr_report',
+          'hiring_note'
+        ]
+        && isValidString(request.resource.data.title, 1, 120)
+        && isValidString(request.resource.data.body, 0, 300)
+        // Relative app paths only (reject http(s): / protocol-relative).
+        && isValidString(request.resource.data.link, 1, 200)
+        && request.resource.data.link.matches('^/[A-Za-z0-9_\\-./?=&%]+$')
+        && request.resource.data.createdByUid == request.auth.uid
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.readByUids == [];
+
+      allow update: if isManagement()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readByUids'])
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.title == resource.data.title
+        && request.resource.data.body == resource.data.body
+        && request.resource.data.link == resource.data.link
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.readByUids is list
+        && request.resource.data.readByUids.hasAll(resource.data.readByUids)
+        && request.resource.data.readByUids.size() <= resource.data.readByUids.size() + 1
+        && request.auth.uid in request.resource.data.readByUids;
+
+      allow delete: if false;
+    }
+
+    // ---------- broadcastNotifications (all roles in-app; e.g. new region) ----------
+    match /broadcastNotifications/{notificationId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isCoordinatorOrManagement()
+        && request.resource.data.keys().hasOnly([
+          'type',
+          'title',
+          'body',
+          'link',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'readByUids'
+        ])
+        && request.resource.data.type == 'region_created'
+        && isValidString(request.resource.data.title, 1, 120)
+        && isValidString(request.resource.data.body, 0, 300)
+        && isValidString(request.resource.data.link, 1, 200)
+        && request.resource.data.link.matches('^/[A-Za-z0-9_\\-./?=&%]+$')
+        && request.resource.data.createdByUid == request.auth.uid
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.readByUids == [];
+
+      allow update: if isAuthenticated()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readByUids'])
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.title == resource.data.title
+        && request.resource.data.body == resource.data.body
+        && request.resource.data.link == resource.data.link
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.readByUids is list
+        && request.resource.data.readByUids.hasAll(resource.data.readByUids)
+        && request.resource.data.readByUids.size() <= resource.data.readByUids.size() + 1
+        && request.auth.uid in request.resource.data.readByUids;
+
+      allow delete: if false;
+    }
+
+    // ---------- userNotifications/{uid}/items (per-user inbox; e.g. MPU job status) ----------
+    match /userNotifications/{uid}/items/{notificationId} {
+      allow read: if isOwner(uid);
+
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasOnly([
+          'type',
+          'title',
+          'body',
+          'link',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'readByUids'
+        ])
+        && request.resource.data.type in [
+          'job_approved',
+          'job_rejected',
+          'job_shot'
+        ]
+        && isValidString(request.resource.data.title, 1, 120)
+        && isValidString(request.resource.data.body, 0, 300)
+        && isValidString(request.resource.data.link, 1, 200)
+        && request.resource.data.link.matches('^/[A-Za-z0-9_\\-./?=&%]+$')
+        && request.resource.data.createdByUid == request.auth.uid
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.readByUids == [];
+
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readByUids'])
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.title == resource.data.title
+        && request.resource.data.body == resource.data.body
+        && request.resource.data.link == resource.data.link
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.readByUids is list
+        && request.resource.data.readByUids.hasAll(resource.data.readByUids)
+        && request.resource.data.readByUids.size() <= resource.data.readByUids.size() + 1
+        && request.auth.uid in request.resource.data.readByUids;
+
+      allow delete: if false;
+    }
+
+    // ---------- activeShifts ----------
+    match /activeShifts/{uid} {
+      allow read: if isOwner(uid)
+        || isCoordinatorOrManagement()
+        || isHumanResources();
+
+      allow create: if isOwner(uid)
+        && canTrackShift()
+        && request.resource.data.keys().hasOnly([
+          'shiftId',
+          'ownerUid',
+          'ownerNameSnapshot',
+          'roleSnapshot',
+          'status',
+          'startedAt',
+          'timezone',
+          'createdAt'
+        ])
+        && isValidString(request.resource.data.shiftId, 1, 128)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == uid
+        && isValidString(request.resource.data.ownerNameSnapshot, 1, 120)
+        && request.resource.data.roleSnapshot == role()
+        && isValidShiftRole(request.resource.data.roleSnapshot)
+        && request.resource.data.status == 'active'
+        && request.resource.data.startedAt == request.time
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.timezone == 'Europe/Istanbul';
+
+      allow update: if false;
+
+      allow delete: if isOwner(uid)
+        && canTrackShift()
+        && activeShiftExists(uid)
+        && existsAfter(/databases/$(database)/documents/users/$(uid)/attendanceLogs/$(resource.data.shiftId));
+    }
+
+    // ---------- timeSync ----------
+    match /timeSync/{uid} {
+      allow read, create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['ownerUid', 'serverNow', 'nonce'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.serverNow == request.time
+        && isValidString(request.resource.data.nonce, 1, 128);
+
+      allow delete: if false;
+    }
+
+    // ---------- jobs ----------
+    match /jobs/{jobId} {
+      // ROLE-01 accepted risk: HR may read all job details (not narrowed).
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || isCoordinatorOrManagement()
+          || isHumanResources()
+          || isReporter()
+        );
+
+      allow create: if isMediaPlanning()
+        && request.resource.data.keys().hasOnly([
+          'companyName',
+          'companyNameNormalized',
+          'contactPersonName',
+          'contactPhone',
+          'contactCount',
+          'contacts',
+          'province',
+          'district',
+          'fullAddress',
+          'instagram',
+          'acquiredDate',
+          'plannedExecutionDate',
+          'agreedAmountKurus',
+          'currency',
+          'status',
+          'statusVersion',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdByEmailSnapshot',
+          'createdByRole',
+          'createdAt',
+          'updatedAt',
+          'reviewedByUid',
+          'reviewedByNameSnapshot',
+          'reviewedAt',
+          'reviewNote',
+          'forwardedToReporter',
+          'forwardedToReporterByUid',
+          'forwardedToReporterByNameSnapshot',
+          'forwardedToReporterAt',
+          'dailyReportId',
+          'idempotencyKey'
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByRole == 'media_planning'
+        && isValidString(request.resource.data.createdByNameSnapshot, 2, 120)
+        && isValidString(request.resource.data.createdByEmailSnapshot, 3, 254)
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && request.resource.data.createdByEmailSnapshot == userDoc(request.auth.uid).email
+        && request.resource.data.status == 'pending'
+        && request.resource.data.statusVersion == 1
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.reviewedByUid == null
+        && request.resource.data.reviewedByNameSnapshot == null
+        && request.resource.data.reviewedAt == null
+        && request.resource.data.reviewNote == null
+        && request.resource.data.forwardedToReporter == false
+        && request.resource.data.forwardedToReporterByUid == null
+        && request.resource.data.forwardedToReporterByNameSnapshot == null
+        && request.resource.data.forwardedToReporterAt == null
+        && request.resource.data.dailyReportId == null
+        && request.resource.data.currency == 'TRY'
+        && isPosWhole(request.resource.data.agreedAmountKurus)
+        && isValidString(request.resource.data.companyName, 2, 120)
+        && isValidString(request.resource.data.companyNameNormalized, 2, 120)
+        && isValidString(request.resource.data.contactPersonName, 2, 100)
+        && isValidString(request.resource.data.contactPhone, 10, 20)
+        && request.resource.data.contactCount in [1, 2, 3]
+        && request.resource.data.contacts is list
+        && request.resource.data.contacts.size() == request.resource.data.contactCount
+        && isValidJobContacts(request.resource.data.contacts)
+        && request.resource.data.contactPersonName == request.resource.data.contacts[0].name
+        && request.resource.data.contactPhone == request.resource.data.contacts[0].mobilePhone
+        && isValidString(request.resource.data.province, 2, 50)
+        && isValidString(request.resource.data.district, 2, 50)
+        && isValidString(request.resource.data.fullAddress, 10, 500)
+        && (request.resource.data.instagram == null
+          || isValidString(request.resource.data.instagram, 1, 100))
+        && isValidString(request.resource.data.idempotencyKey, 8, 128)
+        && isDateOnly(request.resource.data.acquiredDate)
+        && isDateOnly(request.resource.data.plannedExecutionDate)
+        && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
+
+      // Pending content edit FIRST (budget): own MPU / coord / mgmt.
+      // Must stay ahead of reviewer allows; status-first short-circuits below.
+      allow update: if resource.data.status == 'pending'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.statusVersion == resource.data.statusVersion
+        && (
+          (isMediaPlanning() && resource.data.createdByUid == request.auth.uid)
+          || isCoordinatorOrManagement()
+        )
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'companyName', 'companyNameNormalized', 'contactPersonName', 'contactPhone',
+            'contactCount', 'contacts', 'province', 'district', 'fullAddress', 'instagram',
+            'acquiredDate', 'plannedExecutionDate', 'agreedAmountKurus', 'updatedAt'
+          ])
+        && isValidString(request.resource.data.companyName, 2, 120)
+        && isValidString(request.resource.data.companyNameNormalized, 2, 120)
+        && isValidString(request.resource.data.contactPersonName, 2, 100)
+        && isValidString(request.resource.data.contactPhone, 10, 20)
+        && request.resource.data.contactCount in [1, 2, 3]
+        && request.resource.data.contacts is list
+        && request.resource.data.contacts.size() == request.resource.data.contactCount
+        && isValidJobContacts(request.resource.data.contacts)
+        && request.resource.data.contactPersonName == request.resource.data.contacts[0].name
+        && request.resource.data.contactPhone == request.resource.data.contacts[0].mobilePhone
+        && isValidString(request.resource.data.province, 2, 50)
+        && isValidString(request.resource.data.district, 2, 50)
+        && isValidString(request.resource.data.fullAddress, 10, 500)
+        && (request.resource.data.instagram == null
+          || isValidString(request.resource.data.instagram, 1, 100))
+        && isPosWhole(request.resource.data.agreedAmountKurus)
+        && isJobSchedule(request.resource.data.acquiredDate)
+        && isJobSchedule(request.resource.data.plannedExecutionDate)
+        && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
+      // Reviewer status transitions — status checks FIRST (budget), then role bump.
+      // pending → rejected (reddet)
+      allow update: if resource.data.status == 'pending'
+        && request.resource.data.status == 'rejected'
+        && jobReviewerStatusBump()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote'
+          ])
+        && jobReviewerStamp()
+        && (request.resource.data.reviewNote == null
+          || isValidString(request.resource.data.reviewNote, 1, 500));
+
+      // approved → cancelled (iptal)
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'cancelled'
+        && jobReviewerStatusBump()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote'
+          ])
+        && jobReviewerStamp()
+        && (request.resource.data.reviewNote == null
+          || isValidString(request.resource.data.reviewNote, 1, 500));
+
+      // pending → cancelled (48 saat otomatik / manuel iptal)
+      // Cheap status checks FIRST: non-matching writes short-circuit before the
+      // role-lookup chain, keeping total evaluation under the 1000-expr budget.
+      allow update: if resource.data.status == 'pending'
+        && request.resource.data.status == 'cancelled'
+        && jobReviewerStatusBump()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote'
+          ])
+        && jobReviewerStamp()
+        && (request.resource.data.reviewNote == null
+          || isValidString(request.resource.data.reviewNote, 1, 500));
+
+      // approved → shot (çekildi) — coordinator / management
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'shot'
+        && jobReviewerStatusBump()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote'
+          ])
+        && jobReviewerStamp()
+        && request.resource.data.reviewNote == null;
+
+      // approved → shot (çekildi) — reporter via daily report
+      // Keep this branch cheap: no users/{owner} get/getAfter (stats are deferred
+      // client-side). Name stamp must match callerProfile().fullName.
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'shot'
+        && isReporter()
+        && request.resource.data.statusVersion == resource.data.statusVersion + 1
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote'
+          ])
+        && request.resource.data.reviewedByUid == request.auth.uid
+        && request.resource.data.reviewedByNameSnapshot == callerProfile().fullName
+        && request.resource.data.reviewedAt == request.time
+        && request.resource.data.reviewNote == null
+        && request.resource.data.updatedAt == request.time;
+
+      // Claim / release job for daily-report uniqueness (reporter / coord / mgmt).
+      // Only touches dailyReportId + updatedAt — race-safe claim in report transactions.
+      // Claim (null → reportId) only when status is approved or shot; release (id → null) always ok.
+      allow update: if (isReporter() || isCoordinatorOrManagement())
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['dailyReportId', 'updatedAt'])
+        && (
+          (
+            (!('dailyReportId' in resource.data) || resource.data.dailyReportId == null)
+            && isValidString(request.resource.data.dailyReportId, 1, 128)
+            && (resource.data.status == 'approved' || resource.data.status == 'shot')
+          )
+          || (
+            'dailyReportId' in resource.data
+            && resource.data.dailyReportId is string
+            && resource.data.dailyReportId.size() >= 1
+            && request.resource.data.dailyReportId == null
+          )
+        );
+
+      // pending → approved (konfirme)
+      allow update: if resource.data.status == 'pending'
+        && request.resource.data.status == 'approved'
+        && jobReviewerStatusBump()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote',
+            'plannedExecutionDate'
+          ])
+        && isJobScheduleDateTime(request.resource.data.plannedExecutionDate)
+        && request.resource.data.plannedExecutionDate >= resource.data.acquiredDate
+        && jobReviewerStamp()
+        && (request.resource.data.reviewNote == null
+          || isValidString(request.resource.data.reviewNote, 1, 500));
+
+      // approved → pending (geri al)
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'pending'
+        && jobReviewerStatusBump()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote',
+            'forwardedToReporter',
+            'forwardedToReporterByUid',
+            'forwardedToReporterByNameSnapshot',
+            'forwardedToReporterAt'
+          ])
+        && request.resource.data.reviewedByUid == null
+        && request.resource.data.reviewedByNameSnapshot == null
+        && request.resource.data.reviewedAt == null
+        && request.resource.data.reviewNote == null
+        && request.resource.data.forwardedToReporter == false
+        && request.resource.data.forwardedToReporterByUid == null
+        && request.resource.data.forwardedToReporterByNameSnapshot == null
+        && request.resource.data.forwardedToReporterAt == null;
+
+      // Forward approved job to reporter calendar — coordinator / management
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'approved'
+        && isCoordinatorOrManagement()
+        && jobForwardedFlag(resource.data) == false
+        && request.resource.data.forwardedToReporter == true
+        && request.resource.data.forwardedToReporterByUid == request.auth.uid
+        && request.resource.data.forwardedToReporterByNameSnapshot == callerProfile().fullName
+        && isValidString(request.resource.data.forwardedToReporterByNameSnapshot, 1, 120)
+        && request.resource.data.forwardedToReporterAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'forwardedToReporter',
+            'forwardedToReporterByUid',
+            'forwardedToReporterByNameSnapshot',
+            'forwardedToReporterAt',
+            'updatedAt'
+          ]);
+
+      // Media planner completes own approved job → shot / cancelled
+      allow update: if resource.data.status == 'approved'
+        && isMediaPlanning()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.status in ['shot', 'cancelled']
+        && isAllowedJobTransition(resource.data.status, request.resource.data.status)
+        && request.resource.data.statusVersion == resource.data.statusVersion + 1
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'status',
+            'statusVersion',
+            'updatedAt',
+            'reviewedByUid',
+            'reviewedByNameSnapshot',
+            'reviewedAt',
+            'reviewNote'
+          ])
+        && request.resource.data.reviewedByUid == request.auth.uid
+        && request.resource.data.reviewedByNameSnapshot == callerProfile().fullName
+        && request.resource.data.reviewedAt == request.time
+        && (
+          (request.resource.data.status == 'shot' && request.resource.data.reviewNote == null)
+          || (request.resource.data.status == 'cancelled'
+            && isValidString(request.resource.data.reviewNote, 3, 500))
+        )
+        && request.resource.data.updatedAt == request.time
+        && statsUpdatedForJobTransition(resource.data, request.resource.data);
+
+      allow delete: if false;
+
+      match /history/{historyId} {
+        allow read: if isAuthenticated()
+          && (
+            get(/databases/$(database)/documents/jobs/$(jobId)).data.createdByUid == request.auth.uid
+            || isCoordinatorOrManagement()
+            || isHumanResources()
+            || isReporter()
+          );
+
+        allow create: if isAuthenticated()
+          && existsAfter(/databases/$(database)/documents/jobs/$(jobId))
+          && (
+            // Initial pending history by owner (same batch as job create)
+            (
+              isMediaPlanning()
+              && request.resource.data.version == 1
+              && request.resource.data.fromStatus == null
+              && request.resource.data.toStatus == 'pending'
+              && request.resource.data.actorUid == request.auth.uid
+              && request.resource.data.actorRole == 'media_planning'
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.createdByUid == request.auth.uid
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'pending'
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion == 1
+            )
+            ||
+            // Status transition history by coordinator/management
+            (
+              isCoordinatorOrManagement()
+              && exists(/databases/$(database)/documents/jobs/$(jobId))
+              && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
+              && request.resource.data.fromStatus == get(/databases/$(database)/documents/jobs/$(jobId)).data.status
+              && request.resource.data.toStatus == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status
+              && request.resource.data.actorUid == request.auth.uid
+              && request.resource.data.actorRole == role()
+            )
+            ||
+            // Reporter marks approved → shot via daily report
+            (
+              isReporter()
+              && exists(/databases/$(database)/documents/jobs/$(jobId))
+              && get(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'approved'
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'shot'
+              && request.resource.data.fromStatus == 'approved'
+              && request.resource.data.toStatus == 'shot'
+              && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
+              && request.resource.data.actorUid == request.auth.uid
+              && request.resource.data.actorRole == 'reporter'
+              && request.resource.data.actorNameSnapshot == callerProfile().fullName
+              && request.resource.data.note == null
+            )
+            ||
+            // Owner completion history (approved → shot/cancelled)
+            (
+              isMediaPlanning()
+              && existsAfter(/databases/$(database)/documents/jobs/$(jobId))
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.createdByUid == request.auth.uid
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status in ['shot', 'cancelled']
+              && request.resource.data.fromStatus == 'approved'
+              && request.resource.data.toStatus == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status
+              && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
+              && request.resource.data.actorUid == request.auth.uid
+              && request.resource.data.actorRole == 'media_planning'
+              && request.resource.data.actorNameSnapshot == callerProfile().fullName
+            )
+          )
+          && request.resource.data.keys().hasOnly([
+            'version',
+            'fromStatus',
+            'toStatus',
+            'actorUid',
+            'actorNameSnapshot',
+            'actorRole',
+            'note',
+            'createdAt'
+          ])
+          && isValidString(request.resource.data.actorNameSnapshot, 1, 120)
+          && request.resource.data.createdAt == request.time
+          && (request.resource.data.note == null
+            || isValidString(request.resource.data.note, 1, 500));
+
+        allow update, delete: if false;
+      }
+    }
+
+    function isValidJobContact(contact) {
+      return contact.keys().hasOnly(['name', 'mobilePhone', 'workPhone'])
+        && isValidString(contact.name, 2, 100)
+        && isValidString(contact.mobilePhone, 10, 20)
+        && (contact.workPhone == null || isValidString(contact.workPhone, 10, 20));
+    }
+
+    function isValidJobContacts(contacts) {
+      return contacts.size() >= 1
+        && contacts.size() <= 3
+        && isValidJobContact(contacts[0])
+        && (contacts.size() < 2 || isValidJobContact(contacts[1]))
+        && (contacts.size() < 3 || isValidJobContact(contacts[2]));
+    }
+
+    function historyCreatedForTransition(jobId, before, after) {
+      return true;
+    }
+
+    /**
+     * SEC-06 — owner stats on users/{uid} must change by exactly one counter ±1
+     * (jobTransitions getStatsDelta / FieldValue.increment). Blocks absolute
+     * overwrite to arbitrary large numbers. No get() — stays within budget.
+     */
+    function isValidStatsIncrement(before, after) {
+      return after.keys().hasOnly(['jobsReceived', 'jobsShot', 'jobsCancelled'])
+        && isNonNegWhole(after.jobsReceived)
+        && isNonNegWhole(after.jobsShot)
+        && isNonNegWhole(after.jobsCancelled)
+        && after.jobsReceived - before.jobsReceived >= -1
+        && after.jobsReceived - before.jobsReceived <= 1
+        && after.jobsShot - before.jobsShot >= -1
+        && after.jobsShot - before.jobsShot <= 1
+        && after.jobsCancelled - before.jobsCancelled >= -1
+        && after.jobsCancelled - before.jobsCancelled <= 1
+        && (
+          (
+            after.jobsReceived != before.jobsReceived
+            && after.jobsShot == before.jobsShot
+            && after.jobsCancelled == before.jobsCancelled
+          )
+          || (
+            after.jobsReceived == before.jobsReceived
+            && after.jobsShot != before.jobsShot
+            && after.jobsCancelled == before.jobsCancelled
+          )
+          || (
+            after.jobsReceived == before.jobsReceived
+            && after.jobsShot == before.jobsShot
+            && after.jobsCancelled != before.jobsCancelled
+          )
+        );
+    }
+
+    function statsUpdatedForJobTransition(before, after) {
+      // No users/{owner} get()/getAfter() here — that blows the job-transition
+      // OR budget. Real SEC-06 enforcement is isValidStatsIncrement on
+      // users/{uid} stats-only updates (bounded ±1 single-counter diffs).
+      return true;
+    }
+
+    // ---------- hrReports ----------
+    // Coordinator/management may read all (HR viewer inbox). Authors read own.
+    match /hrReports/{reportId} {
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || isCoordinatorOrManagement()
+        );
+
+      allow create: if isHumanResources()
+        && request.resource.data.keys().hasOnly([
+          'title',
+          'body',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && isValidString(request.resource.data.title, 2, 200)
+        && isValidString(request.resource.data.body, 1, 10000)
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isHumanResources()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'body', 'updatedAt'])
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && isValidString(request.resource.data.title, 2, 200)
+        && isValidString(request.resource.data.body, 1, 10000)
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isHumanResources() || isManagement();
+    }
+
+    function isValidHiringAttachment(attachment, ownerUid, noteId) {
+      return attachment.keys().hasOnly([
+          'id',
+          'name',
+          'size',
+          'mimeType',
+          'driveFileId',
+          'url',
+        ])
+        && isValidString(attachment.id, 1, 100)
+        && isValidString(attachment.name, 1, 255)
+        && isValidString(attachment.mimeType, 1, 100)
+        && isValidString(attachment.driveFileId, 1, 200)
+        && isValidString(attachment.url, 8, 2000)
+        && attachment.url.matches('https://.*')
+        && attachment.size is number
+        && isPosWhole(attachment.size)
+        && attachment.size <= 20 * 1024 * 1024;
+    }
+
+    function isValidHiringAttachments(attachments, ownerUid, noteId) {
+      return attachments is list
+        && attachments.size() <= 10
+        && (attachments.size() < 1 || isValidHiringAttachment(attachments[0], ownerUid, noteId))
+        && (attachments.size() < 2 || isValidHiringAttachment(attachments[1], ownerUid, noteId))
+        && (attachments.size() < 3 || isValidHiringAttachment(attachments[2], ownerUid, noteId))
+        && (attachments.size() < 4 || isValidHiringAttachment(attachments[3], ownerUid, noteId))
+        && (attachments.size() < 5 || isValidHiringAttachment(attachments[4], ownerUid, noteId))
+        && (attachments.size() < 6 || isValidHiringAttachment(attachments[5], ownerUid, noteId))
+        && (attachments.size() < 7 || isValidHiringAttachment(attachments[6], ownerUid, noteId))
+        && (attachments.size() < 8 || isValidHiringAttachment(attachments[7], ownerUid, noteId))
+        && (attachments.size() < 9 || isValidHiringAttachment(attachments[8], ownerUid, noteId))
+        && (attachments.size() < 10 || isValidHiringAttachment(attachments[9], ownerUid, noteId));
+    }
+
+    // ---------- hiringNotes ----------
+    // Coordinator/management may read all (HR viewer inbox). Authors read own.
+    match /hiringNotes/{noteId} {
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || isCoordinatorOrManagement()
+        );
+
+      allow create: if isHumanResources()
+        && request.resource.data.keys().hasOnly([
+          'candidateName',
+          'note',
+          'attachments',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && isValidString(request.resource.data.candidateName, 2, 200)
+        && isValidString(request.resource.data.note, 1, 10000)
+        && isValidHiringAttachments(
+          request.resource.data.attachments,
+          request.auth.uid,
+          noteId
+        )
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isHumanResources()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['candidateName', 'note', 'attachments', 'updatedAt'])
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && isValidString(request.resource.data.candidateName, 2, 200)
+        && isValidString(request.resource.data.note, 1, 10000)
+        && isValidHiringAttachments(
+          request.resource.data.attachments,
+          request.auth.uid,
+          noteId
+        )
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isHumanResources() || isManagement();
+    }
+
+    // ---------- appMeta (system flags) ----------
+    match /appMeta/{docId} {
+      allow read: if isHumanResources() || isManagement()
+        || (docId == 'zReportRetention' && isCoordinatorOrManagement());
+      allow create, update: if isHumanResources() || isManagement()
+        || (docId == 'zReportRetention' && isCoordinatorOrManagement());
+      allow delete: if false;
+    }
+
+    // ---------- reporterDailyReports ----------
+    match /reporterDailyReports/{reportId} {
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || isCoordinatorOrManagement()
+          || isHumanResources()
+        );
+
+      // Production transaction.set → create.
+      // FUNC-04: chargeMode/hasNews lite for companies[0..9] (full report×10 > 1000 exprs).
+      allow create: if isReporter()
+        && request.resource.data.editVersion == 0
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == callerProfile().fullName
+        && request.resource.data.createdByEmailSnapshot == callerProfile().email
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
+        && request.resource.data.deletedAt == null
+        && request.resource.data.deletedByUid == null
+        && request.resource.data.deletedByNameSnapshot == null
+        && isNonNegWhole(request.resource.data.companyCount)
+        && request.resource.data.companyCount >= 1
+        && request.resource.data.companyCount <= 10
+        && request.resource.data.companies is list
+        && request.resource.data.companies.size() == request.resource.data.companyCount
+        && isValidReporterCompaniesLiteAll(request.resource.data.companies);
+
+      // Soft-delete + content update. editVersion==0 is owned by allow create —
+      // guard with >= 1 so create-shaped writes never touch resource.data (ERROR)
+      // and do not burn the shared 1000-expression budget.
+      allow update: if isAuthenticated()
+        && request.resource.data.editVersion >= 1
+        && (
+          // Soft-delete
+          (
+            (
+              resource.data.createdByUid == request.auth.uid
+              || isCoordinatorOrManagement()
+            )
+            && resource.data.deletedAt == null
+            && request.resource.data.createdByUid == resource.data.createdByUid
+            && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+            && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.editVersion == resource.data.editVersion + 1
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.updatedByUid == request.auth.uid
+            && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'deletedAt',
+              'deletedByUid',
+              'deletedByNameSnapshot',
+              'editVersion',
+              'updatedAt',
+              'updatedByUid',
+              'updatedByNameSnapshot'
+            ])
+            && request.resource.data.deletedAt == request.time
+            && request.resource.data.deletedByUid == request.auth.uid
+            && request.resource.data.deletedByNameSnapshot == callerProfile().fullName
+          )
+          ||
+          // Content update (client Zod validates companies; keep rules light)
+          (
+            (
+              resource.data.createdByUid == request.auth.uid
+              || isCoordinatorOrManagement()
+            )
+            && resource.data.deletedAt == null
+            && request.resource.data.createdByUid == resource.data.createdByUid
+            && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+            && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.editVersion == resource.data.editVersion + 1
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.updatedByUid == request.auth.uid
+            && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'reportDate',
+              'companyCount',
+              'companies',
+              'note',
+              'hotelExpenseKurus',
+              'stationeryExpenseKurus',
+              'fuelExpenseKurus',
+              'extraExpenseKurus',
+              'operatingExpenseKurus',
+              'employeeExpenseKurus',
+              'totalExpenseKurus',
+              'earningsKurus',
+              'fieldPaidKurus',
+              'totalReporterEarningsKurus',
+              'totalCameramanEarningsKurus',
+              'totalVatKurus',
+              'updatedAt',
+              'editVersion',
+              'updatedByUid',
+              'updatedByNameSnapshot'
+            ])
+            && request.resource.data.deletedAt == null
+            && request.resource.data.deletedByUid == null
+            && request.resource.data.deletedByNameSnapshot == null
+            && isDateOnly(request.resource.data.reportDate)
+            && isNonNegWhole(request.resource.data.companyCount)
+          )
+        );
+
+      allow delete: if false;
+
+      match /history/{version} {
+        allow read: if isAuthenticated()
+          && (
+            get(/databases/$(database)/documents/reporterDailyReports/$(reportId)).data.createdByUid
+              == request.auth.uid
+            || isCoordinatorOrManagement()
+            || isHumanResources()
+          );
+
+        allow create: if isAuthenticated()
+          && request.resource.data.keys().hasOnly([
+            'action',
+            'version',
+            'actorUid',
+            'actorNameSnapshot',
+            'actorRole',
+            'createdAt'
+          ])
+          && request.resource.data.version == int(version)
+          && request.resource.data.action in ['create', 'update', 'soft_delete']
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.actorNameSnapshot == callerProfile().fullName
+          && request.resource.data.actorRole == role()
+          && request.resource.data.actorRole in ['reporter', 'coordinator', 'management']
+          && request.resource.data.createdAt == request.time
+          && getAfter(
+            /databases/$(database)/documents/reporterDailyReports/$(reportId)
+          ).data.editVersion == request.resource.data.version
+          && (
+            getAfter(
+              /databases/$(database)/documents/reporterDailyReports/$(reportId)
+            ).data.createdByUid == request.auth.uid
+            || isCoordinatorOrManagement()
+          );
+
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------- dailyRegions (günün bölgesi — MPU sayfasında) ----------
+    match /dailyRegions/{dateId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isCoordinatorOrManagement()
+        && request.resource.data.keys().hasOnly([
+          'date',
+          'region',
+          'updatedByUid',
+          'updatedByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.date == dateId
+        && isDateOnly(request.resource.data.date)
+        && isValidString(request.resource.data.region, 1, 120)
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isCoordinatorOrManagement()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['region', 'updatedByUid', 'updatedByNameSnapshot', 'updatedAt'])
+        && request.resource.data.date == resource.data.date
+        && isValidString(request.resource.data.region, 1, 120)
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isCoordinatorOrManagement();
+    }
+
+    // ---------- system (ops metrics; written by Admin SDK / scripts only) ----------
+    match /system/{docId} {
+      allow read: if docId == 'storageUsage' && isCoordinatorOrManagement();
+      allow create, update, delete: if false;
+    }
+
+    // ---------- reactionDailyScores (refleks oyunu günlük skorlar) ----------
+    match /reactionDailyScores/{scoreId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasOnly([
+          'date',
+          'uid',
+          'fullName',
+          'attempts',
+          'bestMs',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && isDateOnly(request.resource.data.date)
+        && isValidString(request.resource.data.fullName, 1, 120)
+        && request.resource.data.attempts is list
+        && request.resource.data.attempts.size() == 1
+        && request.resource.data.attempts[0] is int
+        && request.resource.data.attempts[0] >= 100
+        && request.resource.data.attempts[0] <= 3000
+        && request.resource.data.bestMs is int
+        && request.resource.data.bestMs == request.resource.data.attempts[0]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isAuthenticated()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.date == resource.data.date
+        && request.resource.data.fullName == resource.data.fullName
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['attempts', 'bestMs', 'updatedAt'])
+        && request.resource.data.attempts is list
+        && request.resource.data.attempts.size() == resource.data.attempts.size() + 1
+        && request.resource.data.attempts.size() <= 1
+        && request.resource.data.bestMs is int
+        && request.resource.data.bestMs >= 100
+        && request.resource.data.bestMs <= 3000
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if false;
+    }
+
+    // ---------- reactionDailyWinners (günün şampiyonu) ----------
+    // Create only when a matching reactionDailyScores/{date}_{uid} exists with
+    // the same date/uid/fullName/bestMs — prevents forging arbitrary winners.
+    // Legitimate finalizeYesterdayWinner still works (writes the real top score).
+    match /reactionDailyWinners/{dateId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasOnly([
+          'date',
+          'uid',
+          'fullName',
+          'bestMs',
+          'finalizedAt'
+        ])
+        && request.resource.data.date == dateId
+        && isDateOnly(request.resource.data.date)
+        && isValidString(request.resource.data.uid, 1, 128)
+        && isValidString(request.resource.data.fullName, 1, 120)
+        && request.resource.data.bestMs is int
+        && request.resource.data.bestMs >= 100
+        && request.resource.data.bestMs <= 3000
+        && request.resource.data.finalizedAt == request.time
+        && exists(
+          /databases/$(database)/documents/reactionDailyScores/$(
+            request.resource.data.date + '_' + request.resource.data.uid
+          )
+        )
+        && get(
+          /databases/$(database)/documents/reactionDailyScores/$(
+            request.resource.data.date + '_' + request.resource.data.uid
+          )
+        ).data.date == request.resource.data.date
+        && get(
+          /databases/$(database)/documents/reactionDailyScores/$(
+            request.resource.data.date + '_' + request.resource.data.uid
+          )
+        ).data.uid == request.resource.data.uid
+        && get(
+          /databases/$(database)/documents/reactionDailyScores/$(
+            request.resource.data.date + '_' + request.resource.data.uid
+          )
+        ).data.fullName == request.resource.data.fullName
+        && get(
+          /databases/$(database)/documents/reactionDailyScores/$(
+            request.resource.data.date + '_' + request.resource.data.uid
+          )
+        ).data.bestMs == request.resource.data.bestMs;
+
+      allow update, delete: if false;
+    }
+
+    // ---------- reporterZReports ----------
+    match /reporterZReports/{reportId} {
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || isCoordinatorOrManagement()
+        );
+
+      allow create: if isReporter()
+        && request.resource.data.keys().hasOnly([
+          'confirmed',
+          'photoStoragePath',
+          'photoDownloadUrl',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdByEmailSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.confirmed == true
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && request.resource.data.createdByEmailSnapshot == userDoc(request.auth.uid).email
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && isValidString(request.resource.data.createdByEmailSnapshot, 3, 254)
+        && (
+          request.resource.data.photoStoragePath == null
+          || isValidString(request.resource.data.photoStoragePath, 1, 500)
+        )
+        && (
+          request.resource.data.photoDownloadUrl == null
+          || isValidString(request.resource.data.photoDownloadUrl, 1, 2000)
+        )
+        && (
+          (request.resource.data.photoStoragePath == null
+            && request.resource.data.photoDownloadUrl == null)
+          ||
+          (request.resource.data.photoStoragePath != null
+            && request.resource.data.photoDownloadUrl != null)
+        )
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isReporter()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['photoStoragePath', 'photoDownloadUrl', 'updatedAt'])
+        && request.resource.data.confirmed == resource.data.confirmed
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (
+          request.resource.data.photoStoragePath == null
+          || isValidString(request.resource.data.photoStoragePath, 1, 500)
+        )
+        && (
+          request.resource.data.photoDownloadUrl == null
+          || isValidString(request.resource.data.photoDownloadUrl, 1, 2000)
+        )
+        && (
+          (request.resource.data.photoStoragePath == null
+            && request.resource.data.photoDownloadUrl == null)
+          ||
+          (request.resource.data.photoStoragePath != null
+            && request.resource.data.photoDownloadUrl != null)
+        )
+        && request.resource.data.updatedAt == request.time;
+
+      // Owner may delete own; yönetim/koordinatör for 2-month retention purge.
+      allow delete: if (isReporter()
+          && resource.data.createdByUid == request.auth.uid)
+        || isCoordinatorOrManagement();
+    }
+
+    // ---------- voiceRecordings (Drive-backed; no Firebase Storage) ----------
+    match /voiceRecordings/{recordingId} {
+      allow read: if isCoordinatorOrManagement();
+
+      allow create: if isCoordinatorOrManagement()
+        && request.resource.data.keys().hasOnly([
+          'companyName',
+          'jobId',
+          'recordedAtDate',
+          'durationMs',
+          'mimeType',
+          'size',
+          'driveFileId',
+          'url',
+          'webViewLink',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt'
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && isValidString(request.resource.data.companyName, 1, 200)
+        && isValidString(request.resource.data.recordedAtDate, 10, 10)
+        && isValidString(request.resource.data.mimeType, 1, 100)
+        && isValidString(request.resource.data.driveFileId, 1, 200)
+        && isValidString(request.resource.data.url, 8, 2000)
+        && isValidString(request.resource.data.webViewLink, 8, 2000)
+        && request.resource.data.url.matches('https://.*')
+        && request.resource.data.webViewLink.matches('https://.*')
+        && request.resource.data.durationMs is number
+        && request.resource.data.durationMs >= 0
+        && request.resource.data.durationMs <= 30 * 60 * 1000
+        && request.resource.data.size is number
+        && isPosWhole(request.resource.data.size)
+        && request.resource.data.size <= 100 * 1024 * 1024
+        && (
+          request.resource.data.jobId == null
+          || isValidString(request.resource.data.jobId, 1, 120)
+        )
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if false;
+      allow delete: if isCoordinatorOrManagement();
+    }
+
+    /**
+     * FUNC-04 — companies[0..9] lite on create.
+     * chargeMode + hasNews + cash⇒vatKurus==0 (keeps 10-firm creates under expr budget).
+     */
+    function isValidReporterCompanyLite(company) {
+      return company.hasNews is bool
+        && company.chargeMode in ['vat', 'cash']
+        && (company.chargeMode != 'cash' || company.vatKurus == 0);
+    }
+
+    function isValidReporterCompaniesLiteAll(companies) {
+      return isValidReporterCompanyLite(companies[0])
+        && (companies.size() < 2 || isValidReporterCompanyLite(companies[1]))
+        && (companies.size() < 3 || isValidReporterCompanyLite(companies[2]))
+        && (companies.size() < 4 || isValidReporterCompanyLite(companies[3]))
+        && (companies.size() < 5 || isValidReporterCompanyLite(companies[4]))
+        && (companies.size() < 6 || isValidReporterCompanyLite(companies[5]))
+        && (companies.size() < 7 || isValidReporterCompanyLite(companies[6]))
+        && (companies.size() < 8 || isValidReporterCompanyLite(companies[7]))
+        && (companies.size() < 9 || isValidReporterCompanyLite(companies[8]))
+        && (companies.size() < 10 || isValidReporterCompanyLite(companies[9]));
+    }
+
+  }
+}

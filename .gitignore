@@ -1,0 +1,57 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.netlify
+!.env.example
+
+# Vercel
+.vercel
+
+# Firebase
+.firebase/
+.firebaserc
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+
+# Service accounts (never commit)
+**/serviceAccount*.json
+**/service-account*.json
+**/firebase-adminsdk*.json
+*-firebase-adminsdk-*.json
+secrets/
+credentials/
+
+# App Check debug
+.appcheck-debug-token
+
+# Coverage / caches
+coverage
+*.tsbuildinfo
