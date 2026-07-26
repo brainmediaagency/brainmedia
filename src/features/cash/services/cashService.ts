@@ -92,6 +92,7 @@ export function subscribeReportCashGroups(
           reportDate,
           title: `${formatDateOnlyLongTr(reportDate)} tarihli rapor`,
           reporterName,
+          createdByUid: String(report.createdByUid ?? ''),
           createdAt: report.createdAt ?? null,
           incomeKurus: income,
           expenseKurus: expense,

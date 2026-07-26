@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 import { AppFooter } from '@/components/layout/AppFooter'
 import { AppHeader } from '@/components/layout/AppHeader'
 import { MobileNavigation } from '@/components/layout/MobileNavigation'
@@ -9,6 +10,7 @@ import { HrDataRetentionGuard } from '@/features/hr/components/HrDataRetentionGu
 import { ReactionWinnerGuard } from '@/features/game/components/ReactionWinnerGuard'
 import { AutoCancelPendingJobsGuard } from '@/features/jobs/components/AutoCancelPendingJobsGuard'
 import { AutoForwardJobsGuard } from '@/features/jobs/components/AutoForwardJobsGuard'
+import { DailyRegionNotifyGuard } from '@/features/media-planning/components/DailyRegionNotifyGuard'
 import { OneSignalSubscribeBanner } from '@/features/notifications/components/OneSignalSubscribeBanner'
 import { ZReportDataRetentionGuard } from '@/features/reporter/components/ZReportDataRetentionGuard'
 import { VoiceDataRetentionGuard } from '@/features/voice-recording/components/VoiceDataRetentionGuard'
@@ -19,6 +21,7 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const { isOnline, claims } = useAuth()
+  const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
@@ -30,6 +33,7 @@ export function AppShell({ children }: AppShellProps) {
       <VoiceDataRetentionGuard />
       <AutoForwardJobsGuard />
       <AutoCancelPendingJobsGuard />
+      <DailyRegionNotifyGuard />
       <ReactionWinnerGuard />
 
       <div className="flex min-h-screen min-h-dvh min-w-0 max-w-full flex-1 flex-col">
@@ -40,7 +44,10 @@ export function AppShell({ children }: AppShellProps) {
         </div>
 
         <main className="flex-1 overflow-x-clip overflow-y-auto px-4 py-4 pb-[max(1rem,var(--safe-bottom))] sm:p-4 sm:pb-[max(1rem,var(--safe-bottom))] lg:p-6 lg:pb-[max(1.5rem,var(--safe-bottom))]">
-          <div className="content-shell flex min-h-full max-w-full animate-fade-in flex-col">
+          <div
+            key={location.pathname}
+            className="content-shell flex min-h-full max-w-full animate-fade-in-up flex-col"
+          >
             <div className="flex-1">{children}</div>
             <AppFooter />
           </div>

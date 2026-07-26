@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import { CollapsibleListItem } from '@/components/ui/CollapsibleListItem'
+import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatDateOnlyLongTr, formatDateTimeTr } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
 import { cn } from '@/lib/classNames'
@@ -41,7 +42,7 @@ export function DailyReportReadableCard({
       ? report.companies.reduce((s, c) => s + c.vatBaseKurus + c.vatKurus, 0)
       : Number(report.earningsKurus ?? 0))
 
-  const subtitle = [
+  const subtitleText = [
     report.createdByNameSnapshot || null,
     report.createdByEmailSnapshot || null,
     `${report.companyCount} firma`,
@@ -53,7 +54,17 @@ export function DailyReportReadableCard({
   return (
     <CollapsibleListItem
       title={`${formatDateOnlyLongTr(report.reportDate)} tarihli rapor`}
-      subtitle={subtitle}
+      subtitle={
+        <span className="flex flex-wrap items-center gap-2">
+          {subtitleText ? <span>{subtitleText}</span> : null}
+          {zReportEntered !== null ? (
+            <StatusBadge
+              status={zReportEntered ? 'completed' : 'pending'}
+              label={zReportEntered ? 'Z girildi' : 'Z girilmedi'}
+            />
+          ) : null}
+        </span>
+      }
       meta={
         <span className="hidden tabular-nums text-brand-blue sm:inline">
           {formatTryFromKurus(totalIncomeKurus)}

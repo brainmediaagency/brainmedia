@@ -52,12 +52,17 @@ function mapNotification(
   }
 }
 
-/** True when this inbox row was created by the viewing user (should not notify them). */
+/**
+ * True when this inbox row was created by the viewing user (should not notify them).
+ * Day-start region broadcasts are kept visible even for the triggering admin.
+ */
 export function isOwnActionNotification(
   item: AppNotification,
   uid: string,
 ): boolean {
-  return Boolean(uid) && item.createdByUid === uid
+  if (!uid || item.createdByUid !== uid) return false
+  if (item.type === 'region_created') return false
+  return true
 }
 
 function inboxPayload(input: {
@@ -117,6 +122,7 @@ export async function notifyBroadcast(
 ): Promise<void> {
   const payload = inboxPayload(input)
   const actorUid = input.createdByUid.trim()
+  const notifyActor = input.notifyActor === true
 
   try {
     await addDoc(collection(getDb(), BROADCAST_COLLECTION), payload)
@@ -129,7 +135,8 @@ export async function notifyBroadcast(
     body: payload.body,
     link: payload.link,
     audience: 'all',
-    excludeExternalIds: actorUid ? [actorUid] : undefined,
+    excludeExternalIds:
+      !notifyActor && actorUid ? [actorUid] : undefined,
   })
 }
 
