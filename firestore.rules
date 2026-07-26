@@ -1282,9 +1282,11 @@ service cloud.firestore {
     // ---------- appMeta (system flags) ----------
     match /appMeta/{docId} {
       allow read: if isHumanResources() || isManagement()
-        || (docId == 'zReportRetention' && isCoordinatorOrManagement());
+        || (docId == 'zReportRetention' && isCoordinatorOrManagement())
+        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement());
       allow create, update: if isHumanResources() || isManagement()
-        || (docId == 'zReportRetention' && isCoordinatorOrManagement());
+        || (docId == 'zReportRetention' && isCoordinatorOrManagement())
+        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement());
       allow delete: if false;
     }
 

@@ -95,9 +95,9 @@ export function Drawer({
         className={cn(
           'absolute z-10 flex flex-col border border-border bg-surface shadow-[var(--shadow-lg)]',
           side === 'bottom' &&
-            'bottom-0 left-0 right-0 max-h-[90vh] w-full max-w-none animate-fade-in-up rounded-t-[var(--radius-lg)]',
+            'bottom-0 left-0 right-0 max-h-[90vh] w-full max-w-none animate-fade-in-up rounded-t-[var(--radius-lg)] pb-[var(--safe-bottom)]',
           side === 'right' &&
-            'inset-y-0 right-0 h-dvh w-full max-w-md animate-[slide-in-right_0.25s_ease-out] rounded-none border-y-0 border-r-0 sm:max-w-lg',
+            'inset-y-0 right-0 h-dvh w-full max-w-md animate-[slide-in-right_0.25s_ease-out] rounded-none border-y-0 border-r-0 pt-[var(--safe-top)] pb-[var(--safe-bottom)] pl-[var(--safe-left)] sm:max-w-lg',
           className,
         )}
       >
@@ -118,7 +118,7 @@ export function Drawer({
           <button
             type="button"
             onClick={onClose}
-            className="touch-target inline-flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-text-secondary hover:bg-surface-muted hover:text-text-primary"
+            className="touch-target relative z-10 inline-flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-text-secondary hover:bg-surface-muted hover:text-text-primary"
             aria-label="Kapat"
           >
             <X className="size-5" />

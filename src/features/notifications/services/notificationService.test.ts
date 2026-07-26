@@ -47,6 +47,11 @@ describe('isOwnActionNotification', () => {
     expect(isOwnActionNotification(item('uid-1'), 'uid-2')).toBe(false)
     expect(isOwnActionNotification(item('uid-1'), '')).toBe(false)
   })
+
+  it('keeps day-start region broadcasts visible to the triggering admin', () => {
+    const regionItem = { ...item('uid-1'), type: 'region_created' as const }
+    expect(isOwnActionNotification(regionItem, 'uid-1')).toBe(false)
+  })
 })
 
 describe('notifyUser', () => {

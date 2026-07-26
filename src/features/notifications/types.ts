@@ -53,6 +53,11 @@ export type NotifyBroadcastInput = {
   link: string
   createdByUid: string
   createdByNameSnapshot: string
+  /**
+   * When true, actor is not excluded from OneSignal and inbox may show the row
+   * (used for system day-start region notify triggered by a logged-in admin).
+   */
+  notifyActor?: boolean
 }
 
 export type NotifyUserInput = {

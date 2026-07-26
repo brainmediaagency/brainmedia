@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
 import { CollapsibleListItem } from '@/components/ui/CollapsibleListItem'
 import { Drawer } from '@/components/ui/Drawer'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { StatusBadge } from '@/components/ui/StatusBadge'
 import {
   emptyReportCashTotals,
   subscribeReportCashGroups,
@@ -13,7 +14,10 @@ import type { ReportCashGroup, ReportCashTotals } from '@/features/cash/types/ca
 import { DailyReportDetailBody } from '@/features/reporter/components/DailyReportDetailBody'
 import { getDailyReport } from '@/features/reporter/services/dailyReportService'
 import { fetchZReportsInRange } from '@/features/reporter/services/zReportService'
-import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
+import type {
+  ReporterDailyReport,
+  ReporterZReport,
+} from '@/features/reporter/types/reporter'
 import { hasZReportForDaily } from '@/features/reporter/utils/zReportMatch'
 import { formatDateOnlyLongTr, formatDateTimeTr } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
@@ -88,6 +92,7 @@ export type CashRegisterPanelProps = {
 export function CashRegisterPanel({ sectionNumber }: CashRegisterPanelProps) {
   const [reportGroups, setReportGroups] = useState<ReportCashGroup[]>([])
   const [reportTotals, setReportTotals] = useState<ReportCashTotals>(emptyReportCashTotals)
+  const [zReports, setZReports] = useState<ReporterZReport[]>([])
   const [detailReport, setDetailReport] = useState<ReporterDailyReport | null>(null)
   const [detailZEntered, setDetailZEntered] = useState<boolean | null>(null)
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
@@ -101,23 +106,53 @@ export function CashRegisterPanel({ sectionNumber }: CashRegisterPanelProps) {
     }, onError)
   }, [])
 
+  const zDateRange = useMemo(() => {
+    if (reportGroups.length === 0) return null
+    let start = reportGroups[0]!.reportDate
+    let end = reportGroups[0]!.reportDate
+    for (const group of reportGroups) {
+      if (group.reportDate < start) start = group.reportDate
+      if (group.reportDate > end) end = group.reportDate
+    }
+    return { startDate: start, endDate: end }
+  }, [reportGroups])
+
+  useEffect(() => {
+    if (!zDateRange) {
+      setZReports([])
+      return
+    }
+    let cancelled = false
+    void fetchZReportsInRange(zDateRange)
+      .then((next) => {
+        if (!cancelled) setZReports(next)
+      })
+      .catch(() => {
+        if (!cancelled) setZReports([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [zDateRange])
+
   const cashBalanceKurus =
     reportTotals.totalFieldPaidKurus - reportTotals.totalExpenseKurus
 
   async function openReportDetail(group: ReportCashGroup) {
     setDetailLoadingId(group.reportId)
     setDetailReport(null)
-    setDetailZEntered(null)
+    setDetailZEntered(
+      hasZReportForDaily(
+        { reportDate: group.reportDate, createdByUid: group.createdByUid },
+        zReports,
+      ),
+    )
     try {
       const report = await getDailyReport(group.reportId)
       if (!report) {
         toast.error('Rapor bulunamadı veya silinmiş.')
         return
       }
-      const zReports = await fetchZReportsInRange({
-        startDate: report.reportDate,
-        endDate: report.reportDate,
-      })
       setDetailReport(report)
       setDetailZEntered(hasZReportForDaily(report, zReports))
     } catch (error) {
@@ -173,11 +208,26 @@ export function CashRegisterPanel({ sectionNumber }: CashRegisterPanelProps) {
               <ul className="space-y-2">
                 {reportGroups.map((group) => {
                   const groupCash = group.fieldPaidKurus - group.expenseKurus
+                  const zEntered = hasZReportForDaily(
+                    {
+                      reportDate: group.reportDate,
+                      createdByUid: group.createdByUid,
+                    },
+                    zReports,
+                  )
                   return (
                     <CollapsibleListItem
                       key={group.reportId}
                       title={group.title}
-                      subtitle={group.reporterName}
+                      subtitle={
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span>{group.reporterName}</span>
+                          <StatusBadge
+                            status={zEntered ? 'completed' : 'pending'}
+                            label={zEntered ? 'Z girildi' : 'Z girilmedi'}
+                          />
+                        </span>
+                      }
                       meta={
                         group.createdAt
                           ? formatDateTimeTr(group.createdAt.toDate())

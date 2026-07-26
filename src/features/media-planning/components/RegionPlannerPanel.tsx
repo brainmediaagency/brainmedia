@@ -113,6 +113,8 @@ export function RegionPlannerPanel() {
           <p className="text-sm text-text-secondary">
             Haftanın günlerine bölge yazın; emoji de ekleyebilirsiniz. Gün
             geldiğinde medya planlama sayfasında “Günün bölgesi” olarak görünür.
+            Bildirim, kaydetmede değil; İstanbul’da yeni güne girerken (00:00)
+            o günün bölgesi için gönderilir.
           </p>
         </div>
         <div className="flex items-center gap-2">

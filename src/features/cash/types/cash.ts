@@ -14,6 +14,8 @@ export type ReportCashGroup = {
   reportDate: string
   title: string
   reporterName: string
+  /** Z raporu eşleştirmesi için (aynı muhabir + gün). */
+  createdByUid: string
   createdAt: Timestamp | null
   incomeKurus: number
   expenseKurus: number

@@ -5,6 +5,7 @@ import {
   getDoc,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   where,
@@ -26,6 +27,8 @@ import type { DailyRegion } from '@/features/media-planning/types/dailyRegion'
 import { COMPANY_TIMEZONE } from '@/config/roles'
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz'
 import { notifyBroadcast } from '@/features/notifications/services/notificationService'
+
+const REGION_NOTIFY_META_PATH = ['appMeta', 'dailyRegionNotify'] as const
 
 const converter: FirestoreDataConverter<DailyRegion> = {
   toFirestore(region: DailyRegion): DocumentData {
@@ -106,6 +109,14 @@ export function weekRangeLabelTr(monday: string): string {
   return `${formatDateOnlyLongTr(monday)} – ${formatDateOnlyLongTr(sunday)}`
 }
 
+/** Milliseconds until the next İstanbul calendar midnight (00:00). */
+export function msUntilNextIstanbulMidnight(now: Date = new Date()): number {
+  const today = todayDateOnlyIstanbul(now)
+  const tomorrow = shiftDateOnlyDays(today, 1)
+  const nextMidnight = fromZonedTime(`${tomorrow}T00:00:00`, COMPANY_TIMEZONE)
+  return Math.max(0, nextMidnight.getTime() - now.getTime())
+}
+
 export async function upsertDailyRegion(
   date: string,
   region: string,
@@ -148,19 +159,90 @@ export async function upsertDailyRegion(
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
-
-    const tarih = formatDateOnlyShortTr(date)
-    void notifyBroadcast({
-      type: 'region_created',
-      title: 'Yeni bölge',
-      body: `${tarih} tarihi bölgemiz '${trimmed}'`,
-      link: '/media-planning',
-      createdByUid: actor.uid,
-      createdByNameSnapshot: actor.fullName,
-    })
+    // Bildirim kaydetmede değil; İstanbul’da yeni güne girerken
+    // `runDueDailyRegionDayNotify` ile gönderilir.
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(mapAppError(error, 'Bölge kaydedilemedi.'))
+  }
+}
+
+export type DailyRegionNotifyResult = {
+  skipped: boolean
+  reason?: 'already_notified' | 'no_region' | 'unauthorized'
+  date?: string
+  region?: string
+}
+
+/**
+ * Bugünün (İstanbul) bölgesi için bir kez broadcast + push gönderir.
+ * Yönetim/koordinatör istemcisi veya gece yarısı zamanlayıcısı çağırır.
+ * Çakışmayı `appMeta/dailyRegionNotify.lastNotifiedDate` ile önler.
+ */
+export async function runDueDailyRegionDayNotify(actor: {
+  uid: string
+  fullName: string
+  role: string
+}): Promise<DailyRegionNotifyResult> {
+  if (actor.role !== 'management' && actor.role !== 'coordinator') {
+    return { skipped: true, reason: 'unauthorized' }
+  }
+
+  const today = todayDateOnlyIstanbul()
+  const regionRef = doc(getDb(), 'dailyRegions', today).withConverter(converter)
+  const regionSnap = await getDoc(regionRef)
+  if (!regionSnap.exists()) {
+    return { skipped: true, reason: 'no_region', date: today }
+  }
+  const regionDoc = regionSnap.data()
+  const regionName = regionDoc.region.trim()
+  if (!regionName) {
+    return { skipped: true, reason: 'no_region', date: today }
+  }
+
+  const metaRef = doc(getDb(), ...REGION_NOTIFY_META_PATH)
+  const claimed = await runTransaction(getDb(), async (tx) => {
+    const metaSnap = await tx.get(metaRef)
+    const data = metaSnap.exists() ? metaSnap.data() : {}
+    const last =
+      typeof data.lastNotifiedDate === 'string' ? data.lastNotifiedDate : null
+    if (last && last >= today) {
+      return false
+    }
+    tx.set(
+      metaRef,
+      {
+        lastNotifiedDate: today,
+        lastNotifiedAt: serverTimestamp(),
+        lastNotifiedByUid: actor.uid,
+        lastNotifiedByName: actor.fullName,
+        lastRegionSnapshot: regionName,
+      },
+      { merge: true },
+    )
+    return true
+  })
+
+  if (!claimed) {
+    return { skipped: true, reason: 'already_notified', date: today }
+  }
+
+  const tarih = formatDateOnlyShortTr(today)
+  await notifyBroadcast({
+    type: 'region_created',
+    title: 'Günün bölgesi',
+    body: `${tarih} — bölgemiz '${regionName}'`,
+    link: '/media-planning',
+    createdByUid: actor.uid,
+    createdByNameSnapshot: actor.fullName,
+    /** Sistem tetikleyicisi — tetikleyen kullanıcı da görsün. */
+    notifyActor: true,
+  })
+
+  return {
+    skipped: false,
+    date: today,
+    region: regionName,
   }
 }
 

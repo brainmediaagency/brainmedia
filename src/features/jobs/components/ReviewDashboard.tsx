@@ -53,7 +53,7 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
       <AccordionSection
         number="02"
         title="Konfirme İşler"
-        description="Konfirme, çekilmiş veya iptal edilmiş iş kayıtları. Muhabire ilet ile takvime düşer; İstanbul 09:00–21:00 arasında iletilmeyenler otomatik iletilir."
+        description="Konfirme, çekilmiş veya iptal edilmiş iş kayıtları. Muhabire ilet ile takvime düşer; 09:00–21:00 (Türkiye saati) arasında iletilmeyenler tüm bölgeler için otomatik iletilir."
       >
         <ReviewedJobsQueue
           jobs={approvedJobs}
