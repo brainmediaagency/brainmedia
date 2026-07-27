@@ -1225,13 +1225,13 @@ service cloud.firestore {
     }
 
     // ---------- hrReports ----------
-    // Authors read own. Coord/mgmt read all — use role() directly (not
-    // isCoordinatorOrManagement) to stay under live rules budget on list queries.
+    // Authors read own. İK/coord/mgmt may read all (inbox + retention purge).
+    // Use role() directly — nested isCoordinatorOrManagement blew the rules budget.
     match /hrReports/{reportId} {
       allow read: if isAuthenticated()
         && (
           resource.data.createdByUid == request.auth.uid
-          || role() in ['coordinator', 'management']
+          || role() in ['human_resources', 'coordinator', 'management']
         );
 
       allow create: if isHumanResources()
@@ -1295,12 +1295,12 @@ service cloud.firestore {
     }
 
     // ---------- hiringNotes ----------
-    // Authors read own. Coord/mgmt read all — role() direct (rules budget).
+    // Authors read own. İK/coord/mgmt may read all (inbox + retention).
     match /hiringNotes/{noteId} {
       allow read: if isAuthenticated()
         && (
           resource.data.createdByUid == request.auth.uid
-          || role() in ['coordinator', 'management']
+          || role() in ['human_resources', 'coordinator', 'management']
         );
 
       allow create: if isHumanResources()
