@@ -32,8 +32,6 @@ export function HrDataRetentionGuard() {
   useEffect(() => {
     if (loading || !user || !profile || !canManageHrRetention(profile.role)) return
 
-    let cancelled = false
-
     void (async () => {
       try {
         await runDueHrRetentionPurge({
@@ -46,10 +44,6 @@ export function HrDataRetentionGuard() {
         console.warn('[HrDataRetentionGuard] purge skipped', error)
       }
     })()
-
-    return () => {
-      cancelled = true
-    }
   }, [loading, user, profile])
 
   useEffect(() => {
