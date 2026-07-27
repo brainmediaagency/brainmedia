@@ -1895,45 +1895,52 @@ describe('HR reports and hiring notes', () => {
     )
   })
 
-  it('rejects invalid MPU attendance payloads', async () => {
+  it('HR can create report with 20 MPU attendances (rules budget)', async () => {
     await seedUser('hr1', 'human_resources')
     const hrDb = testEnv
       .authenticatedContext('hr1', authClaims('human_resources'))
       .firestore()
 
-    await assertFails(
-      setDoc(doc(hrDb, 'hrReports', 'r-bad'), {
-        title: 'Hatalı',
+    const mpuAttendances = Array.from({ length: 20 }, (_, i) => ({
+      mpuUid: `mpu${i}`,
+      mpuNameSnapshot: `User mpu${i}`,
+      clockInTime: '10:00',
+      clockOutTime: '18:30',
+      absent: false,
+    }))
+
+    await assertSucceeds(
+      setDoc(doc(hrDb, 'hrReports', 'r-20'), {
+        title: '20 MPU mesai',
         body: 'Özet',
-        mpuAttendances: [
-          {
-            mpuUid: 'mpu1',
-            mpuNameSnapshot: 'Ada',
-            clockInTime: '18:00',
-            clockOutTime: '10:00',
-            absent: false,
-          },
-        ],
+        mpuAttendances,
         createdByUid: 'hr1',
         createdByNameSnapshot: 'User hr1',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       }),
     )
+  })
+
+  it('rejects more than 20 MPU attendances', async () => {
+    await seedUser('hr1', 'human_resources')
+    const hrDb = testEnv
+      .authenticatedContext('hr1', authClaims('human_resources'))
+      .firestore()
+
+    const mpuAttendances = Array.from({ length: 21 }, (_, i) => ({
+      mpuUid: `mpu${i}`,
+      mpuNameSnapshot: `User mpu${i}`,
+      clockInTime: '10:00',
+      clockOutTime: '18:30',
+      absent: false,
+    }))
 
     await assertFails(
-      setDoc(doc(hrDb, 'hrReports', 'r-bad2'), {
-        title: 'Hatalı',
+      setDoc(doc(hrDb, 'hrReports', 'r-21'), {
+        title: '21 MPU',
         body: 'Özet',
-        mpuAttendances: [
-          {
-            mpuUid: 'mpu1',
-            mpuNameSnapshot: 'Ada',
-            clockInTime: '10:00',
-            clockOutTime: '18:30',
-            // absent missing
-          },
-        ],
+        mpuAttendances,
         createdByUid: 'hr1',
         createdByNameSnapshot: 'User hr1',
         createdAt: serverTimestamp(),

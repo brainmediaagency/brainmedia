@@ -1,5 +1,14 @@
 import type { Timestamp } from 'firebase/firestore'
 
+/**
+ * Max MPU mesai rows per İK report (Firestore rules list cap).
+ * Deeper per-row validation exceeds the rules expression budget.
+ */
+export const MAX_HR_MPU_ATTENDANCES = 20
+
+export const HR_MPU_ATTENDANCE_LIMIT_MESSAGE =
+  `Bir rapora en fazla ${MAX_HR_MPU_ATTENDANCES} MPU mesai kaydı eklenebilir. Bu sınır, raporun sunucuda güvenli şekilde kaydedilebilmesi için zorunludur. Kalan MPU’lar için ayrı bir rapor oluşturun.`
+
 /** One MPU’s clock-in / clock-out or absence on an İK report. */
 export interface HrMpuAttendanceEntry {
   mpuUid: string

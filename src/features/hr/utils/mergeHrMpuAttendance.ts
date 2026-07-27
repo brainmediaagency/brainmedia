@@ -1,8 +1,21 @@
-import type { HrMpuAttendanceEntry } from '@/features/hr/types/hr'
+import {
+  HR_MPU_ATTENDANCE_LIMIT_MESSAGE,
+  MAX_HR_MPU_ATTENDANCES,
+  type HrMpuAttendanceEntry,
+} from '@/features/hr/types/hr'
 import {
   isHrClockOutAfterIn,
   normalizeHrShiftTime,
 } from '@/features/hr/utils/hrShiftTimes'
+
+/** Throws USER_… when a report would exceed the 20-MPU attendance cap. */
+export function assertHrMpuAttendanceLimit(
+  entries: HrMpuAttendanceEntry[],
+): void {
+  if (entries.length > MAX_HR_MPU_ATTENDANCES) {
+    throw new Error(`USER_${HR_MPU_ATTENDANCE_LIMIT_MESSAGE}`)
+  }
+}
 
 /** Plain Firestore-safe attendance map (HH:mm only, no empty strings). */
 export function toFirestoreAttendance(

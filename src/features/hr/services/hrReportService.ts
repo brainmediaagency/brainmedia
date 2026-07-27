@@ -28,6 +28,7 @@ import {
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import {
+  assertHrMpuAttendanceLimit,
   assertValidMergedAttendance,
   foldHrMpuAttendances,
   mergeHrMpuAttendanceEntry,
@@ -253,6 +254,7 @@ export async function createHrReport(input: {
   createdByNameSnapshot: string
 }): Promise<string> {
   try {
+    assertHrMpuAttendanceLimit(input.mpuAttendances)
     const today = todayDateOnlyIstanbul()
     const sameDay = await fetchOwnHrReportsForIstanbulDay(input.createdByUid, today)
     const { storedIncoming, finalByMpu, affectedUids } = mergeIncomingWithSameDay({
@@ -321,6 +323,7 @@ export async function updateHrReport(input: {
   createdByUid: string
 }): Promise<void> {
   try {
+    assertHrMpuAttendanceLimit(input.mpuAttendances)
     const today = todayDateOnlyIstanbul()
     const sameDay = await fetchOwnHrReportsForIstanbulDay(
       input.createdByUid,
