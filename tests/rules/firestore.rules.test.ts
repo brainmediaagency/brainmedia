@@ -1804,6 +1804,7 @@ describe('HR reports and hiring notes', () => {
       setDoc(doc(hrDb, 'hrReports', 'r1'), {
         title: 'Haftalık özet',
         body: 'Detay metin',
+        mpuAttendances: [],
         createdByUid: 'hr1',
         createdByNameSnapshot: 'User hr1',
         createdAt: serverTimestamp(),
@@ -1821,6 +1822,124 @@ describe('HR reports and hiring notes', () => {
       .authenticatedContext('coord1', authClaims('coordinator'))
       .firestore()
     await assertSucceeds(getDoc(doc(coordDb, 'hrReports', 'r1')))
+  })
+
+  it('HR can create report when name snapshot differs slightly from profile', async () => {
+    await seedUser('hr1', 'human_resources')
+    const hrDb = testEnv
+      .authenticatedContext('hr1', authClaims('human_resources'))
+      .firestore()
+    await assertSucceeds(
+      setDoc(doc(hrDb, 'hrReports', 'r-name'), {
+        title: 'İsim farkı',
+        body: 'Detay',
+        mpuAttendances: [],
+        createdByUid: 'hr1',
+        createdByNameSnapshot: 'Farklı İsim',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
+  it('HR can create and update report with MPU attendances and absent', async () => {
+    await seedUser('hr1', 'human_resources')
+    await seedUser('mpu1', 'media_planning')
+    await seedUser('mpu2', 'media_planning')
+    const hrDb = testEnv
+      .authenticatedContext('hr1', authClaims('human_resources'))
+      .firestore()
+
+    await assertSucceeds(
+      setDoc(doc(hrDb, 'hrReports', 'r-attend'), {
+        title: 'Günlük mesai',
+        body: 'Özet',
+        mpuAttendances: [
+          {
+            mpuUid: 'mpu1',
+            mpuNameSnapshot: 'User mpu1',
+            clockInTime: '10:00',
+            clockOutTime: '18:30',
+            absent: false,
+          },
+          {
+            mpuUid: 'mpu2',
+            mpuNameSnapshot: 'User mpu2',
+            clockInTime: null,
+            clockOutTime: null,
+            absent: true,
+          },
+        ],
+        createdByUid: 'hr1',
+        createdByNameSnapshot: 'User hr1',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+
+    await assertSucceeds(
+      updateDoc(doc(hrDb, 'hrReports', 'r-attend'), {
+        title: 'Günlük mesai güncel',
+        body: 'Özet 2',
+        mpuAttendances: [
+          {
+            mpuUid: 'mpu1',
+            mpuNameSnapshot: 'User mpu1',
+            clockInTime: '06:57',
+            clockOutTime: null,
+            absent: false,
+          },
+        ],
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
+  it('rejects invalid MPU attendance payloads', async () => {
+    await seedUser('hr1', 'human_resources')
+    const hrDb = testEnv
+      .authenticatedContext('hr1', authClaims('human_resources'))
+      .firestore()
+
+    await assertFails(
+      setDoc(doc(hrDb, 'hrReports', 'r-bad'), {
+        title: 'Hatalı',
+        body: 'Özet',
+        mpuAttendances: [
+          {
+            mpuUid: 'mpu1',
+            mpuNameSnapshot: 'Ada',
+            clockInTime: '18:00',
+            clockOutTime: '10:00',
+            absent: false,
+          },
+        ],
+        createdByUid: 'hr1',
+        createdByNameSnapshot: 'User hr1',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+
+    await assertFails(
+      setDoc(doc(hrDb, 'hrReports', 'r-bad2'), {
+        title: 'Hatalı',
+        body: 'Özet',
+        mpuAttendances: [
+          {
+            mpuUid: 'mpu1',
+            mpuNameSnapshot: 'Ada',
+            clockInTime: '10:00',
+            clockOutTime: '18:30',
+            // absent missing
+          },
+        ],
+        createdByUid: 'hr1',
+        createdByNameSnapshot: 'User hr1',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
   })
 
   it('HR can create hiring note; coordinator can read', async () => {

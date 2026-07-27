@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FileText, UserRound } from 'lucide-react'
-import type { HrReport } from '@/features/hr/types/hr'
+import {
+  formatHrMpuAttendanceEntry,
+  summarizeHrMpuAttendances,
+  type HrReport,
+} from '@/features/hr/types/hr'
 import type { HiringNote } from '@/features/hr/types/hr'
 import { fetchHrReportsInRange } from '@/features/hr/services/hrReportService'
 import { fetchHiringNotesInRange } from '@/features/hr/services/hiringNoteService'
@@ -187,22 +191,36 @@ export function ManagementHrInbox({
               />
             ) : (
               <ul className="space-y-3">
-                {reports.map((report) => (
-                  <CollapsibleListItem
-                    key={report.id}
-                    title={report.title}
-                    subtitle={report.createdByNameSnapshot}
-                    meta={
-                      report.createdAt
-                        ? formatDateTimeTr(report.createdAt.toDate())
-                        : '—'
-                    }
-                  >
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">
-                      {report.body}
-                    </p>
-                  </CollapsibleListItem>
-                ))}
+                {reports.map((report) => {
+                  const summary = summarizeHrMpuAttendances(report.mpuAttendances)
+                  return (
+                    <CollapsibleListItem
+                      key={report.id}
+                      title={report.title}
+                      subtitle={[report.createdByNameSnapshot, summary]
+                        .filter(Boolean)
+                        .join(' · ')}
+                      meta={
+                        report.createdAt
+                          ? formatDateTimeTr(report.createdAt.toDate())
+                          : '—'
+                      }
+                    >
+                      {report.mpuAttendances.length > 0 ? (
+                        <ul className="mb-2 space-y-1 text-sm font-medium text-text-primary">
+                          {report.mpuAttendances.map((entry) => (
+                            <li key={entry.mpuUid}>
+                              {formatHrMpuAttendanceEntry(entry)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">
+                        {report.body}
+                      </p>
+                    </CollapsibleListItem>
+                  )
+                })}
               </ul>
             )}
           </div>
