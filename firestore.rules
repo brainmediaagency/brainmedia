@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: hr-report-compat-create-24
+// rules-rev: hr-report-time-hhmmss-25
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1154,11 +1154,13 @@ service cloud.firestore {
       return true;
     }
 
-    /** Clock time `HH:mm` (e.g. İK report MPU giriş/çıkış). */
+    /** Clock time `HH:mm` (optional seconds from browsers are ok). */
     function isTimeHHmm(value) {
       return value is string
-        && value.size() == 5
-        && value.matches('^[0-9]{2}:[0-9]{2}$');
+        && (
+          (value.size() == 5 && value.matches('^[0-9]{2}:[0-9]{2}$'))
+          || (value.size() == 8 && value.matches('^[0-9]{2}:[0-9]{2}:[0-9]{2}$'))
+        );
     }
 
     function isOptionalTimeHHmm(value) {

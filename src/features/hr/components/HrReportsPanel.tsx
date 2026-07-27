@@ -18,6 +18,7 @@ import {
 import {
   isHrClockOutAfterIn,
   isOptionalHrShiftTime,
+  normalizeHrShiftTime,
 } from '@/features/hr/utils/hrShiftTimes'
 import { subscribeMediaPlanners } from '@/features/users/services/userService'
 import type { UserProfile } from '@/features/users/types/user'
@@ -94,7 +95,7 @@ function OptionalTimeField({
             step={60}
             value={value}
             disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => onChange(normalizeHrShiftTime(e.target.value))}
           />
         </FormField>
       ) : (
