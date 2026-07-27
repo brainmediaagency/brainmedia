@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: hr-mpu-attendance-merge-22
+// rules-rev: hr-report-rules-budget-23
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1165,6 +1165,10 @@ service cloud.firestore {
       return value == null || isTimeHHmm(value);
     }
 
+    /**
+     * Keep this cheap — validating 20 entries with nested ORs exceeded the live
+     * rules budget and surfaced as permission-denied on İK report create.
+     */
     function isValidHrMpuAttendanceEntry(entry) {
       return entry.keys().hasOnly([
           'mpuUid',
@@ -1176,24 +1180,8 @@ service cloud.firestore {
         && isValidString(entry.mpuUid, 1, 128)
         && isValidString(entry.mpuNameSnapshot, 1, 120)
         && entry.absent is bool
-        && (
-          (
-            entry.absent == true
-            && entry.clockInTime == null
-            && entry.clockOutTime == null
-          )
-          || (
-            entry.absent == false
-            && isOptionalTimeHHmm(entry.clockInTime)
-            && isOptionalTimeHHmm(entry.clockOutTime)
-            && (entry.clockInTime != null || entry.clockOutTime != null)
-            && (
-              entry.clockInTime == null
-              || entry.clockOutTime == null
-              || entry.clockOutTime > entry.clockInTime
-            )
-          )
-        );
+        && isOptionalTimeHHmm(entry.clockInTime)
+        && isOptionalTimeHHmm(entry.clockOutTime);
     }
 
     function isValidHrMpuAttendances(entries) {
@@ -1208,26 +1196,17 @@ service cloud.firestore {
         && (entries.size() < 7 || isValidHrMpuAttendanceEntry(entries[6]))
         && (entries.size() < 8 || isValidHrMpuAttendanceEntry(entries[7]))
         && (entries.size() < 9 || isValidHrMpuAttendanceEntry(entries[8]))
-        && (entries.size() < 10 || isValidHrMpuAttendanceEntry(entries[9]))
-        && (entries.size() < 11 || isValidHrMpuAttendanceEntry(entries[10]))
-        && (entries.size() < 12 || isValidHrMpuAttendanceEntry(entries[11]))
-        && (entries.size() < 13 || isValidHrMpuAttendanceEntry(entries[12]))
-        && (entries.size() < 14 || isValidHrMpuAttendanceEntry(entries[13]))
-        && (entries.size() < 15 || isValidHrMpuAttendanceEntry(entries[14]))
-        && (entries.size() < 16 || isValidHrMpuAttendanceEntry(entries[15]))
-        && (entries.size() < 17 || isValidHrMpuAttendanceEntry(entries[16]))
-        && (entries.size() < 18 || isValidHrMpuAttendanceEntry(entries[17]))
-        && (entries.size() < 19 || isValidHrMpuAttendanceEntry(entries[18]))
-        && (entries.size() < 20 || isValidHrMpuAttendanceEntry(entries[19]));
+        && (entries.size() < 10 || isValidHrMpuAttendanceEntry(entries[9]));
     }
 
     // ---------- hrReports ----------
-    // Coordinator/management may read all (HR viewer inbox). Authors read own.
+    // Authors read own. Coord/mgmt read all — use role() directly (not
+    // isCoordinatorOrManagement) to stay under live rules budget on list queries.
     match /hrReports/{reportId} {
       allow read: if isAuthenticated()
         && (
           resource.data.createdByUid == request.auth.uid
-          || isCoordinatorOrManagement()
+          || role() in ['coordinator', 'management']
         );
 
       allow create: if isHumanResources()
@@ -1299,12 +1278,12 @@ service cloud.firestore {
     }
 
     // ---------- hiringNotes ----------
-    // Coordinator/management may read all (HR viewer inbox). Authors read own.
+    // Authors read own. Coord/mgmt read all — role() direct (rules budget).
     match /hiringNotes/{noteId} {
       allow read: if isAuthenticated()
         && (
           resource.data.createdByUid == request.auth.uid
-          || isCoordinatorOrManagement()
+          || role() in ['coordinator', 'management']
         );
 
       allow create: if isHumanResources()
