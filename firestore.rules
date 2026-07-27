@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: hr-report-rules-budget-23
+// rules-rev: hr-report-compat-create-24
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1199,6 +1199,31 @@ service cloud.firestore {
         && (entries.size() < 10 || isValidHrMpuAttendanceEntry(entries[9]));
     }
 
+    function hrReportCreateKeysOk() {
+      return request.resource.data.keys().hasOnly([
+          'title',
+          'body',
+          'mpuAttendances',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        || request.resource.data.keys().hasOnly([
+          'title',
+          'body',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ]);
+    }
+
+    function hrReportMpuAttendancesOk() {
+      return !('mpuAttendances' in request.resource.data)
+        || isValidHrMpuAttendances(request.resource.data.mpuAttendances);
+    }
+
     // ---------- hrReports ----------
     // Authors read own. Coord/mgmt read all — use role() directly (not
     // isCoordinatorOrManagement) to stay under live rules budget on list queries.
@@ -1210,20 +1235,12 @@ service cloud.firestore {
         );
 
       allow create: if isHumanResources()
-        && request.resource.data.keys().hasOnly([
-          'title',
-          'body',
-          'mpuAttendances',
-          'createdByUid',
-          'createdByNameSnapshot',
-          'createdAt',
-          'updatedAt'
-        ])
+        && hrReportCreateKeysOk()
         && request.resource.data.createdByUid == request.auth.uid
         && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
         && isValidString(request.resource.data.title, 2, 200)
         && isValidString(request.resource.data.body, 1, 10000)
-        && isValidHrMpuAttendances(request.resource.data.mpuAttendances)
+        && hrReportMpuAttendancesOk()
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
@@ -1236,7 +1253,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt
         && isValidString(request.resource.data.title, 2, 200)
         && isValidString(request.resource.data.body, 1, 10000)
-        && isValidHrMpuAttendances(request.resource.data.mpuAttendances)
+        && hrReportMpuAttendancesOk()
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if isHumanResources() || isManagement();

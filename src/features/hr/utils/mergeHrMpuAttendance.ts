@@ -1,10 +1,19 @@
 import type { HrMpuAttendanceEntry } from '@/features/hr/types/hr'
 import { isHrClockOutAfterIn } from '@/features/hr/utils/hrShiftTimes'
 
-/** Plain Firestore-safe attendance map (no undefined keys). */
+/** Plain Firestore-safe attendance map (no undefined / empty-string times). */
 export function toFirestoreAttendance(
   entry: HrMpuAttendanceEntry,
 ): HrMpuAttendanceEntry {
+  const clockIn =
+    typeof entry.clockInTime === 'string' && entry.clockInTime.trim()
+      ? entry.clockInTime.trim()
+      : null
+  const clockOut =
+    typeof entry.clockOutTime === 'string' && entry.clockOutTime.trim()
+      ? entry.clockOutTime.trim()
+      : null
+
   if (entry.absent) {
     return {
       mpuUid: entry.mpuUid,
@@ -17,8 +26,8 @@ export function toFirestoreAttendance(
   return {
     mpuUid: entry.mpuUid,
     mpuNameSnapshot: entry.mpuNameSnapshot,
-    clockInTime: entry.clockInTime,
-    clockOutTime: entry.clockOutTime,
+    clockInTime: clockIn,
+    clockOutTime: clockOut,
     absent: false,
   }
 }

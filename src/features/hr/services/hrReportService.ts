@@ -261,12 +261,16 @@ export async function createHrReport(input: {
     })
 
     const db = getDb()
+    const nameSnapshot = input.createdByNameSnapshot.trim()
+    if (!nameSnapshot) {
+      throw new UserFacingError('Profil adınız eksik. Çıkış yapıp tekrar giriş yapın.')
+    }
     const ref = await addDoc(collection(db, 'hrReports'), {
       title: input.title.trim(),
       body: input.body.trim(),
       mpuAttendances: storedIncoming,
       createdByUid: input.createdByUid,
-      createdByNameSnapshot: input.createdByNameSnapshot,
+      createdByNameSnapshot: nameSnapshot,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })

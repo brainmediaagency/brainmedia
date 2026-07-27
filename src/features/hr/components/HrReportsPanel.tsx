@@ -317,6 +317,7 @@ export function HrReportsPanel({
       setEditingId(null)
       cancelWizard()
     } catch (error) {
+      console.error('[HrReportsPanel] save failed', error)
       toast.error(mapAppError(error, 'Rapor kaydedilemedi.'))
     } finally {
       setSubmitting(false)
