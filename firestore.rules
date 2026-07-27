@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: broadcast-user-notifications-21
+// rules-rev: hr-mpu-attendance-merge-22
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1154,6 +1154,73 @@ service cloud.firestore {
       return true;
     }
 
+    /** Clock time `HH:mm` (e.g. İK report MPU giriş/çıkış). */
+    function isTimeHHmm(value) {
+      return value is string
+        && value.size() == 5
+        && value.matches('^[0-9]{2}:[0-9]{2}$');
+    }
+
+    function isOptionalTimeHHmm(value) {
+      return value == null || isTimeHHmm(value);
+    }
+
+    function isValidHrMpuAttendanceEntry(entry) {
+      return entry.keys().hasOnly([
+          'mpuUid',
+          'mpuNameSnapshot',
+          'clockInTime',
+          'clockOutTime',
+          'absent'
+        ])
+        && isValidString(entry.mpuUid, 1, 128)
+        && isValidString(entry.mpuNameSnapshot, 1, 120)
+        && entry.absent is bool
+        && (
+          (
+            entry.absent == true
+            && entry.clockInTime == null
+            && entry.clockOutTime == null
+          )
+          || (
+            entry.absent == false
+            && isOptionalTimeHHmm(entry.clockInTime)
+            && isOptionalTimeHHmm(entry.clockOutTime)
+            && (entry.clockInTime != null || entry.clockOutTime != null)
+            && (
+              entry.clockInTime == null
+              || entry.clockOutTime == null
+              || entry.clockOutTime > entry.clockInTime
+            )
+          )
+        );
+    }
+
+    function isValidHrMpuAttendances(entries) {
+      return entries is list
+        && entries.size() <= 20
+        && (entries.size() < 1 || isValidHrMpuAttendanceEntry(entries[0]))
+        && (entries.size() < 2 || isValidHrMpuAttendanceEntry(entries[1]))
+        && (entries.size() < 3 || isValidHrMpuAttendanceEntry(entries[2]))
+        && (entries.size() < 4 || isValidHrMpuAttendanceEntry(entries[3]))
+        && (entries.size() < 5 || isValidHrMpuAttendanceEntry(entries[4]))
+        && (entries.size() < 6 || isValidHrMpuAttendanceEntry(entries[5]))
+        && (entries.size() < 7 || isValidHrMpuAttendanceEntry(entries[6]))
+        && (entries.size() < 8 || isValidHrMpuAttendanceEntry(entries[7]))
+        && (entries.size() < 9 || isValidHrMpuAttendanceEntry(entries[8]))
+        && (entries.size() < 10 || isValidHrMpuAttendanceEntry(entries[9]))
+        && (entries.size() < 11 || isValidHrMpuAttendanceEntry(entries[10]))
+        && (entries.size() < 12 || isValidHrMpuAttendanceEntry(entries[11]))
+        && (entries.size() < 13 || isValidHrMpuAttendanceEntry(entries[12]))
+        && (entries.size() < 14 || isValidHrMpuAttendanceEntry(entries[13]))
+        && (entries.size() < 15 || isValidHrMpuAttendanceEntry(entries[14]))
+        && (entries.size() < 16 || isValidHrMpuAttendanceEntry(entries[15]))
+        && (entries.size() < 17 || isValidHrMpuAttendanceEntry(entries[16]))
+        && (entries.size() < 18 || isValidHrMpuAttendanceEntry(entries[17]))
+        && (entries.size() < 19 || isValidHrMpuAttendanceEntry(entries[18]))
+        && (entries.size() < 20 || isValidHrMpuAttendanceEntry(entries[19]));
+    }
+
     // ---------- hrReports ----------
     // Coordinator/management may read all (HR viewer inbox). Authors read own.
     match /hrReports/{reportId} {
@@ -1167,27 +1234,30 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'title',
           'body',
+          'mpuAttendances',
           'createdByUid',
           'createdByNameSnapshot',
           'createdAt',
           'updatedAt'
         ])
         && request.resource.data.createdByUid == request.auth.uid
-        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
         && isValidString(request.resource.data.title, 2, 200)
         && isValidString(request.resource.data.body, 1, 10000)
-        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && isValidHrMpuAttendances(request.resource.data.mpuAttendances)
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
       allow update: if isHumanResources()
         && resource.data.createdByUid == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'body', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['title', 'body', 'mpuAttendances', 'updatedAt'])
         && request.resource.data.createdByUid == resource.data.createdByUid
         && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
         && request.resource.data.createdAt == resource.data.createdAt
         && isValidString(request.resource.data.title, 2, 200)
         && isValidString(request.resource.data.body, 1, 10000)
+        && isValidHrMpuAttendances(request.resource.data.mpuAttendances)
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if isHumanResources() || isManagement();
