@@ -12,7 +12,7 @@ export function mapAuthError(error: unknown): string {
       case 'auth/user-not-found':
       case 'auth/wrong-password':
       case 'auth/invalid-credential':
-        return 'E-posta veya şifre hatalı. Bilgilerinizi kontrol ederek tekrar deneyin.'
+        return 'E-posta veya şifre hatalı. Tarayıcınız eski kayıtlı şifreyi doldurmuş olabilir; şifre alanını temizleyip elle yazın.'
       case 'auth/user-disabled':
         return 'Hesabınız devre dışı bırakılmış. Yöneticinizle iletişime geçin.'
       case 'auth/too-many-requests':
