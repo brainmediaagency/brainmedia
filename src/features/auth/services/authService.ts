@@ -1,3 +1,4 @@
+import { FirebaseError } from 'firebase/app'
 import {
   EmailAuthProvider,
   browserLocalPersistence,
@@ -106,8 +107,19 @@ export async function loginWithEmail(
       throw error
     }
 
-    throw new UserFacingError(mapAuthError(error))
+    throw new UserFacingError(withAuthErrorCode(mapAuthError(error), error))
   }
+}
+
+/**
+ * Support hint: 400 alone cannot separate a wrong password from Google's
+ * temporary IP lockout, so the raw code is surfaced on the login screen.
+ */
+function withAuthErrorCode(message: string, error: unknown): string {
+  if (error instanceof FirebaseError && error.code.startsWith('auth/')) {
+    return `${message} (${error.code.replace('auth/', '')})`
+  }
+  return message
 }
 
 /**
