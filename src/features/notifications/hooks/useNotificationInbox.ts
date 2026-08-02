@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import {
   isNotificationUnread,
+  isNotificationVisibleForRole,
   isOwnActionNotification,
   markAllNotificationsRead,
   markNotificationRead,
@@ -23,6 +24,7 @@ export function useNotificationInbox() {
   const uid = profile?.uid
   const role = claims?.role
   const enabled = Boolean(uid) && isUserRole(role)
+  const inboxRole = isUserRole(role) ? role : undefined
   const isManagement = role === 'management'
   const [items, setItems] = useState<AppNotification[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +71,11 @@ export function useNotificationInbox() {
         managementRef.current,
         broadcastRef.current,
         personalRef.current,
-      ]).filter((item) => !isOwnActionNotification(item, uid))
+      ]).filter(
+        (item) =>
+          !isOwnActionNotification(item, uid) &&
+          isNotificationVisibleForRole(item, inboxRole),
+      )
       setItems(next)
       setError(null)
 
@@ -149,7 +155,7 @@ export function useNotificationInbox() {
     return () => {
       for (const unsub of unsubs) unsub()
     }
-  }, [enabled, uid, isManagement])
+  }, [enabled, uid, isManagement, inboxRole])
 
   const unreadCount = useMemo(() => {
     if (!uid) return 0

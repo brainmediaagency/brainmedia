@@ -1,4 +1,5 @@
 import type { Timestamp } from 'firebase/firestore'
+import type { UserRole } from '@/config/roles'
 
 export type ManagementNotificationType =
   | 'job_created'
@@ -44,6 +45,8 @@ export type NotifyManagementInput = {
   link: string
   createdByUid: string
   createdByNameSnapshot: string
+  /** Push role filter; omit for all five roles. */
+  pushRoles?: UserRole[]
 }
 
 export type NotifyBroadcastInput = {
@@ -58,6 +61,8 @@ export type NotifyBroadcastInput = {
    * (used for system day-start region notify triggered by a logged-in admin).
    */
   notifyActor?: boolean
+  /** Push role filter; omit for all five roles. */
+  pushRoles?: UserRole[]
 }
 
 export type NotifyUserInput = {

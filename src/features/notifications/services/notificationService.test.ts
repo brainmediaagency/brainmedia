@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { AppNotification } from '@/features/notifications/types'
 import {
+  isNotificationVisibleForRole,
   isOwnActionNotification,
+  notifyBroadcast,
+  notifyManagement,
   notifyUser,
 } from '@/features/notifications/services/notificationService'
 
@@ -54,8 +57,95 @@ describe('isOwnActionNotification', () => {
   })
 })
 
+describe('isNotificationVisibleForRole', () => {
+  const regionItem = { ...item('uid-1'), type: 'region_created' as const }
+
+  it('hides günün bölgesi from reporters', () => {
+    expect(isNotificationVisibleForRole(regionItem, 'reporter')).toBe(false)
+  })
+
+  it('keeps günün bölgesi for the other roles', () => {
+    for (const role of [
+      'management',
+      'coordinator',
+      'media_planning',
+      'human_resources',
+    ] as const) {
+      expect(isNotificationVisibleForRole(regionItem, role)).toBe(true)
+    }
+  })
+
+  it('keeps unrelated types for reporters', () => {
+    expect(isNotificationVisibleForRole(item('uid-1'), 'reporter')).toBe(true)
+  })
+})
+
+describe('push role targeting', () => {
+  beforeEach(async () => {
+    const { addDoc } = await import('firebase/firestore')
+    vi.mocked(addDoc).mockResolvedValue({ id: 'x' } as never)
+    sendOneSignalPush.mockReset()
+  })
+
+  it('keeps İK reports away from media planning and reporters', async () => {
+    await notifyManagement({
+      type: 'hr_report',
+      title: 'Yeni İK raporu',
+      body: 'rapor',
+      link: '/human-resources?tab=reports',
+      createdByUid: 'hr-1',
+      createdByNameSnapshot: 'İK',
+      pushRoles: ['management', 'coordinator', 'human_resources'],
+    })
+
+    expect(sendOneSignalPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        roles: ['management', 'coordinator', 'human_resources'],
+      }),
+    )
+  })
+
+  it('keeps günün bölgesi push away from reporters', async () => {
+    await notifyBroadcast({
+      type: 'region_created',
+      title: 'Günün bölgesi',
+      body: 'bölge',
+      link: '/media-planning',
+      createdByUid: 'coord-1',
+      createdByNameSnapshot: 'Koordinatör',
+      notifyActor: true,
+      pushRoles: [
+        'management',
+        'coordinator',
+        'media_planning',
+        'human_resources',
+      ],
+    })
+
+    const call = sendOneSignalPush.mock.calls[0]?.[0] as { roles?: string[] }
+    expect(call.roles).not.toContain('reporter')
+  })
+
+  it('still targets every role when pushRoles is omitted', async () => {
+    await notifyManagement({
+      type: 'job_created',
+      title: 'Yeni iş',
+      body: 'iş',
+      link: '/management',
+      createdByUid: 'mpu-1',
+      createdByNameSnapshot: 'MPU',
+    })
+
+    expect(sendOneSignalPush).toHaveBeenCalledWith(
+      expect.objectContaining({ roles: undefined, audience: 'all' }),
+    )
+  })
+})
+
 describe('notifyUser', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { addDoc } = await import('firebase/firestore')
+    vi.mocked(addDoc).mockReset()
     sendOneSignalPush.mockReset()
   })
 
