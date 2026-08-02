@@ -24,6 +24,7 @@ export function ChangePasswordForm({
 }: ChangePasswordFormProps) {
   const [showCurrent, setShowCurrent] = useState(false)
   const [showNew, setShowNew] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const {
@@ -132,15 +133,33 @@ export function ChangePasswordForm({
         required
         error={errors.confirmPassword?.message}
       >
-        <Input
-          id="confirm-password"
-          type="password"
-          autoComplete="new-password"
-          placeholder="••••••••"
-          hasError={Boolean(errors.confirmPassword)}
-          disabled={submitting}
-          {...register('confirmPassword')}
-        />
+        <div className="relative">
+          <Input
+            id="confirm-password"
+            type={showConfirm ? 'text' : 'password'}
+            autoComplete="new-password"
+            placeholder="••••••••"
+            hasError={Boolean(errors.confirmPassword)}
+            disabled={submitting}
+            className="pr-11"
+            {...register('confirmPassword')}
+          />
+          <button
+            type="button"
+            onClick={() => setShowConfirm((prev) => !prev)}
+            className="absolute inset-y-0 right-0 flex touch-target items-center justify-center px-3 text-text-secondary hover:text-text-primary"
+            aria-label={
+              showConfirm ? 'Tekrar şifreyi gizle' : 'Tekrar şifreyi göster'
+            }
+            disabled={submitting}
+          >
+            {showConfirm ? (
+              <EyeOff className="size-4" aria-hidden="true" />
+            ) : (
+              <Eye className="size-4" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </FormField>
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
