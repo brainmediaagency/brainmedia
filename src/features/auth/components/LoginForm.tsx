@@ -1,10 +1,8 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
-import { APP_ROUTES } from '@/config/routes'
 import {
   loginSchema,
   type LoginFormValues,
@@ -109,23 +107,15 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
         </div>
       </FormField>
 
-      <div className="flex items-center justify-between gap-3">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-          <input
-            type="checkbox"
-            className="size-4 rounded border-border text-brand-cyan focus:ring-brand-cyan"
-            disabled={submitting}
-            {...register('rememberMe')}
-          />
-          Beni hatırla
-        </label>
-        <Link
-          to={APP_ROUTES.forgotPassword}
-          className="text-sm font-medium text-brand-blue hover:text-brand-cyan"
-        >
-          Şifre yardımı
-        </Link>
-      </div>
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
+        <input
+          type="checkbox"
+          className="size-4 rounded border-border text-brand-cyan focus:ring-brand-cyan"
+          disabled={submitting}
+          {...register('rememberMe')}
+        />
+        Beni hatırla
+      </label>
 
       <Button type="submit" loading={submitting} disabled={submitting} className="w-full">
         Giriş Yap

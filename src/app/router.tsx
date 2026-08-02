@@ -6,7 +6,6 @@ import { useAuth } from '@/features/auth/hooks/useAuth'
 import { AppShell } from '@/components/layout/AppShell'
 import { LoadingScreen } from '@/components/ui/LoadingScreen'
 import { LoginPage } from '@/pages/LoginPage'
-import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { UnauthorizedPage } from '@/pages/UnauthorizedPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { MediaPlanningPage } from '@/pages/MediaPlanningPage'
@@ -40,7 +39,6 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route path={APP_ROUTES.login} element={<LoginPage />} />
-      <Route path={APP_ROUTES.forgotPassword} element={<ForgotPasswordPage />} />
 
       <Route
         path={APP_ROUTES.unauthorized}
