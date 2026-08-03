@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
 import { toast } from 'sonner'
+import { isUserRole } from '@/config/roles'
 import type { AuthSession, AuthUser, LoginCredentials } from '@/features/auth/types/auth'
 import {
   loadAuthSession,
@@ -133,6 +134,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const deleted = nextProfile.deletedAt != null
       if (!frozen && !deleted) {
         setProfile(nextProfile)
+        // Keep claims.role aligned with Firestore (nav / gates use claims).
+        if (isUserRole(nextProfile.role)) {
+          setClaims((prev) =>
+            prev ? { ...prev, role: nextProfile.role } : prev,
+          )
+        }
         return
       }
 
