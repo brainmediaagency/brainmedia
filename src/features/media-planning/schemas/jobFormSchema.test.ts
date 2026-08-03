@@ -19,7 +19,12 @@ describe('permissions', () => {
     expect(canAccessRoute('coordinator', 'media-planning')).toBe(true)
     expect(canAccessRoute('management', 'management')).toBe(true)
     expect(canAccessRoute('human_resources', 'reporter')).toBe(true)
+    expect(canAccessRoute('kameraman', 'reporter')).toBe(true)
+    expect(canAccessRoute('kameraman', 'news-sites')).toBe(true)
+    expect(canAccessRoute('kameraman', 'game')).toBe(true)
+    expect(canAccessRoute('kameraman', 'management')).toBe(false)
     expect(getDefaultRouteForRole('reporter')).toBe('/reporter')
+    expect(getDefaultRouteForRole('kameraman')).toBe('/reporter')
   })
 })
 
