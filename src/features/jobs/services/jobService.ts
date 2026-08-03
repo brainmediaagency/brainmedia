@@ -242,6 +242,7 @@ export async function createJob(input: CreateJobInput): Promise<string> {
     link: '/management',
     createdByUid: input.createdByUid,
     createdByNameSnapshot: input.createdByNameSnapshot,
+    pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources'],
   })
 
   return jobRef.id
@@ -612,7 +613,6 @@ export async function approveJob(
 
   try {
     const company = fresh.companyName || 'İş'
-    const ownerUid = fresh.createdByUid
 
     void notifyManagement({
       type: 'job_approved',
@@ -621,19 +621,9 @@ export async function approveJob(
       link: '/management',
       createdByUid: actor.uid,
       createdByNameSnapshot: actor.fullName,
+      /** Muhabir, kameraman ve MPU konfirme push’u almaz. */
+      pushRoles: ['management', 'coordinator', 'human_resources'],
     })
-
-    if (ownerUid) {
-      void notifyUser({
-        recipientUid: ownerUid,
-        type: 'job_approved',
-        title: `"${company}" işiniz konfirme edildi.`,
-        body: '',
-        link: '/media-planning',
-        createdByUid: actor.uid,
-        createdByNameSnapshot: actor.fullName,
-      })
-    }
   } catch {
     /* notify is best-effort */
   }

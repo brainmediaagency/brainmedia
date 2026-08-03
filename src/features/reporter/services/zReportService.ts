@@ -144,6 +144,7 @@ export async function createZReport(input: {
       link: '/reporter?tab=z-reports',
       createdByUid: input.createdByUid,
       createdByNameSnapshot: input.createdByNameSnapshot,
+      pushRoles: ['management', 'coordinator'],
     })
 
     return reportRef.id

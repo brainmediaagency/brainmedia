@@ -92,7 +92,7 @@ describe('push role targeting', () => {
     sendOneSignalPush.mockReset()
   })
 
-  it('keeps İK reports away from media planning and reporters', async () => {
+  it('keeps İK reports to management only', async () => {
     await notifyManagement({
       type: 'hr_report',
       title: 'Yeni İK raporu',
@@ -100,12 +100,12 @@ describe('push role targeting', () => {
       link: '/human-resources?tab=reports',
       createdByUid: 'hr-1',
       createdByNameSnapshot: 'İK',
-      pushRoles: ['management', 'coordinator', 'human_resources'],
+      pushRoles: ['management'],
     })
 
     expect(sendOneSignalPush).toHaveBeenCalledWith(
       expect.objectContaining({
-        roles: ['management', 'coordinator', 'human_resources'],
+        roles: ['management'],
       }),
     )
   })
