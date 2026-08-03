@@ -297,6 +297,7 @@ export async function createHiringNote(input: {
       link: '/human-resources?tab=interviews',
       createdByUid: input.createdByUid,
       createdByNameSnapshot: input.createdByNameSnapshot,
+      pushRoles: ['management'],
     })
 
     return noteRef.id

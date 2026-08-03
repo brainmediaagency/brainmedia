@@ -161,6 +161,10 @@ export type DailyHourCalendarProps = {
   scope?: DailyHourCalendarScope
   /** Compact wrapper for nested dashboards (e.g. yönetim → muhabir görünümü). */
   embedded?: boolean
+  /** Eyebrow above title when `embedded` (e.g. Kameraman görünümü). */
+  embeddedLabel?: string
+  /** Override section description. */
+  description?: string
   /** Optional job select (e.g. muhabir detay drawer). */
   onJobSelect?: (job: JobDocument) => void
   /** Override initial day (`yyyy-MM-dd`). Defaults to Istanbul today. */
@@ -171,6 +175,8 @@ export function DailyHourCalendar({
   sectionNumber = '01',
   scope = 'operations',
   embedded = false,
+  embeddedLabel = 'Muhabir görünümü',
+  description: descriptionProp,
   onJobSelect,
   initialDay,
 }: DailyHourCalendarProps) {
@@ -287,9 +293,11 @@ export function DailyHourCalendar({
   const isToday = day === todayDateOnlyIstanbul()
 
   const title = isReporterScope ? 'Çekim takvimi' : 'Günlük saat takvimi'
-  const description = isReporterScope
-    ? 'Muhabire iletilmiş konfirme işler. Gün seçerek saat dilimlerine göre görüntüleyin.'
-    : 'Tam saatler her zaman listelenir; buçuk dilimler yalnızca o saatte iş varsa eklenir.'
+  const description =
+    descriptionProp ??
+    (isReporterScope
+      ? 'Muhabire iletilmiş konfirme işler. Gün seçerek saat dilimlerine göre görüntüleyin.'
+      : 'Tam saatler her zaman listelenir; buçuk dilimler yalnızca o saatte iş varsa eklenir.')
   const emptyDescription = isReporterScope
     ? 'Seçilen tarihte muhabire iletilmiş açık iş bulunmuyor.'
     : 'Seçilen tarihte planlanan konfirme / çekildi / iptal iş kaydı bulunmuyor.'
@@ -454,7 +462,7 @@ export function DailyHourCalendar({
       <section className="rounded-[var(--radius-md)] border border-border bg-surface p-5 shadow-[var(--shadow-sm)]">
         <div className="mb-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-brand-blue">
-            Muhabir görünümü
+            {embeddedLabel}
           </p>
           <h2 className="mt-1 font-display text-lg font-semibold text-text-primary">
             {title}

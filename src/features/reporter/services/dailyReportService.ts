@@ -346,6 +346,7 @@ export async function createDailyReport(input: DailyReportWriteInput & {
       link: '/reporter?tab=daily-reports',
       createdByUid: input.createdByUid,
       createdByNameSnapshot: input.createdByNameSnapshot,
+      pushRoles: ['management', 'coordinator'],
     })
 
     return ref.id

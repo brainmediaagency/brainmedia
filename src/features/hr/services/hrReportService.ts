@@ -304,8 +304,7 @@ export async function createHrReport(input: {
       link: '/human-resources?tab=reports',
       createdByUid: input.createdByUid,
       createdByNameSnapshot: input.createdByNameSnapshot,
-      /** İK raporu MPU ve muhabiri ilgilendirmiyor. */
-      pushRoles: ['management', 'coordinator', 'human_resources'],
+      pushRoles: ['management'],
     })
 
     return ref.id

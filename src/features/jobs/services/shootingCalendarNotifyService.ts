@@ -18,13 +18,16 @@ import { shiftDateOnlyDays } from '@/features/media-planning/services/dailyRegio
 const META_PATH = ['appMeta', 'shootingCalendarNotify'] as const
 
 /** İstanbul wall-clock hour when the shoot calendar evening notify may fire. */
-export const SHOOTING_CALENDAR_NOTIFY_HOUR = 21
+export const SHOOTING_CALENDAR_NOTIFY_HOUR = 0
 
 export type ShootingCalendarNotifyResult =
   | { skipped: true; reason: string; date?: string }
   | { skipped: false; date: string; jobCount: number }
 
-/** Milliseconds until the next İstanbul occurrence of `hour:00` (today or tomorrow). */
+/**
+ * Milliseconds until the next İstanbul occurrence of `hour:00`.
+ * For hour 0 this is the next calendar midnight.
+ */
 export function msUntilNextIstanbulHour(
   hour: number,
   now: Date = new Date(),
@@ -43,15 +46,17 @@ export function isAtOrAfterIstanbulHour(
   hour: number,
   now: Date = new Date(),
 ): boolean {
-  const currentHour = Number(
-    formatInTimeZone(now, COMPANY_TIMEZONE, 'H'),
-  )
+  if (hour === 0) {
+    // Midnight window: fire from 00:00 onward on the calendar day (catch-up all day).
+    return true
+  }
+  const currentHour = Number(formatInTimeZone(now, COMPANY_TIMEZONE, 'H'))
   return currentHour >= hour
 }
 
 /**
- * Once per Istanbul day after 21:00, if any forwarded open (approved) jobs
- * exist for today's planned shoot date, push kameraman-only.
+ * Once per Istanbul day from midnight onward, if any forwarded open (approved)
+ * jobs exist for today's planned shoot date, push muhabir + kameraman.
  * Dedup via appMeta/shootingCalendarNotify.lastNotifiedDate.
  */
 export async function runDueShootingCalendarNotify(actor: {
@@ -110,9 +115,9 @@ export async function runDueShootingCalendarNotify(actor: {
 
   void sendOneSignalPush({
     title: 'Çekim takvimi hazır',
-    body: `Bugün için ${jobCount} iş muhabir takvimine düştü.`,
+    body: `Bugün için ${jobCount} iş çekim takvimine düştü.`,
     link: '/reporter',
-    roles: ['kameraman'],
+    roles: ['kameraman', 'reporter'],
   })
 
   return { skipped: false, date: today, jobCount }

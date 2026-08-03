@@ -1,4 +1,5 @@
 import type { AppRouteKey } from '@/config/permissions'
+import type { UserRole } from '@/config/roles'
 import {
   Briefcase,
   Camera,
@@ -73,3 +74,9 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Zap,
   },
 ]
+
+/** Sidebar / mobile nav label; kameraman shares the reporter route. */
+export function resolveNavItemLabel(item: NavItem, role: UserRole): string {
+  if (item.key === 'reporter' && role === 'kameraman') return 'Kameraman'
+  return item.label
+}

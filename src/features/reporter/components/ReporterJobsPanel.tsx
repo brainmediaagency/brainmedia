@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { JobDocument } from '@/features/jobs/types/job'
 import { DailyHourCalendar } from '@/features/jobs/components/DailyHourCalendar'
+import { useAuth } from '@/features/auth/hooks/useAuth'
 import { Drawer } from '@/components/ui/Drawer'
 import { formatDateTimeTr, formatJobScheduleTr } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
@@ -26,10 +27,12 @@ export type ReporterJobsPanelProps = {
 }
 
 /**
- * Muhabir çekim takvimi: yönetim/koordinatörün ilettiği konfirme işler,
+ * Çekim takvimi: yönetim/koordinatörün ilettiği konfirme işler,
  * günlük saat takvimi görünümünde (Bugün / gün seçici).
  */
 export function ReporterJobsPanel({ embedded = false }: ReporterJobsPanelProps) {
+  const { claims } = useAuth()
+  const isKameraman = claims?.role === 'kameraman'
   const [selected, setSelected] = useState<JobDocument | null>(null)
 
   return (
@@ -38,6 +41,14 @@ export function ReporterJobsPanel({ embedded = false }: ReporterJobsPanelProps) 
         scope="reporter"
         sectionNumber="01"
         embedded={embedded}
+        embeddedLabel={
+          isKameraman ? 'Kameraman görünümü' : 'Muhabir görünümü'
+        }
+        description={
+          isKameraman
+            ? 'İletilmiş konfirme işler. Gün seçerek saat dilimlerine göre görüntüleyin.'
+            : undefined
+        }
         onJobSelect={setSelected}
       />
 

@@ -5,7 +5,7 @@ import {
   getDefaultSectionId,
   getNavSections,
 } from '@/config/navSections'
-import { NAV_ITEMS } from '@/config/routes'
+import { NAV_ITEMS, resolveNavItemLabel } from '@/config/routes'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { cn } from '@/lib/classNames'
 
@@ -28,6 +28,7 @@ export function NavMenu({ onNavigate, subItemClassName }: NavMenuProps) {
     <>
       {visibleItems.map((item) => {
         const Icon = item.icon
+        const label = role ? resolveNavItemLabel(item, role) : item.label
         const sections = role ? getNavSections(item.key, role) : []
         const defaultSectionId = role ? getDefaultSectionId(item.key, role) : null
         const isParentActive = location.pathname === item.path
@@ -49,13 +50,13 @@ export function NavMenu({ onNavigate, subItemClassName }: NavMenuProps) {
               }
             >
               <Icon className="size-5 shrink-0" aria-hidden="true" />
-              <span>{item.label}</span>
+              <span>{label}</span>
             </NavLink>
 
             {isParentActive && sections.length > 0 && (
               <div
                 className="ml-4 flex flex-col gap-0.5 border-l border-white/10 pl-2"
-                aria-label={`${item.label} alt menü`}
+                aria-label={`${label} alt menü`}
               >
                 {sections.map((section) => {
                   const SectionIcon = section.icon
