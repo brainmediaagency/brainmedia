@@ -579,6 +579,13 @@ export function JobReviewDrawer({
 
       {mode === 'reviewed' && job.status === 'approved' && canReview && (
         <div className="space-y-4 border-t border-border pt-4">
+          <VoiceRecordingPanel
+            key={`voice-${job.id}`}
+            compact
+            companyName={job.companyName}
+            jobId={job.id}
+          />
+
           <FormField
             label="Geri alma notu"
             htmlFor="revertNote"

@@ -14,6 +14,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
+import { getFirebaseAuth } from '@/lib/firebase/auth'
 import { uploadFileToDrive, type DriveUploadProgress } from '@/lib/driveUpload'
 import { todayDateOnlyIstanbul } from '@/lib/date'
 import { UserFacingError, mapAppError } from '@/lib/errors'
@@ -87,6 +88,17 @@ export async function saveVoiceRecording(input: {
     throw new UserFacingError('Kayıt dosyası boş.')
   }
 
+  const authUid = getFirebaseAuth().currentUser?.uid
+  if (!authUid) {
+    throw new UserFacingError('Oturum bulunamadı. Tekrar giriş yapın.')
+  }
+  // Auth uid is authoritative for rules; ignore stale profile.uid mismatches.
+  const createdByUid = authUid
+  const createdByNameSnapshot = input.createdByNameSnapshot.trim().slice(0, 120)
+  if (!createdByNameSnapshot) {
+    throw new UserFacingError('Kayıt için kullanıcı adı gerekli.')
+  }
+
   const existing = inFlightByBlob.get(input.blob)
   if (existing) return existing
 
@@ -119,24 +131,39 @@ export async function saveVoiceRecording(input: {
         onProgress: input.onUploadProgress,
       })
 
-      await setDoc(refDoc, {
-        companyName,
-        jobId: input.jobId?.trim() || null,
-        recordedAtDate: dateOnly,
-        durationMs: Math.max(0, Math.round(input.durationMs)),
-        mimeType: input.mimeType || 'audio/webm',
-        size: input.blob.size,
-        driveFileId: drive.fileId,
-        url: drive.url,
-        webViewLink: drive.webViewLink,
-        createdByUid: input.createdByUid,
-        createdByNameSnapshot: input.createdByNameSnapshot,
-        createdAt: serverTimestamp(),
-      })
+      try {
+        await setDoc(refDoc, {
+          companyName,
+          jobId: input.jobId?.trim() || null,
+          recordedAtDate: dateOnly,
+          durationMs: Math.max(0, Math.round(input.durationMs)),
+          mimeType: (input.mimeType || 'audio/webm').slice(0, 100),
+          size: input.blob.size,
+          driveFileId: drive.fileId,
+          url: drive.url,
+          webViewLink: drive.webViewLink,
+          createdByUid,
+          createdByNameSnapshot,
+          createdAt: serverTimestamp(),
+        })
+      } catch (firestoreError) {
+        throw new UserFacingError(
+          mapAppError(
+            firestoreError,
+            'Dosya Drive’a yüklendi ancak ses kayıtları listesine yazılamadı. Tekrar kaydetmeyi deneyin.',
+          ),
+        )
+      }
 
       settle.resolve(refDoc.id)
     } catch (error) {
-      settle.reject(new UserFacingError(mapAppError(error, 'Ses kaydı kaydedilemedi.')))
+      if (error instanceof UserFacingError) {
+        settle.reject(error)
+      } else {
+        settle.reject(
+          new UserFacingError(mapAppError(error, 'Ses kaydı kaydedilemedi.')),
+        )
+      }
     } finally {
       inFlightByBlob.delete(input.blob)
     }
