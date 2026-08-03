@@ -482,6 +482,11 @@ async function transitionJob(
       throw new UserFacingError('Yalnızca kendi iş kayıtlarınızı sonuçlandırabilirsiniz.')
     }
     if (!isAllowedTransition(job.status, toStatus)) {
+      if (job.status === toStatus) {
+        throw new UserFacingError(
+          'Bu iş zaten bu durumda. Listeyi yenileyip kontrol edin.',
+        )
+      }
       throw new UserFacingError('Bu durum geçişine izin verilmiyor.')
     }
 
@@ -770,6 +775,11 @@ export async function cancelJob(
   if (note.length < 3) {
     throw new UserFacingError('İptal için en az 3 karakterlik bir neden girin.')
   }
+  // Idempotent: concurrent double-submit / retry after success.
+  const current = await getJob(jobId)
+  if (current?.status === 'cancelled') {
+    return current
+  }
   await transitionJob(jobId, 'cancelled', actor, note, {
     allowedRoles: REVIEWER_ROLES,
   })
@@ -806,6 +816,10 @@ export async function cancelOwnJob(
   const note = reviewNote.trim()
   if (note.length < 3) {
     throw new UserFacingError('İptal için en az 3 karakterlik bir neden girin.')
+  }
+  const current = await getJob(jobId)
+  if (current?.status === 'cancelled') {
+    return
   }
   await transitionJob(jobId, 'cancelled', actor, note, {
     allowedRoles: ['media_planning'],

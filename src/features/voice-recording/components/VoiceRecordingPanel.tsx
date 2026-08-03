@@ -160,6 +160,19 @@ export function VoiceRecordingPanel({
           Maksimum süre (30 dakika) doldu. Kayıt otomatik olarak durduruldu.
         </p>
       ) : null}
+
+      {stoppedReason === 'stream_ended' ? (
+        <p
+          role="status"
+          className={cn(
+            'rounded-[var(--radius-md)] border border-warning/30 bg-warning/10 text-warning',
+            compact ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm',
+          )}
+        >
+          Mikrofon kesildi; o ana kadar alınan ses saklandı. Ekranı açık tutup
+          yeniden kaydedebilirsiniz.
+        </p>
+      ) : null}
     </>
   )
 

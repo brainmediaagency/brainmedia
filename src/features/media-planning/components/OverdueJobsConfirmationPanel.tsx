@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import type { JobDocument } from '@/features/jobs/types/job'
@@ -49,6 +49,7 @@ export function OverdueJobsConfirmationPanel({
   const [cancelling, setCancelling] = useState<JobDocument | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const actionLockRef = useRef(false)
 
   const canAct = mode === 'actions'
   const role = claims?.role ?? profile?.role
@@ -99,56 +100,65 @@ export function OverdueJobsConfirmationPanel({
   } = useClientPagination(listedJobs, { resetKey: `${canAct}-${mode}` })
 
   const handleConfirmShot = async () => {
-    if (!confirming || !actor || !isOnline) return
+    if (!confirming || !actor || !isOnline || actionLockRef.current) return
+    actionLockRef.current = true
     setSubmitting(true)
     try {
       const updated = await markJobAsShot(confirming.id, actor)
       onJobUpdated?.(updated)
+      setConfirming(null)
       toast.success('İş çekildi olarak işaretlendi.')
-      void updateJobSonDurumInSheet(confirming, SHEET_SON_DURUM.shot).catch((error) => {
+      try {
+        await updateJobSonDurumInSheet(updated, SHEET_SON_DURUM.shot)
+      } catch (error) {
         toast.warning(
           mapAppError(
             error,
             'Firestore kaydı tamam. Excel (Sheets) durumu güncellenemedi — Excel sekmesinden kontrol edin veya işlemi tekrar deneyin.',
           ),
         )
-      })
-      setConfirming(null)
+      }
     } catch (error) {
       toast.error(mapAppError(error, 'İş çekildi olarak işaretlenemedi.'))
     } finally {
+      actionLockRef.current = false
       setSubmitting(false)
     }
   }
 
   const handleCancel = async () => {
-    if (!cancelling || !actor || !isOnline) return
+    if (!cancelling || !actor || !isOnline || actionLockRef.current) return
     const reason = cancelReason.trim()
     if (reason.length < 3) {
       toast.error('İptal için en az 3 karakterlik bir neden girin.')
       return
     }
+    actionLockRef.current = true
     setSubmitting(true)
     try {
       const updated = await cancelJob(cancelling.id, actor, reason)
       onJobUpdated?.(updated)
+      setCancelling(null)
+      setCancelReason('')
       toast.success('İş iptal edildi.')
-      void exportJobReviewToSheet(cancelling, 'cancelled', {
-        reviewedByName: actor.fullName,
-        reviewNote: reason,
-      }).catch((error) => {
+      // Sheets is separate from Firestore — await so failures are never silent.
+      try {
+        await exportJobReviewToSheet(updated, 'cancelled', {
+          reviewedByName: actor.fullName,
+          reviewNote: reason,
+        })
+      } catch (error) {
         toast.warning(
           mapAppError(
             error,
             'Firestore kaydı tamam. Excel (Sheets) yazılamadı — Excel sekmesinden kontrol edin veya işlemi tekrar deneyin.',
           ),
         )
-      })
-      setCancelling(null)
-      setCancelReason('')
+      }
     } catch (error) {
       toast.error(mapAppError(error, 'İş iptal edilemedi.'))
     } finally {
+      actionLockRef.current = false
       setSubmitting(false)
     }
   }
