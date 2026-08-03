@@ -19,6 +19,7 @@ export type VoiceRecorderErrorCode =
   | 'permission_denied'
   | 'no_microphone'
   | 'start_failed'
+  | 'stream_ended'
 
 export type VoiceRecording = {
   blob: Blob
@@ -80,6 +81,8 @@ export function voiceRecorderErrorMessage(code: VoiceRecorderErrorCode): string 
       return 'Mikrofon bulunamadı. Cihaza bir mikrofon bağlayıp tekrar deneyin.'
     case 'start_failed':
       return 'Ses kaydı başlatılamadı. Lütfen tekrar deneyin.'
+    case 'stream_ended':
+      return 'Mikrofon bağlantısı kesildi (telefon araması, arka plan veya tarayıcı kısıtı). Kayıt durdu — mümkünse ekranı açık tutup tekrar deneyin.'
   }
 }
 
@@ -103,9 +106,9 @@ export function useVoiceRecorder() {
   const [elapsedMs, setElapsedMs] = useState(0)
   const [error, setError] = useState<VoiceRecorderErrorCode | null>(null)
   const [recording, setRecording] = useState<VoiceRecording | null>(null)
-  const [stoppedReason, setStoppedReason] = useState<'manual' | 'max_duration' | null>(
-    null,
-  )
+  const [stoppedReason, setStoppedReason] = useState<
+    'manual' | 'max_duration' | 'stream_ended' | null
+  >(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -116,9 +119,13 @@ export function useVoiceRecorder() {
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const recordingUrlRef = useRef<string | null>(null)
-  const stopReasonRef = useRef<'manual' | 'max_duration'>('manual')
+  const stopReasonRef = useRef<'manual' | 'max_duration' | 'stream_ended'>(
+    'manual',
+  )
   const aliveRef = useRef(true)
   const wakeLockRef = useRef<ScreenWakeLock | null>(null)
+  /** Buffers finalization across React Strict Mode / drawer remounts. */
+  const sessionEpochRef = useRef(0)
 
   const acquireWakeLock = useCallback(async () => {
     if (wakeLockRef.current && !wakeLockRef.current.released) return
@@ -143,7 +150,15 @@ export function useVoiceRecorder() {
   }, [])
 
   const releaseStream = useCallback(() => {
-    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current?.getTracks().forEach((track) => {
+      try {
+        track.onended = null
+        track.onmute = null
+        track.stop()
+      } catch {
+        /* ignore */
+      }
+    })
     streamRef.current = null
   }, [])
 
@@ -173,28 +188,33 @@ export function useVoiceRecorder() {
     stopTick()
     tickTimerRef.current = setInterval(() => {
       setElapsedMs(readElapsedMs())
-    }, 200)
+    }, 250)
   }, [readElapsedMs, stopTick])
 
-  const scheduleMaxDurationStop = useCallback(
-    (remainingMs: number) => {
-      if (maxTimerRef.current !== null) {
-        clearTimeout(maxTimerRef.current)
-        maxTimerRef.current = null
-      }
-      maxTimerRef.current = setTimeout(() => {
-        stopReasonRef.current = 'max_duration'
-        const recorder = mediaRecorderRef.current
-        if (recorder && recorder.state !== 'inactive') {
+  const scheduleMaxDurationStop = useCallback((remainingMs: number) => {
+    if (maxTimerRef.current !== null) {
+      clearTimeout(maxTimerRef.current)
+      maxTimerRef.current = null
+    }
+    maxTimerRef.current = setTimeout(() => {
+      stopReasonRef.current = 'max_duration'
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state !== 'inactive') {
+        try {
           recorder.stop()
+        } catch {
+          /* ignore */
         }
-      }, Math.max(0, remainingMs))
-    },
-    [],
-  )
+      }
+    }, Math.max(0, remainingMs))
+  }, [])
 
   const finalizeRecording = useCallback(
-    (blob: Blob, durationMs: number, reason: 'manual' | 'max_duration') => {
+    (
+      blob: Blob,
+      durationMs: number,
+      reason: 'manual' | 'max_duration' | 'stream_ended',
+    ) => {
       clearRecordingUrl()
       const url = URL.createObjectURL(blob)
       recordingUrlRef.current = url
@@ -208,6 +228,9 @@ export function useVoiceRecorder() {
       setStoppedReason(reason)
       setStatus('stopped')
       setElapsedMs(durationMs)
+      if (reason === 'stream_ended') {
+        setError('stream_ended')
+      }
     },
     [clearRecordingUrl],
   )
@@ -222,9 +245,22 @@ export function useVoiceRecorder() {
     }
 
     setStatus('requesting')
+    const epoch = ++sessionEpochRef.current
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Prefer continuous mono voice capture; avoid aggressive constraints that
+      // some mobiles drop after ~1–2 minutes.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          // ChannelCount omitted on purpose — forced mono breaks some devices.
+        },
+      })
+      if (sessionEpochRef.current !== epoch || !aliveRef.current) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
       streamRef.current = stream
 
       const mimeType = pickMimeType()
@@ -237,16 +273,24 @@ export function useVoiceRecorder() {
 
       mediaRecorderRef.current = recorder
 
+      /**
+       * IMPORTANT: Do NOT pass a timeslice to `start()`.
+       * On many mobile browsers (esp. Safari / Chrome Android) periodic
+       * timeslices drop or truncate audio after ~1–2 minutes. Buffer until
+       * explicit stop so the full session is one (or a few) reliable chunks.
+       */
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data)
+        if (event.data && event.data.size > 0) {
+          chunksRef.current.push(event.data)
+        }
       }
 
-      recorder.onstop = () => {
+      const finishFromRecorder = () => {
         clearTimers()
         stopTick()
         releaseWakeLock()
         segmentStartedAtRef.current = null
-        const durationMs = Math.min(readElapsedMs(), MAX_RECORDING_MS)
+        const durationMs = Math.min(Math.max(0, readElapsedMs()), MAX_RECORDING_MS)
         elapsedBaseRef.current = durationMs
         const blob = new Blob(chunksRef.current, {
           type: mimeTypeRef.current,
@@ -254,9 +298,16 @@ export function useVoiceRecorder() {
         chunksRef.current = []
         releaseStream()
         mediaRecorderRef.current = null
-        if (!aliveRef.current) return
+        if (!aliveRef.current || sessionEpochRef.current !== epoch) return
+        if (blob.size <= 0) {
+          setError('start_failed')
+          setStatus('idle')
+          return
+        }
         finalizeRecording(blob, durationMs, stopReasonRef.current)
       }
+
+      recorder.onstop = finishFromRecorder
 
       recorder.onerror = () => {
         clearTimers()
@@ -264,9 +315,25 @@ export function useVoiceRecorder() {
         releaseWakeLock()
         releaseStream()
         mediaRecorderRef.current = null
-        if (!aliveRef.current) return
+        if (!aliveRef.current || sessionEpochRef.current !== epoch) return
         setError('start_failed')
         setStatus('idle')
+      }
+
+      // OS reclaiming the mic (call, another app) ends the track and usually
+      // stops MediaRecorder — surface that clearly instead of a silent cut.
+      for (const track of stream.getAudioTracks()) {
+        track.onended = () => {
+          if (sessionEpochRef.current !== epoch) return
+          const rec = mediaRecorderRef.current
+          if (!rec || rec.state === 'inactive') return
+          stopReasonRef.current = 'stream_ended'
+          try {
+            rec.stop()
+          } catch {
+            finishFromRecorder()
+          }
+        }
       }
 
       clearRecordingUrl()
@@ -275,7 +342,8 @@ export function useVoiceRecorder() {
       segmentStartedAtRef.current = Date.now()
       stopReasonRef.current = 'manual'
       setElapsedMs(0)
-      recorder.start(1000)
+      // No timeslice argument — full buffer until stop (mobile-safe).
+      recorder.start()
       setStatus('recording')
       startTick()
       scheduleMaxDurationStop(MAX_RECORDING_MS)
@@ -341,6 +409,14 @@ export function useVoiceRecorder() {
       segmentStartedAtRef.current = null
     }
     stopTick()
+    // Flush any remaining buffer before stop (no-op without timeslice on some engines).
+    try {
+      if (typeof recorder.requestData === 'function' && recorder.state === 'recording') {
+        recorder.requestData()
+      }
+    } catch {
+      /* optional */
+    }
     recorder.stop()
   }, [clearTimers, readElapsedMs, stopTick])
 
@@ -348,6 +424,7 @@ export function useVoiceRecorder() {
     clearRecordingUrl()
     setRecording(null)
     setStoppedReason(null)
+    setError(null)
     setElapsedMs(0)
     setStatus('idle')
   }, [clearRecordingUrl])
@@ -356,6 +433,7 @@ export function useVoiceRecorder() {
     aliveRef.current = true
     return () => {
       aliveRef.current = false
+      sessionEpochRef.current += 1
       clearTimers()
       stopTick()
       const recorder = mediaRecorderRef.current
