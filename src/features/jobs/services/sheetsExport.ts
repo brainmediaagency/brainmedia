@@ -63,6 +63,8 @@ export type SheetsWebhookPayload = {
   telNo?: string
   /** Province (il) only. */
   adres?: string
+  /** Optional Instagram handle/URL from the job package. */
+  instagram?: string
   mpu?: string
   dk?: string
   haber?: string
@@ -163,6 +165,7 @@ export function buildUpsertPayload(
     firmaSahibi: job.contactPersonName,
     telNo: phone,
     adres: job.province,
+    instagram: job.instagram?.trim() ? job.instagram.trim() : '',
     mpu: creatorName,
     dk: '',
     haber: '',

@@ -69,11 +69,13 @@ export function isOwnActionNotification(
 /**
  * Broadcast rows reach every role in Firestore, so day-of region rows are
  * filtered out for reporters here — they do not act on region planning.
+ * Kameraman only receives the evening shooting-calendar push (not inbox noise).
  */
 export function isNotificationVisibleForRole(
   item: AppNotification,
   role: UserRole | undefined,
 ): boolean {
+  if (role === 'kameraman') return false
   if (role === 'reporter' && item.type === 'region_created') return false
   return true
 }

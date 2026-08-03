@@ -36,6 +36,8 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
     'news-sites',
     'game',
   ],
+  /** Calendar-only surface — same Çekim Takvimi as muhabir/İK. */
+  kameraman: ['reporter'],
 }
 
 export function canAccessRoute(role: UserRole, routeKey: AppRouteKey): boolean {

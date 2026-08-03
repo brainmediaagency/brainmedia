@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { TabNav } from '@/components/ui/TabNav'
 import {
-  HR_REPORTER_SECTIONS,
+  CALENDAR_ONLY_REPORTER_SECTIONS,
   REPORTER_SECTIONS,
   REPORTER_VIEWER_SECTIONS,
 } from '@/config/navSections'
@@ -21,27 +21,32 @@ type ReporterTab = (typeof REPORTER_TAB_IDS)[number]
 const REPORTER_VIEWER_TAB_IDS = REPORTER_VIEWER_SECTIONS.map((section) => section.id)
 type ReporterViewerTab = (typeof REPORTER_VIEWER_TAB_IDS)[number]
 
-const HR_REPORTER_TAB_IDS = HR_REPORTER_SECTIONS.map((section) => section.id)
-type HrReporterTab = (typeof HR_REPORTER_TAB_IDS)[number]
+const CALENDAR_ONLY_TAB_IDS = CALENDAR_ONLY_REPORTER_SECTIONS.map(
+  (section) => section.id,
+)
+type CalendarOnlyTab = (typeof CALENDAR_ONLY_TAB_IDS)[number]
 
 export function ReporterPage() {
   const { profile, user } = useAuth()
   const role = profile?.role
   const isReporter = role === 'reporter'
-  const isHr = role === 'human_resources'
+  const isCalendarOnly = role === 'human_resources' || role === 'kameraman'
 
   const viewerConfig = useMemo(() => {
     if (isReporter) {
       return { sections: REPORTER_SECTIONS, tabIds: REPORTER_TAB_IDS }
     }
-    if (isHr) {
-      return { sections: HR_REPORTER_SECTIONS, tabIds: HR_REPORTER_TAB_IDS }
+    if (isCalendarOnly) {
+      return {
+        sections: CALENDAR_ONLY_REPORTER_SECTIONS,
+        tabIds: CALENDAR_ONLY_TAB_IDS,
+      }
     }
     return {
       sections: REPORTER_VIEWER_SECTIONS,
       tabIds: REPORTER_VIEWER_TAB_IDS,
     }
-  }, [isHr, isReporter])
+  }, [isCalendarOnly, isReporter])
 
   const [tab, setTab] = usePageTab(viewerConfig.tabIds, 'jobs')
 
@@ -78,20 +83,21 @@ export function ReporterPage() {
     )
   }
 
-  if (isHr) {
+  if (isCalendarOnly) {
+    const title = role === 'kameraman' ? 'Kameraman' : 'Muhabir'
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Muhabir"
+          title={title}
           subtitle="Çekim takvimini görüntüleyin."
         />
 
         <TabNav
           className="lg:hidden"
-          items={[...HR_REPORTER_SECTIONS]}
+          items={[...CALENDAR_ONLY_REPORTER_SECTIONS]}
           activeId={tab}
-          onChange={(id) => setTab(id as HrReporterTab)}
-          aria-label="Muhabir görünümü bölümleri"
+          onChange={(id) => setTab(id as CalendarOnlyTab)}
+          aria-label="Çekim takvimi"
         />
 
         <div key={tab} className="animate-fade-in-up">

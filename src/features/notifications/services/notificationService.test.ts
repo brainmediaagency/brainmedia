@@ -64,6 +64,11 @@ describe('isNotificationVisibleForRole', () => {
     expect(isNotificationVisibleForRole(regionItem, 'reporter')).toBe(false)
   })
 
+  it('hides all inbox noise from kameraman', () => {
+    expect(isNotificationVisibleForRole(regionItem, 'kameraman')).toBe(false)
+    expect(isNotificationVisibleForRole(item('uid-1'), 'kameraman')).toBe(false)
+  })
+
   it('keeps günün bölgesi for the other roles', () => {
     for (const role of [
       'management',

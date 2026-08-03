@@ -85,10 +85,13 @@ export const REPORTER_VIEWER_SECTIONS = [
   { id: 'z-reports', label: 'Z Raporları', icon: FileText },
 ] as const satisfies readonly NavSectionItem[]
 
-/** İK: yalnızca çekim takvimi (muhabir özeti ve rapor düzenleme yok). */
-export const HR_REPORTER_SECTIONS = [
+/** İK / kameraman: yalnızca çekim takvimi (rapor ve özet yok). */
+export const CALENDAR_ONLY_REPORTER_SECTIONS = [
   { id: 'jobs', label: 'Çekim Takvimi', icon: CalendarDays },
 ] as const satisfies readonly NavSectionItem[]
+
+/** @deprecated Prefer CALENDAR_ONLY_REPORTER_SECTIONS */
+export const HR_REPORTER_SECTIONS = CALENDAR_ONLY_REPORTER_SECTIONS
 
 export const MEDIA_PLANNING_SECTIONS = [
   { id: 'overdue', label: 'Çekim Durumu', icon: CheckSquare },
@@ -119,7 +122,9 @@ export function getNavSections(
     case 'reporter':
       if (role === 'reporter') return REPORTER_SECTIONS
       if (role === 'management' || role === 'coordinator') return REPORTER_VIEWER_SECTIONS
-      if (role === 'human_resources') return HR_REPORTER_SECTIONS
+      if (role === 'human_resources' || role === 'kameraman') {
+        return CALENDAR_ONLY_REPORTER_SECTIONS
+      }
       return []
     case 'media-planning':
       if (

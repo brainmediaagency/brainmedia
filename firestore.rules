@@ -42,7 +42,8 @@ service cloud.firestore {
         'reporter',
         'human_resources',
         'coordinator',
-        'management'
+        'management',
+        'kameraman'
       ];
     }
 
@@ -60,6 +61,10 @@ service cloud.firestore {
 
     function isHumanResources() {
       return isAuthenticated() && role() == 'human_resources';
+    }
+
+    function isKameraman() {
+      return isAuthenticated() && role() == 'kameraman';
     }
 
     function canTrackShift() {
@@ -680,6 +685,7 @@ service cloud.firestore {
           || isCoordinatorOrManagement()
           || isHumanResources()
           || isReporter()
+          || isKameraman()
         );
 
       allow create: if isMediaPlanning()
@@ -1315,10 +1321,12 @@ service cloud.firestore {
     match /appMeta/{docId} {
       allow read: if isHumanResources() || isManagement()
         || (docId == 'zReportRetention' && isCoordinatorOrManagement())
-        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement());
+        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement())
+        || (docId == 'shootingCalendarNotify' && isCoordinatorOrManagement());
       allow create, update: if isHumanResources() || isManagement()
         || (docId == 'zReportRetention' && isCoordinatorOrManagement())
-        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement());
+        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement())
+        || (docId == 'shootingCalendarNotify' && isCoordinatorOrManagement());
       allow delete: if false;
     }
 

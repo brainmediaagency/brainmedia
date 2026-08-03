@@ -68,6 +68,15 @@
       ]
     },
     {
+      "collectionGroup": "jobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "forwardedToReporter", "order": "ASCENDING" },
+        { "fieldPath": "plannedExecutionDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "hrReports",
       "queryScope": "COLLECTION",
       "fields": [

@@ -61,6 +61,7 @@ var ROLES_PUSH = {
   human_resources: true,
   coordinator: true,
   management: true,
+  kameraman: true,
 }
 
 /**
@@ -533,6 +534,7 @@ function handleUpsertJobRow_(body) {
     }
     // getRange(row, column, numRows, numColumns)
     sheet.getRange(existingRow, 1, 1, HEADERS.length).setValues([rowValues])
+    writeOptionalInstagramColumn_(sheet, existingRow, body)
     return jsonResponse_({
       ok: true,
       updated: true,
@@ -543,12 +545,25 @@ function handleUpsertJobRow_(body) {
   }
 
   sheet.appendRow(rowValues)
+  var insertedRow = sheet.getLastRow()
+  writeOptionalInstagramColumn_(sheet, insertedRow, body)
   return jsonResponse_({
     ok: true,
     inserted: true,
     service: SCRIPT_SERVICE,
     version: SCRIPT_VERSION,
   })
+}
+
+/**
+ * If the sheet has an INSTAGRAM header (any column), fill it from body.instagram.
+ * Never creates/reorders columns — missing header = no-op.
+ */
+function writeOptionalInstagramColumn_(sheet, row, body) {
+  if (!Object.prototype.hasOwnProperty.call(body, 'instagram')) return
+  var col = findHeaderColumn_(sheet, 'INSTAGRAM', 0)
+  if (!col || col < 1) return
+  sheet.getRange(row, col).setValue(String(body.instagram || ''))
 }
 
 function handleUpdateSonDurum_(body) {
