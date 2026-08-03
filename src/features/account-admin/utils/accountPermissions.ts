@@ -17,10 +17,10 @@ export function getManageableRoles(actorRole: UserRole): UserRole[] {
     return [
       'media_planning',
       'reporter',
+      'kameraman',
       'human_resources',
       'coordinator',
       'management',
-      'kameraman',
     ]
   }
   if (actorRole === 'coordinator' || actorRole === 'human_resources') {
