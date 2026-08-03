@@ -4,6 +4,8 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import {
+  ensureBrowserNotificationPermission,
+  getBrowserNotificationPermission,
   initOneSignal,
   isIosDevice,
   isOneSignalConfigured,
@@ -72,6 +74,18 @@ export function OneSignalSubscribeBanner() {
     }
     setBusy(true)
     try {
+      // Ask the browser first while the click gesture is still valid.
+      const browser = await ensureBrowserNotificationPermission()
+      if (browser === 'denied') {
+        toast.error(
+          'Tarayıcı bu site için bildirimi engellemiş. Adres çubuğundaki kilit → Bildirimler → İzin ver, sonra sayfayı yenileyin.',
+        )
+        return
+      }
+      if (browser !== 'granted') {
+        toast.error('Bildirim izni verilmedi.')
+        return
+      }
       await initOneSignal()
       await loginOneSignalWithRole(profile.uid, pushRole)
       const ok = await requestOneSignalPushPermission()
@@ -79,8 +93,12 @@ export function OneSignalSubscribeBanner() {
         setSubscribed(true)
         toast.success('OneSignal bildirimleri açıldı.')
         dismiss()
+      } else if (getBrowserNotificationPermission() === 'denied') {
+        toast.error(
+          'Tarayıcı bu site için bildirimi engellemiş. Adres çubuğundaki kilit → Bildirimler → İzin ver, sonra sayfayı yenileyin.',
+        )
       } else {
-        toast.error('Bildirim izni verilmedi.')
+        toast.error('Bildirimler açılamadı. Sayfayı yenileyip tekrar deneyin.')
       }
     } finally {
       setBusy(false)

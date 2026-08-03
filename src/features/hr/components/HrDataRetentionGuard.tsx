@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { useAuth } from '@/features/auth/hooks/useAuth'
@@ -12,7 +11,6 @@ import {
   readHrRetentionWarnCount,
   writeHrRetentionWarnCount,
 } from '@/features/hr/utils/hrRetentionSchedule'
-import { mapAppError } from '@/lib/errors'
 import { todayDateOnlyIstanbul } from '@/lib/date'
 
 function canManageHrRetention(role: string | undefined): boolean {
@@ -34,8 +32,6 @@ export function HrDataRetentionGuard() {
   useEffect(() => {
     if (loading || !user || !profile || !canManageHrRetention(profile.role)) return
 
-    let cancelled = false
-
     void (async () => {
       try {
         await runDueHrRetentionPurge({
@@ -43,15 +39,11 @@ export function HrDataRetentionGuard() {
           fullName: profile.fullName,
         })
       } catch (error) {
-        if (!cancelled) {
-          toast.error(mapAppError(error, 'Eski İK / CV kayıtları temizlenemedi.'))
-        }
+        // Purge is best-effort on app open — don't surface permission noise as
+        // "yetkiniz bulunmuyor" while the user is trying to submit a report.
+        console.warn('[HrDataRetentionGuard] purge skipped', error)
       }
     })()
-
-    return () => {
-      cancelled = true
-    }
   }, [loading, user, profile])
 
   useEffect(() => {

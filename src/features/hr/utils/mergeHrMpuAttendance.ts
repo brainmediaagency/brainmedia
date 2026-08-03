@@ -1,10 +1,33 @@
-import type { HrMpuAttendanceEntry } from '@/features/hr/types/hr'
-import { isHrClockOutAfterIn } from '@/features/hr/utils/hrShiftTimes'
+import {
+  HR_MPU_ATTENDANCE_LIMIT_MESSAGE,
+  MAX_HR_MPU_ATTENDANCES,
+  type HrMpuAttendanceEntry,
+} from '@/features/hr/types/hr'
+import {
+  isHrClockOutAfterIn,
+  normalizeHrShiftTime,
+} from '@/features/hr/utils/hrShiftTimes'
 
-/** Plain Firestore-safe attendance map (no undefined keys). */
+/** Throws USER_… when a report would exceed the 20-MPU attendance cap. */
+export function assertHrMpuAttendanceLimit(
+  entries: HrMpuAttendanceEntry[],
+): void {
+  if (entries.length > MAX_HR_MPU_ATTENDANCES) {
+    throw new Error(`USER_${HR_MPU_ATTENDANCE_LIMIT_MESSAGE}`)
+  }
+}
+
+/** Plain Firestore-safe attendance map (HH:mm only, no empty strings). */
 export function toFirestoreAttendance(
   entry: HrMpuAttendanceEntry,
 ): HrMpuAttendanceEntry {
+  const clockInRaw =
+    typeof entry.clockInTime === 'string' ? entry.clockInTime.trim() : ''
+  const clockOutRaw =
+    typeof entry.clockOutTime === 'string' ? entry.clockOutTime.trim() : ''
+  const clockIn = clockInRaw ? normalizeHrShiftTime(clockInRaw) : null
+  const clockOut = clockOutRaw ? normalizeHrShiftTime(clockOutRaw) : null
+
   if (entry.absent) {
     return {
       mpuUid: entry.mpuUid,
@@ -17,8 +40,8 @@ export function toFirestoreAttendance(
   return {
     mpuUid: entry.mpuUid,
     mpuNameSnapshot: entry.mpuNameSnapshot,
-    clockInTime: entry.clockInTime,
-    clockOutTime: entry.clockOutTime,
+    clockInTime: clockIn,
+    clockOutTime: clockOut,
     absent: false,
   }
 }

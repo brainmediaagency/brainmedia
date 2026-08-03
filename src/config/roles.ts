@@ -4,6 +4,7 @@ export const USER_ROLES = [
   'human_resources',
   'coordinator',
   'management',
+  'kameraman',
 ] as const
 
 export type UserRole = (typeof USER_ROLES)[number]
@@ -14,6 +15,7 @@ export const ROLE_DISPLAY_NAMES: Record<UserRole, string> = {
   human_resources: 'İnsan Kaynakları',
   coordinator: 'Koordinatör',
   management: 'Yönetim',
+  kameraman: 'Kameraman',
 }
 
 /** Roles that can start/end attendance shifts. */

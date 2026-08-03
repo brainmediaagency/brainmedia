@@ -7,6 +7,8 @@ import { useAuth } from '@/features/auth/hooks/useAuth'
 import {
   formatHrMpuAttendanceEntry,
   summarizeHrMpuAttendances,
+  HR_MPU_ATTENDANCE_LIMIT_MESSAGE,
+  MAX_HR_MPU_ATTENDANCES,
   type HrMpuAttendanceEntry,
   type HrReport,
 } from '@/features/hr/types/hr'
@@ -18,6 +20,7 @@ import {
 import {
   isHrClockOutAfterIn,
   isOptionalHrShiftTime,
+  normalizeHrShiftTime,
 } from '@/features/hr/utils/hrShiftTimes'
 import { subscribeMediaPlanners } from '@/features/users/services/userService'
 import type { UserProfile } from '@/features/users/types/user'
@@ -94,7 +97,7 @@ function OptionalTimeField({
             step={60}
             value={value}
             disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => onChange(normalizeHrShiftTime(e.target.value))}
           />
         </FormField>
       ) : (
@@ -141,11 +144,15 @@ export function HrReportsPanel({
     defaultValues: emptyForm,
   })
 
-  const currentPlanner = wizardOpen ? (planners[wizardIndex] ?? null) : null
+  const wizardPlanners = useMemo(
+    () => planners.slice(0, MAX_HR_MPU_ATTENDANCES),
+    [planners],
+  )
+  const currentPlanner = wizardOpen ? (wizardPlanners[wizardIndex] ?? null) : null
   const wizardProgress = useMemo(() => {
-    if (!wizardOpen || planners.length === 0) return null
-    return `${wizardIndex + 1} / ${planners.length}`
-  }, [wizardOpen, wizardIndex, planners.length])
+    if (!wizardOpen || wizardPlanners.length === 0) return null
+    return `${wizardIndex + 1} / ${wizardPlanners.length}`
+  }, [wizardOpen, wizardIndex, wizardPlanners.length])
 
   const titleCaseOnBlur =
     (field: 'title' | 'body') => (e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -180,7 +187,7 @@ export function HrReportsPanel({
   }, [])
 
   const loadWizardStep = (index: number, existing: HrMpuAttendanceEntry[]) => {
-    const planner = planners[index]
+    const planner = wizardPlanners[index]
     if (!planner) return
     const prior = existing.find((entry) => entry.mpuUid === planner.uid)
     if (prior && !prior.absent) {
@@ -212,6 +219,10 @@ export function HrReportsPanel({
       toast.error('Aktif MPU bulunamadı.')
       return
     }
+    if (planners.length > MAX_HR_MPU_ATTENDANCES) {
+      toast.error(HR_MPU_ATTENDANCE_LIMIT_MESSAGE)
+      return
+    }
     setWizardOpen(true)
     setWizardIndex(0)
     loadWizardStep(0, mpuAttendances)
@@ -220,14 +231,27 @@ export function HrReportsPanel({
   const upsertEntry = (entry: HrMpuAttendanceEntry) => {
     setMpuAttendances((prev) => {
       const without = prev.filter((item) => item.mpuUid !== entry.mpuUid)
-      return [...without, entry]
+      const next = [...without, entry]
+      if (next.length > MAX_HR_MPU_ATTENDANCES) {
+        toast.error(HR_MPU_ATTENDANCE_LIMIT_MESSAGE)
+        return prev
+      }
+      return next
     })
   }
 
   const advanceWizard = (entry: HrMpuAttendanceEntry) => {
+    const nextEntries = [
+      ...mpuAttendances.filter((e) => e.mpuUid !== entry.mpuUid),
+      entry,
+    ]
+    if (nextEntries.length > MAX_HR_MPU_ATTENDANCES) {
+      toast.error(HR_MPU_ATTENDANCE_LIMIT_MESSAGE)
+      return
+    }
     upsertEntry(entry)
     const nextIndex = wizardIndex + 1
-    if (nextIndex >= planners.length) {
+    if (nextIndex >= wizardPlanners.length) {
       setWizardOpen(false)
       setWizardIndex(0)
       resetWizardDraft()
@@ -235,7 +259,7 @@ export function HrReportsPanel({
       return
     }
     setWizardIndex(nextIndex)
-    loadWizardStep(nextIndex, [...mpuAttendances.filter((e) => e.mpuUid !== entry.mpuUid), entry])
+    loadWizardStep(nextIndex, nextEntries)
   }
 
   const markAbsentAndContinue = () => {
@@ -317,6 +341,7 @@ export function HrReportsPanel({
       setEditingId(null)
       cancelWizard()
     } catch (error) {
+      console.error('[HrReportsPanel] save failed', error)
       toast.error(mapAppError(error, 'Rapor kaydedilemedi.'))
     } finally {
       setSubmitting(false)
@@ -467,7 +492,7 @@ export function HrReportsPanel({
                   disabled={submitting}
                   onClick={saveTimesAndContinue}
                 >
-                  {wizardIndex + 1 >= planners.length
+                  {wizardIndex + 1 >= wizardPlanners.length
                     ? 'Kaydet ve bitir'
                     : 'Kaydet ve sonraki'}
                 </Button>

@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: hr-mpu-attendance-merge-22
+// rules-rev: hr-report-attend-lite-26
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -42,7 +42,8 @@ service cloud.firestore {
         'reporter',
         'human_resources',
         'coordinator',
-        'management'
+        'management',
+        'kameraman'
       ];
     }
 
@@ -60,6 +61,10 @@ service cloud.firestore {
 
     function isHumanResources() {
       return isAuthenticated() && role() == 'human_resources';
+    }
+
+    function isKameraman() {
+      return isAuthenticated() && role() == 'kameraman';
     }
 
     function canTrackShift() {
@@ -680,6 +685,7 @@ service cloud.firestore {
           || isCoordinatorOrManagement()
           || isHumanResources()
           || isReporter()
+          || isKameraman()
         );
 
       allow create: if isMediaPlanning()
@@ -1154,84 +1160,19 @@ service cloud.firestore {
       return true;
     }
 
-    /** Clock time `HH:mm` (e.g. İK report MPU giriş/çıkış). */
-    function isTimeHHmm(value) {
-      return value is string
-        && value.size() == 5
-        && value.matches('^[0-9]{2}:[0-9]{2}$');
-    }
-
-    function isOptionalTimeHHmm(value) {
-      return value == null || isTimeHHmm(value);
-    }
-
-    function isValidHrMpuAttendanceEntry(entry) {
-      return entry.keys().hasOnly([
-          'mpuUid',
-          'mpuNameSnapshot',
-          'clockInTime',
-          'clockOutTime',
-          'absent'
-        ])
-        && isValidString(entry.mpuUid, 1, 128)
-        && isValidString(entry.mpuNameSnapshot, 1, 120)
-        && entry.absent is bool
-        && (
-          (
-            entry.absent == true
-            && entry.clockInTime == null
-            && entry.clockOutTime == null
-          )
-          || (
-            entry.absent == false
-            && isOptionalTimeHHmm(entry.clockInTime)
-            && isOptionalTimeHHmm(entry.clockOutTime)
-            && (entry.clockInTime != null || entry.clockOutTime != null)
-            && (
-              entry.clockInTime == null
-              || entry.clockOutTime == null
-              || entry.clockOutTime > entry.clockInTime
-            )
-          )
-        );
-    }
-
+    /**
+     * HR MPU attendances — list shape only (≤20).
+     * Per-entry time/key validation blew the 1000-expr budget at ~6 timed
+     * rows (permission-denied). Client enforces HH:mm + absent via
+     * toFirestoreAttendance / assertValidMergedAttendance (same pattern as
+     * reporter companies lite).
+     */
     function isValidHrMpuAttendances(entries) {
-      return entries is list
-        && entries.size() <= 20
-        && (entries.size() < 1 || isValidHrMpuAttendanceEntry(entries[0]))
-        && (entries.size() < 2 || isValidHrMpuAttendanceEntry(entries[1]))
-        && (entries.size() < 3 || isValidHrMpuAttendanceEntry(entries[2]))
-        && (entries.size() < 4 || isValidHrMpuAttendanceEntry(entries[3]))
-        && (entries.size() < 5 || isValidHrMpuAttendanceEntry(entries[4]))
-        && (entries.size() < 6 || isValidHrMpuAttendanceEntry(entries[5]))
-        && (entries.size() < 7 || isValidHrMpuAttendanceEntry(entries[6]))
-        && (entries.size() < 8 || isValidHrMpuAttendanceEntry(entries[7]))
-        && (entries.size() < 9 || isValidHrMpuAttendanceEntry(entries[8]))
-        && (entries.size() < 10 || isValidHrMpuAttendanceEntry(entries[9]))
-        && (entries.size() < 11 || isValidHrMpuAttendanceEntry(entries[10]))
-        && (entries.size() < 12 || isValidHrMpuAttendanceEntry(entries[11]))
-        && (entries.size() < 13 || isValidHrMpuAttendanceEntry(entries[12]))
-        && (entries.size() < 14 || isValidHrMpuAttendanceEntry(entries[13]))
-        && (entries.size() < 15 || isValidHrMpuAttendanceEntry(entries[14]))
-        && (entries.size() < 16 || isValidHrMpuAttendanceEntry(entries[15]))
-        && (entries.size() < 17 || isValidHrMpuAttendanceEntry(entries[16]))
-        && (entries.size() < 18 || isValidHrMpuAttendanceEntry(entries[17]))
-        && (entries.size() < 19 || isValidHrMpuAttendanceEntry(entries[18]))
-        && (entries.size() < 20 || isValidHrMpuAttendanceEntry(entries[19]));
+      return entries is list && entries.size() <= 20;
     }
 
-    // ---------- hrReports ----------
-    // Coordinator/management may read all (HR viewer inbox). Authors read own.
-    match /hrReports/{reportId} {
-      allow read: if isAuthenticated()
-        && (
-          resource.data.createdByUid == request.auth.uid
-          || isCoordinatorOrManagement()
-        );
-
-      allow create: if isHumanResources()
-        && request.resource.data.keys().hasOnly([
+    function hrReportCreateKeysOk() {
+      return request.resource.data.keys().hasOnly([
           'title',
           'body',
           'mpuAttendances',
@@ -1240,11 +1181,38 @@ service cloud.firestore {
           'createdAt',
           'updatedAt'
         ])
+        || request.resource.data.keys().hasOnly([
+          'title',
+          'body',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ]);
+    }
+
+    function hrReportMpuAttendancesOk() {
+      return !('mpuAttendances' in request.resource.data)
+        || isValidHrMpuAttendances(request.resource.data.mpuAttendances);
+    }
+
+    // ---------- hrReports ----------
+    // Authors read own. İK/coord/mgmt may read all (inbox + retention purge).
+    // Use role() directly — nested isCoordinatorOrManagement blew the rules budget.
+    match /hrReports/{reportId} {
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || role() in ['human_resources', 'coordinator', 'management']
+        );
+
+      allow create: if isHumanResources()
+        && hrReportCreateKeysOk()
         && request.resource.data.createdByUid == request.auth.uid
         && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
         && isValidString(request.resource.data.title, 2, 200)
         && isValidString(request.resource.data.body, 1, 10000)
-        && isValidHrMpuAttendances(request.resource.data.mpuAttendances)
+        && hrReportMpuAttendancesOk()
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
@@ -1257,7 +1225,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt
         && isValidString(request.resource.data.title, 2, 200)
         && isValidString(request.resource.data.body, 1, 10000)
-        && isValidHrMpuAttendances(request.resource.data.mpuAttendances)
+        && hrReportMpuAttendancesOk()
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if isHumanResources() || isManagement();
@@ -1299,12 +1267,12 @@ service cloud.firestore {
     }
 
     // ---------- hiringNotes ----------
-    // Coordinator/management may read all (HR viewer inbox). Authors read own.
+    // Authors read own. İK/coord/mgmt may read all (inbox + retention).
     match /hiringNotes/{noteId} {
       allow read: if isAuthenticated()
         && (
           resource.data.createdByUid == request.auth.uid
-          || isCoordinatorOrManagement()
+          || role() in ['human_resources', 'coordinator', 'management']
         );
 
       allow create: if isHumanResources()
@@ -1353,10 +1321,12 @@ service cloud.firestore {
     match /appMeta/{docId} {
       allow read: if isHumanResources() || isManagement()
         || (docId == 'zReportRetention' && isCoordinatorOrManagement())
-        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement());
+        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement())
+        || (docId == 'shootingCalendarNotify' && isCoordinatorOrManagement());
       allow create, update: if isHumanResources() || isManagement()
         || (docId == 'zReportRetention' && isCoordinatorOrManagement())
-        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement());
+        || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement())
+        || (docId == 'shootingCalendarNotify' && isCoordinatorOrManagement());
       allow delete: if false;
     }
 

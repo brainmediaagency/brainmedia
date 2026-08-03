@@ -416,6 +416,10 @@ export function JobReviewDrawer({
           />
         </EditableDetailRow>
 
+        {job.instagram ? (
+          <DetailRow label="Instagram" value={job.instagram} />
+        ) : null}
+
         <EditableDetailRow
           label="İş Alım Tarihi"
           displayValue={formatJobScheduleTr(job.acquiredDate)}

@@ -237,6 +237,8 @@ export async function runDueDailyRegionDayNotify(actor: {
     createdByNameSnapshot: actor.fullName,
     /** Sistem tetikleyicisi — tetikleyen kullanıcı da görsün. */
     notifyActor: true,
+    /** Günün bölgesi muhabiri ilgilendirmiyor. */
+    pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources'],
   })
 
   return {

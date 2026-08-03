@@ -6,13 +6,17 @@ const GENERIC_AUTH_ERROR =
 export function mapAuthError(error: unknown): string {
   if (error instanceof FirebaseError) {
     switch (error.code) {
+      // Firebase returns invalid-credential for both unknown e-mail and wrong
+      // password (email enumeration protection), so keep them in one message.
       case 'auth/invalid-email':
-      case 'auth/user-disabled':
       case 'auth/user-not-found':
       case 'auth/wrong-password':
       case 'auth/invalid-credential':
+        return 'E-posta veya şifre hatalı. Tarayıcınız eski kayıtlı şifreyi doldurmuş olabilir; şifre alanını temizleyip elle yazın.'
+      case 'auth/user-disabled':
+        return 'Hesabınız devre dışı bırakılmış. Yöneticinizle iletişime geçin.'
       case 'auth/too-many-requests':
-        return GENERIC_AUTH_ERROR
+        return 'Çok fazla hatalı giriş denemesi yapıldı. Birkaç dakika bekleyip tekrar deneyin.'
       case 'auth/network-request-failed':
         return 'İnternet bağlantısı bulunamadı. Bağlantınızı kontrol ederek tekrar deneyin.'
       default:

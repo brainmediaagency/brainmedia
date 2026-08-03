@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  releaseScreenWakeLock,
+  requestScreenWakeLock,
+  type ScreenWakeLock,
+} from '@/lib/screenWakeLock'
 
 export const MAX_RECORDING_MS = 30 * 60 * 1000
 
@@ -113,6 +118,18 @@ export function useVoiceRecorder() {
   const recordingUrlRef = useRef<string | null>(null)
   const stopReasonRef = useRef<'manual' | 'max_duration'>('manual')
   const aliveRef = useRef(true)
+  const wakeLockRef = useRef<ScreenWakeLock | null>(null)
+
+  const acquireWakeLock = useCallback(async () => {
+    if (wakeLockRef.current && !wakeLockRef.current.released) return
+    wakeLockRef.current = await requestScreenWakeLock()
+  }, [])
+
+  const releaseWakeLock = useCallback(() => {
+    const lock = wakeLockRef.current
+    wakeLockRef.current = null
+    void releaseScreenWakeLock(lock)
+  }, [])
 
   const clearTimers = useCallback(() => {
     if (maxTimerRef.current !== null) {
@@ -227,6 +244,7 @@ export function useVoiceRecorder() {
       recorder.onstop = () => {
         clearTimers()
         stopTick()
+        releaseWakeLock()
         segmentStartedAtRef.current = null
         const durationMs = Math.min(readElapsedMs(), MAX_RECORDING_MS)
         elapsedBaseRef.current = durationMs
@@ -243,6 +261,7 @@ export function useVoiceRecorder() {
       recorder.onerror = () => {
         clearTimers()
         stopTick()
+        releaseWakeLock()
         releaseStream()
         mediaRecorderRef.current = null
         if (!aliveRef.current) return
@@ -260,18 +279,22 @@ export function useVoiceRecorder() {
       setStatus('recording')
       startTick()
       scheduleMaxDurationStop(MAX_RECORDING_MS)
+      void acquireWakeLock()
     } catch (err) {
+      releaseWakeLock()
       releaseStream()
       mediaRecorderRef.current = null
       setError(mapGetUserMediaError(err))
       setStatus('idle')
     }
   }, [
+    acquireWakeLock,
     clearRecordingUrl,
     clearTimers,
     finalizeRecording,
     readElapsedMs,
     releaseStream,
+    releaseWakeLock,
     scheduleMaxDurationStop,
     startTick,
     stopTick,
@@ -286,13 +309,14 @@ export function useVoiceRecorder() {
     elapsedBaseRef.current = readElapsedMs()
     segmentStartedAtRef.current = null
     stopTick()
+    releaseWakeLock()
     if (maxTimerRef.current !== null) {
       clearTimeout(maxTimerRef.current)
       maxTimerRef.current = null
     }
     setElapsedMs(elapsedBaseRef.current)
     setStatus('paused')
-  }, [readElapsedMs, stopTick])
+  }, [readElapsedMs, releaseWakeLock, stopTick])
 
   const resume = useCallback(() => {
     const recorder = mediaRecorderRef.current
@@ -304,7 +328,8 @@ export function useVoiceRecorder() {
     setStatus('recording')
     startTick()
     scheduleMaxDurationStop(MAX_RECORDING_MS - elapsedBaseRef.current)
-  }, [scheduleMaxDurationStop, startTick])
+    void acquireWakeLock()
+  }, [acquireWakeLock, scheduleMaxDurationStop, startTick])
 
   const stop = useCallback(() => {
     const recorder = mediaRecorderRef.current
@@ -346,9 +371,22 @@ export function useVoiceRecorder() {
       }
       mediaRecorderRef.current = null
       releaseStream()
+      releaseWakeLock()
       clearRecordingUrl()
     }
-  }, [clearRecordingUrl, clearTimers, releaseStream, stopTick])
+  }, [clearRecordingUrl, clearTimers, releaseStream, releaseWakeLock, stopTick])
+
+  /** Browsers drop the wake lock while hidden — take it back on return. */
+  useEffect(() => {
+    if (status !== 'recording') return
+    if (typeof document === 'undefined') return
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void acquireWakeLock()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [acquireWakeLock, status])
 
   return {
     status,

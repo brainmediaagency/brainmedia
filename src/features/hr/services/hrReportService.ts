@@ -6,6 +6,8 @@ import {
   where,
   orderBy,
   limit,
+  addDoc,
+  updateDoc,
   getDocs,
   writeBatch,
   serverTimestamp,
@@ -26,6 +28,7 @@ import {
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import {
+  assertHrMpuAttendanceLimit,
   assertValidMergedAttendance,
   foldHrMpuAttendances,
   mergeHrMpuAttendanceEntry,
@@ -172,26 +175,32 @@ async function fetchOwnHrReportsForIstanbulDay(
   dateOnly: string,
   excludeId?: string,
 ): Promise<HrReport[]> {
-  const snap = await getDocs(
-    query(
-      reportsCollection(),
-      where('createdByUid', '==', uid),
-      orderBy('updatedAt', 'desc'),
-      limit(50),
-    ),
-  )
-  return snap.docs
-    .map((d) => d.data())
-    .filter((report) => {
-      if (excludeId && report.id === excludeId) return false
-      if (!report.createdAt) return false
-      return dateToDateOnlyIstanbul(report.createdAt.toDate()) === dateOnly
-    })
-    .sort((a, b) => {
-      const aMs = a.createdAt?.toMillis() ?? 0
-      const bMs = b.createdAt?.toMillis() ?? 0
-      return aMs - bMs
-    })
+  try {
+    const snap = await getDocs(
+      query(
+        reportsCollection(),
+        where('createdByUid', '==', uid),
+        orderBy('updatedAt', 'desc'),
+        limit(50),
+      ),
+    )
+    return snap.docs
+      .map((d) => d.data())
+      .filter((report) => {
+        if (excludeId && report.id === excludeId) return false
+        if (!report.createdAt) return false
+        return dateToDateOnlyIstanbul(report.createdAt.toDate()) === dateOnly
+      })
+      .sort((a, b) => {
+        const aMs = a.createdAt?.toMillis() ?? 0
+        const bMs = b.createdAt?.toMillis() ?? 0
+        return aMs - bMs
+      })
+  } catch (error) {
+    // Same-day merge is best-effort; do not block report create on list denial.
+    console.warn('[hrReportService] same-day fetch skipped', error)
+    return []
+  }
 }
 
 function mergeIncomingWithSameDay(params: {
@@ -245,6 +254,7 @@ export async function createHrReport(input: {
   createdByNameSnapshot: string
 }): Promise<string> {
   try {
+    assertHrMpuAttendanceLimit(input.mpuAttendances)
     const today = todayDateOnlyIstanbul()
     const sameDay = await fetchOwnHrReportsForIstanbulDay(input.createdByUid, today)
     const { storedIncoming, finalByMpu, affectedUids } = mergeIncomingWithSameDay({
@@ -253,28 +263,39 @@ export async function createHrReport(input: {
     })
 
     const db = getDb()
-    const batch = writeBatch(db)
-    const ref = doc(collection(db, 'hrReports'))
-    batch.set(ref, {
+    const nameSnapshot = input.createdByNameSnapshot.trim()
+    if (!nameSnapshot) {
+      throw new UserFacingError('Profil adınız eksik. Çıkış yapıp tekrar giriş yapın.')
+    }
+    const ref = await addDoc(collection(db, 'hrReports'), {
       title: input.title.trim(),
       body: input.body.trim(),
       mpuAttendances: storedIncoming,
       createdByUid: input.createdByUid,
-      createdByNameSnapshot: input.createdByNameSnapshot,
+      createdByNameSnapshot: nameSnapshot,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
 
-    for (const report of sameDay) {
-      const patched = patchReportAttendances(report, finalByMpu, affectedUids)
-      if (!patched) continue
-      batch.update(doc(db, 'hrReports', report.id), {
-        mpuAttendances: patched,
-        updatedAt: serverTimestamp(),
-      })
+    // Best-effort: patch earlier same-day reports with merged MPU times.
+    if (sameDay.length > 0 && affectedUids.size > 0) {
+      try {
+        const batch = writeBatch(db)
+        let ops = 0
+        for (const report of sameDay) {
+          const patched = patchReportAttendances(report, finalByMpu, affectedUids)
+          if (!patched) continue
+          batch.update(doc(db, 'hrReports', report.id), {
+            mpuAttendances: patched,
+            updatedAt: serverTimestamp(),
+          })
+          ops += 1
+        }
+        if (ops > 0) await batch.commit()
+      } catch (error) {
+        console.warn('[hrReportService] same-day merge patch skipped', error)
+      }
     }
-
-    await batch.commit()
 
     void notifyManagement({
       type: 'hr_report',
@@ -283,6 +304,8 @@ export async function createHrReport(input: {
       link: '/human-resources?tab=reports',
       createdByUid: input.createdByUid,
       createdByNameSnapshot: input.createdByNameSnapshot,
+      /** İK raporu MPU ve muhabiri ilgilendirmiyor. */
+      pushRoles: ['management', 'coordinator', 'human_resources'],
     })
 
     return ref.id
@@ -302,6 +325,7 @@ export async function updateHrReport(input: {
   createdByUid: string
 }): Promise<void> {
   try {
+    assertHrMpuAttendanceLimit(input.mpuAttendances)
     const today = todayDateOnlyIstanbul()
     const sameDay = await fetchOwnHrReportsForIstanbulDay(
       input.createdByUid,
@@ -314,24 +338,31 @@ export async function updateHrReport(input: {
     })
 
     const db = getDb()
-    const batch = writeBatch(db)
-    batch.update(doc(db, 'hrReports', input.id), {
+    await updateDoc(doc(db, 'hrReports', input.id), {
       title: input.title.trim(),
       body: input.body.trim(),
       mpuAttendances: storedIncoming,
       updatedAt: serverTimestamp(),
     })
 
-    for (const report of sameDay) {
-      const patched = patchReportAttendances(report, finalByMpu, affectedUids)
-      if (!patched) continue
-      batch.update(doc(db, 'hrReports', report.id), {
-        mpuAttendances: patched,
-        updatedAt: serverTimestamp(),
-      })
+    if (sameDay.length > 0 && affectedUids.size > 0) {
+      try {
+        const batch = writeBatch(db)
+        let ops = 0
+        for (const report of sameDay) {
+          const patched = patchReportAttendances(report, finalByMpu, affectedUids)
+          if (!patched) continue
+          batch.update(doc(db, 'hrReports', report.id), {
+            mpuAttendances: patched,
+            updatedAt: serverTimestamp(),
+          })
+          ops += 1
+        }
+        if (ops > 0) await batch.commit()
+      } catch (error) {
+        console.warn('[hrReportService] same-day merge patch skipped', error)
+      }
     }
-
-    await batch.commit()
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('USER_')) {
       throw new UserFacingError(error.message.replace(/^USER_/, ''))

@@ -3,16 +3,25 @@ import {
   isHrClockOutAfterIn,
   isOptionalHrShiftTime,
   isValidHrShiftTime,
+  normalizeHrShiftTime,
 } from '@/features/hr/utils/hrShiftTimes'
 import {
   formatHrMpuAttendance,
   formatHrMpuAttendanceEntry,
   summarizeHrMpuAttendances,
 } from '@/features/hr/types/hr'
+import { toFirestoreAttendance } from '@/features/hr/utils/mergeHrMpuAttendance'
 
 describe('hrShiftTimes', () => {
-  it('accepts any valid HH:mm including odd minutes', () => {
+  it('normalizes HH:mm:ss from browser time inputs', () => {
+    expect(normalizeHrShiftTime('10:00:00')).toBe('10:00')
+    expect(normalizeHrShiftTime('18:30:00')).toBe('18:30')
+    expect(normalizeHrShiftTime('06:57')).toBe('06:57')
+  })
+
+  it('accepts any valid HH:mm including odd minutes and HH:mm:ss', () => {
     expect(isValidHrShiftTime('06:57')).toBe(true)
+    expect(isValidHrShiftTime('10:00:00')).toBe(true)
     expect(isValidHrShiftTime('09:00')).toBe(true)
     expect(isValidHrShiftTime('23:59')).toBe(true)
     expect(isValidHrShiftTime('24:00')).toBe(false)
@@ -24,9 +33,29 @@ describe('hrShiftTimes', () => {
   it('allows one-sided times and requires out after in when both set', () => {
     expect(isHrClockOutAfterIn('06:57', '')).toBe(true)
     expect(isHrClockOutAfterIn('', '18:03')).toBe(true)
-    expect(isHrClockOutAfterIn('06:57', '18:03')).toBe(true)
+    expect(isHrClockOutAfterIn('10:00:00', '18:30:00')).toBe(true)
     expect(isHrClockOutAfterIn('18:00', '09:00')).toBe(false)
     expect(isHrClockOutAfterIn('09:00', '09:00')).toBe(false)
+  })
+})
+
+describe('toFirestoreAttendance', () => {
+  it('stores HH:mm even when browser sent seconds', () => {
+    expect(
+      toFirestoreAttendance({
+        mpuUid: '1',
+        mpuNameSnapshot: 'Ada',
+        clockInTime: '10:00:00',
+        clockOutTime: '18:30:00',
+        absent: false,
+      }),
+    ).toEqual({
+      mpuUid: '1',
+      mpuNameSnapshot: 'Ada',
+      clockInTime: '10:00',
+      clockOutTime: '18:30',
+      absent: false,
+    })
   })
 })
 

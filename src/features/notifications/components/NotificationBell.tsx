@@ -159,10 +159,10 @@ function NotificationDesktopPopover({
           <p className="text-sm font-medium text-text-primary">Bildirimler</p>
           {markAllButton}
         </div>
-        <div className="max-h-80 overflow-y-auto">
+        {pushToggle}
+        <div className="max-h-80 overflow-y-auto border-t border-border">
           <NotificationList items={items} uid={uid} onSelect={onSelect} />
         </div>
-        {pushToggle}
       </div>
     </div>,
     document.body,
@@ -211,7 +211,12 @@ export function NotificationBell() {
       </button>
     ) : null
 
-  const pushToggle = <PushNotificationToggle active={open} />
+  const pushToggle = (
+    <PushNotificationToggle
+      active={open}
+      className="space-y-2 px-3 py-3"
+    />
+  )
 
   return (
     <div className="relative">
@@ -262,8 +267,10 @@ export function NotificationBell() {
           {markAllButton ? (
             <div className="mb-3 flex justify-end">{markAllButton}</div>
           ) : null}
+          <div className="mb-3 overflow-hidden rounded-[var(--radius-md)] border border-border bg-surface-muted/40">
+            {pushToggle}
+          </div>
           <NotificationList items={items} uid={uid} onSelect={handleSelect} />
-          {pushToggle}
         </Drawer>
       )}
     </div>

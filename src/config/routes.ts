@@ -12,7 +12,6 @@ import {
 
 export const APP_ROUTES = {
   login: '/login',
-  forgotPassword: '/forgot-password',
   mediaPlanning: '/media-planning',
   reporter: '/reporter',
   humanResources: '/human-resources',

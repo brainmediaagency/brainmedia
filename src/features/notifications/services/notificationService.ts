@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
 import { sanitizeAppPath } from '@/lib/appPath'
+import type { UserRole } from '@/config/roles'
 import { sendOneSignalPush } from '@/features/notifications/services/oneSignalPush'
 import type {
   AppNotification,
@@ -65,6 +66,20 @@ export function isOwnActionNotification(
   return true
 }
 
+/**
+ * Broadcast rows reach every role in Firestore, so day-of region rows are
+ * filtered out for reporters here — they do not act on region planning.
+ * Kameraman only receives the evening shooting-calendar push (not inbox noise).
+ */
+export function isNotificationVisibleForRole(
+  item: AppNotification,
+  role: UserRole | undefined,
+): boolean {
+  if (role === 'kameraman') return false
+  if (role === 'reporter' && item.type === 'region_created') return false
+  return true
+}
+
 function inboxPayload(input: {
   type: string
   title: string
@@ -109,6 +124,7 @@ export async function notifyManagement(
     title: payload.title,
     body: payload.body,
     link: payload.link,
+    roles: input.pushRoles,
     audience: 'all',
     excludeExternalIds: actorUid ? [actorUid] : undefined,
   })
@@ -134,6 +150,7 @@ export async function notifyBroadcast(
     title: payload.title,
     body: payload.body,
     link: payload.link,
+    roles: input.pushRoles,
     audience: 'all',
     excludeExternalIds:
       !notifyActor && actorUid ? [actorUid] : undefined,

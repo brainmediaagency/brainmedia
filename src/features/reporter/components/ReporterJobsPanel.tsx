@@ -64,6 +64,9 @@ export function ReporterJobsPanel({ embedded = false }: ReporterJobsPanelProps) 
             ))}
             <DetailRow label="İl / İlçe" value={`${selected.province} / ${selected.district}`} />
             <DetailRow label="Adres" value={selected.fullAddress} />
+            {selected.instagram ? (
+              <DetailRow label="Instagram" value={selected.instagram} />
+            ) : null}
             <DetailRow
               label="İş Alım Tarihi"
               value={formatJobScheduleTr(selected.acquiredDate)}

@@ -11,6 +11,7 @@ import { ReactionWinnerGuard } from '@/features/game/components/ReactionWinnerGu
 import { AutoCancelPendingJobsGuard } from '@/features/jobs/components/AutoCancelPendingJobsGuard'
 import { AutoForwardJobsGuard } from '@/features/jobs/components/AutoForwardJobsGuard'
 import { DailyRegionNotifyGuard } from '@/features/media-planning/components/DailyRegionNotifyGuard'
+import { ShootingCalendarNotifyGuard } from '@/features/jobs/components/ShootingCalendarNotifyGuard'
 import { OneSignalSubscribeBanner } from '@/features/notifications/components/OneSignalSubscribeBanner'
 import { ZReportDataRetentionGuard } from '@/features/reporter/components/ZReportDataRetentionGuard'
 import { VoiceDataRetentionGuard } from '@/features/voice-recording/components/VoiceDataRetentionGuard'
@@ -34,6 +35,7 @@ export function AppShell({ children }: AppShellProps) {
       <AutoForwardJobsGuard />
       <AutoCancelPendingJobsGuard />
       <DailyRegionNotifyGuard />
+      <ShootingCalendarNotifyGuard />
       <ReactionWinnerGuard />
 
       <div className="flex min-h-screen min-h-dvh min-w-0 max-w-full flex-1 flex-col">
