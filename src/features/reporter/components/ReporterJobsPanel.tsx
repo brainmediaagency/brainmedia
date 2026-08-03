@@ -31,8 +31,9 @@ export type ReporterJobsPanelProps = {
  * günlük saat takvimi görünümünde (Bugün / gün seçici).
  */
 export function ReporterJobsPanel({ embedded = false }: ReporterJobsPanelProps) {
-  const { claims } = useAuth()
-  const isKameraman = claims?.role === 'kameraman'
+  const { claims, profile } = useAuth()
+  const role = profile?.role ?? claims?.role
+  const isKameraman = role === 'kameraman'
   const [selected, setSelected] = useState<JobDocument | null>(null)
 
   return (

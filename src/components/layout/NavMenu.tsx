@@ -15,8 +15,9 @@ type NavMenuProps = {
 }
 
 export function NavMenu({ onNavigate, subItemClassName }: NavMenuProps) {
-  const { claims } = useAuth()
-  const role = claims?.role
+  const { claims, profile } = useAuth()
+  /** Prefer Firestore profile — same source as page titles. */
+  const role = profile?.role ?? claims?.role
   const location = useLocation()
   const [searchParams] = useSearchParams()
 
