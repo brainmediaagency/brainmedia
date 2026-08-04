@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3,
   CalendarDays,
+  Car,
   CheckSquare,
   ClipboardList,
   Clock,
@@ -41,6 +42,7 @@ export const MANAGEMENT_SECTIONS = [
   { id: 'regions', label: 'Bölge Seçimi', icon: MapPin },
   { id: 'voice', label: 'Ses kayıtları', icon: Mic },
   { id: 'cash', label: 'Kasa', icon: Wallet },
+  { id: 'field-ops', label: 'Saha Özeti', icon: Car },
   { id: 'stats', label: 'Aylık Özet', icon: BarChart3 },
   { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
   { id: 'accounts', label: 'Hesaplar', icon: UserCog },
@@ -52,6 +54,7 @@ export const COORDINATOR_SECTIONS = [
   { id: 'regions', label: 'Bölge Seçimi', icon: MapPin },
   { id: 'voice', label: 'Ses kayıtları', icon: Mic },
   { id: 'cash', label: 'Kasa', icon: Wallet },
+  { id: 'field-ops', label: 'Saha Özeti', icon: Car },
   { id: 'stats', label: 'Aylık Özet', icon: BarChart3 },
   { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
 ] as const satisfies readonly NavSectionItem[]
@@ -85,9 +88,14 @@ export const REPORTER_VIEWER_SECTIONS = [
   { id: 'z-reports', label: 'Z Raporları', icon: FileText },
 ] as const satisfies readonly NavSectionItem[]
 
-/** İK / kameraman: yalnızca çekim takvimi (rapor ve özet yok). */
+/** İK: yalnızca çekim takvimi. Kameraman: takvim + km raporları. */
 export const CALENDAR_ONLY_REPORTER_SECTIONS = [
   { id: 'jobs', label: 'Çekim Takvimi', icon: CalendarDays },
+] as const satisfies readonly NavSectionItem[]
+
+export const KAMERAMAN_SECTIONS = [
+  { id: 'jobs', label: 'Çekim Takvimi', icon: CalendarDays },
+  { id: 'odometer', label: 'Raporlarım', icon: Car },
 ] as const satisfies readonly NavSectionItem[]
 
 /** @deprecated Prefer CALENDAR_ONLY_REPORTER_SECTIONS */
@@ -122,7 +130,8 @@ export function getNavSections(
     case 'reporter':
       if (role === 'reporter') return REPORTER_SECTIONS
       if (role === 'management' || role === 'coordinator') return REPORTER_VIEWER_SECTIONS
-      if (role === 'human_resources' || role === 'kameraman') {
+      if (role === 'kameraman') return KAMERAMAN_SECTIONS
+      if (role === 'human_resources') {
         return CALENDAR_ONLY_REPORTER_SECTIONS
       }
       return []

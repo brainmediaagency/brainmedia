@@ -3,6 +3,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { TabNav } from '@/components/ui/TabNav'
 import {
   CALENDAR_ONLY_REPORTER_SECTIONS,
+  KAMERAMAN_SECTIONS,
   REPORTER_SECTIONS,
   REPORTER_VIEWER_SECTIONS,
 } from '@/config/navSections'
@@ -13,6 +14,7 @@ import { ReporterZReportForm } from '@/features/reporter/components/ReporterZRep
 import { ReporterMyReports } from '@/features/reporter/components/ReporterMyReports'
 import { ManagementReporterInbox } from '@/features/reporter/components/ManagementReporterInbox'
 import { ReporterSummaryPanel } from '@/features/reporter/components/ReporterSummaryPanel'
+import { KameramanOdometerPanel } from '@/features/kameraman/components/KameramanOdometerPanel'
 import { usePageTab } from '@/hooks/usePageTab'
 
 const REPORTER_TAB_IDS = REPORTER_SECTIONS.map((section) => section.id)
@@ -26,17 +28,24 @@ const CALENDAR_ONLY_TAB_IDS = CALENDAR_ONLY_REPORTER_SECTIONS.map(
 )
 type CalendarOnlyTab = (typeof CALENDAR_ONLY_TAB_IDS)[number]
 
+const KAMERAMAN_TAB_IDS = KAMERAMAN_SECTIONS.map((section) => section.id)
+type KameramanTab = (typeof KAMERAMAN_TAB_IDS)[number]
+
 export function ReporterPage() {
   const { profile, user } = useAuth()
   const role = profile?.role
   const isReporter = role === 'reporter'
-  const isCalendarOnly = role === 'human_resources' || role === 'kameraman'
+  const isKameraman = role === 'kameraman'
+  const isHrCalendarOnly = role === 'human_resources'
 
   const viewerConfig = useMemo(() => {
     if (isReporter) {
       return { sections: REPORTER_SECTIONS, tabIds: REPORTER_TAB_IDS }
     }
-    if (isCalendarOnly) {
+    if (isKameraman) {
+      return { sections: KAMERAMAN_SECTIONS, tabIds: KAMERAMAN_TAB_IDS }
+    }
+    if (isHrCalendarOnly) {
       return {
         sections: CALENDAR_ONLY_REPORTER_SECTIONS,
         tabIds: CALENDAR_ONLY_TAB_IDS,
@@ -46,7 +55,7 @@ export function ReporterPage() {
       sections: REPORTER_VIEWER_SECTIONS,
       tabIds: REPORTER_VIEWER_TAB_IDS,
     }
-  }, [isCalendarOnly, isReporter])
+  }, [isHrCalendarOnly, isKameraman, isReporter])
 
   const [tab, setTab] = usePageTab(viewerConfig.tabIds, 'jobs')
 
@@ -83,12 +92,35 @@ export function ReporterPage() {
     )
   }
 
-  if (isCalendarOnly) {
-    const title = role === 'kameraman' ? 'Kameraman' : 'Muhabir'
+  if (isKameraman) {
     return (
       <div className="space-y-6">
         <PageHeader
-          title={title}
+          title="Kameraman"
+          subtitle="Çekim takvimi ve günlük km kadran raporları."
+        />
+
+        <TabNav
+          className="lg:hidden"
+          items={[...KAMERAMAN_SECTIONS]}
+          activeId={tab}
+          onChange={(id) => setTab(id as KameramanTab)}
+          aria-label="Kameraman bölümleri"
+        />
+
+        <div key={tab} className="animate-fade-in-up">
+          {tab === 'jobs' && <ReporterJobsPanel embedded />}
+          {tab === 'odometer' && <KameramanOdometerPanel />}
+        </div>
+      </div>
+    )
+  }
+
+  if (isHrCalendarOnly) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Muhabir"
           subtitle="Çekim takvimini görüntüleyin."
         />
 

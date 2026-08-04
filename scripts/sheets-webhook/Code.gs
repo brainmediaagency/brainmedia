@@ -110,6 +110,7 @@ var FOLDER_NAMES = {
   'z-reports': 'Z raporu',
   'voice-recordings': 'Ses kayıtları',
   'hr-reports': 'Günlük İK raporu',
+  'kameraman-km': 'Kameraman KM Raporları',
 }
 
 /** Old English folder names → renamed to FOLDER_NAMES on first upload after deploy. */
@@ -118,6 +119,7 @@ var FOLDER_LEGACY_NAMES = {
   'z-reports': ['ZReports', 'Z Reports'],
   'voice-recordings': ['VoiceRecordings', 'Voice Recordings'],
   'hr-reports': ['HrReports', 'HRReports', 'HR Reports'],
+  'kameraman-km': ['KameramanKm', 'Kameraman KM', 'Odometer'],
 }
 
 function doGet(e) {
@@ -807,6 +809,20 @@ function handleUpload_(body) {
     var folderKey = body.folder || 'misc'
     var subName = FOLDER_NAMES[folderKey] || 'Diğer'
     var folder = getOrCreateUploadFolder_(subName, folderKey)
+    // Optional nested path (e.g. "Ali_Veli_2026-05-19" under Kameraman KM Raporları).
+    var folderPath = String(body.folderPath || '').trim()
+    if (folderPath) {
+      var pathParts = folderPath.split('/')
+      for (var pi = 0; pi < pathParts.length; pi += 1) {
+        var part = String(pathParts[pi] || '')
+          .trim()
+          .replace(/[\\/]+/g, '')
+          .slice(0, 120)
+        if (part) {
+          folder = getOrCreateFolderByName_(folder, part)
+        }
+      }
+    }
     var bytes = Utilities.base64Decode(body.base64)
     var blob = Utilities.newBlob(
       bytes,

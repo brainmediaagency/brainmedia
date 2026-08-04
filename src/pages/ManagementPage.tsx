@@ -10,6 +10,7 @@ import { SheetsExcelPanel } from '@/features/sheets/components/SheetsExcelPanel'
 import { StorageUsageCard } from '@/features/system/components/StorageUsageCard'
 import { VoiceRecordingsListPanel } from '@/features/voice-recording/components/VoiceRecordingsListPanel'
 import { RegionPlannerPanel } from '@/features/media-planning/components/RegionPlannerPanel'
+import { FieldOpsPanel } from '@/features/kameraman/components/FieldOpsPanel'
 import { usePageTab } from '@/hooks/usePageTab'
 
 const TAB_IDS = MANAGEMENT_SECTIONS.map((section) => section.id)
@@ -44,6 +45,7 @@ export function ManagementPage() {
           </div>
         )}
         {tab === 'cash' && <CashRegisterPanel sectionNumber={1} />}
+        {tab === 'field-ops' && <FieldOpsPanel />}
         {tab === 'stats' && <MonthlyStatsPanel sectionNumber="01" />}
         {tab === 'excel' && <SheetsExcelPanel />}
         {tab === 'accounts' && <AccountAdminDashboard startNumber={1} />}

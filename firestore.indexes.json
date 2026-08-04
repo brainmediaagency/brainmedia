@@ -85,6 +85,22 @@
       ]
     },
     {
+      "collectionGroup": "kameramanOdometerReadings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByUid", "order": "ASCENDING" },
+        { "fieldPath": "reportDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kameramanOdometerReadings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "reportDate", "order": "ASCENDING" },
+        { "fieldPath": "createdByUid", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "hrReports",
       "queryScope": "COLLECTION",
       "fields": [
