@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -221,9 +222,16 @@ export async function upsertOdometerReading(input: {
       }
     }
 
-    const docId =
-      input.existingId?.trim() ||
-      readingDocId(authUid, input.reportDate, input.slot)
+    // One row per cameraman + day + slot (stable id — updates never create a second doc).
+    const docId = readingDocId(authUid, input.reportDate, input.slot)
+    if (
+      input.existingId?.trim() &&
+      input.existingId.trim() !== docId
+    ) {
+      throw new UserFacingError(
+        `${slotLabelTr(input.slot)} kadranı bu tarih için zaten kayıtlı. Güncelleme kullanın.`,
+      )
+    }
     const ref = doc(getDb(), 'kameramanOdometerReadings', docId)
     const existing = await getDoc(ref)
 
@@ -244,6 +252,7 @@ export async function upsertOdometerReading(input: {
       }
       const previousFileId = String(data.photoStoragePath ?? '').trim()
 
+      // Same day+slot is always update (never a second create / notify).
       if (photoFile) {
         const uploaded = await uploadOdometerPhoto({
           photoFile,
@@ -318,6 +327,122 @@ export async function upsertOdometerReading(input: {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(
       mapAppError(error, 'Km raporu kaydedilemedi.'),
+    )
+  }
+}
+
+/**
+ * Yönetim / koordinatör: any day, any kameraman reading — km/note/photo only.
+ * Ownership fields are never rewritten (enforced by Firestore rules).
+ */
+export async function adminUpdateOdometerReading(input: {
+  readingId: string
+  odometerKm: number
+  note?: string | null
+  photoFile?: File | null
+  onUploadProgress?: (progress: DriveUploadProgress) => void
+}): Promise<void> {
+  try {
+    const authUid = getFirebaseAuth().currentUser?.uid
+    if (!authUid) {
+      throw new UserFacingError('Oturum bulunamadı. Tekrar giriş yapın.')
+    }
+
+    const id = input.readingId.trim()
+    if (!id) throw new UserFacingError('Rapor bulunamadı.')
+
+    const km = Math.floor(Number(input.odometerKm))
+    if (!Number.isFinite(km) || km < 0 || km > 9_999_999) {
+      throw new UserFacingError('Geçerli bir kadran km sayısı girin.')
+    }
+
+    const photoFile = input.photoFile ?? null
+    if (photoFile) {
+      if (!photoFile.type.startsWith('image/')) {
+        throw new UserFacingError('Yalnızca görsel dosyaları yüklenebilir.')
+      }
+      if (photoFile.size > 8 * 1024 * 1024) {
+        throw new UserFacingError('Görsel en fazla 8 MB olabilir.')
+      }
+    }
+
+    const ref = doc(getDb(), 'kameramanOdometerReadings', id)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) {
+      throw new UserFacingError('Kadran raporu bulunamadı.')
+    }
+    const data = snap.data() as {
+      photoStoragePath?: string
+      reportDate?: string
+      slot?: string
+      createdByNameSnapshot?: string
+    }
+    const previousFileId = String(data.photoStoragePath ?? '').trim()
+    const reportDate = String(data.reportDate ?? '')
+    const slot: OdometerSlot =
+      String(data.slot ?? '') === 'evening' ? 'evening' : 'morning'
+    const ownerName = String(data.createdByNameSnapshot ?? 'Kameraman')
+    const note =
+      input.note?.trim() ? input.note.trim().slice(0, 500) : null
+
+    if (photoFile) {
+      const uploaded = await uploadOdometerPhoto({
+        photoFile,
+        fullName: ownerName,
+        reportDate,
+        slot,
+        onProgress: input.onUploadProgress,
+      })
+      await updateDoc(ref, {
+        odometerKm: km,
+        note,
+        photoStoragePath: uploaded.photoStoragePath,
+        photoDownloadUrl: uploaded.photoDownloadUrl,
+        driveFolderKey: uploaded.driveFolderKey,
+        updatedAt: serverTimestamp(),
+      })
+      if (previousFileId && previousFileId !== uploaded.photoStoragePath) {
+        void trashDriveFile(previousFileId)
+      }
+    } else {
+      await updateDoc(ref, {
+        odometerKm: km,
+        note,
+        updatedAt: serverTimestamp(),
+      })
+    }
+  } catch (error) {
+    if (error instanceof UserFacingError) throw error
+    throw new UserFacingError(
+      mapAppError(error, 'Kadran raporu güncellenemedi.'),
+    )
+  }
+}
+
+/** Yönetim / koordinatör (or owner via rules): delete reading + trash Drive photo. */
+export async function deleteOdometerReading(readingId: string): Promise<void> {
+  try {
+    const authUid = getFirebaseAuth().currentUser?.uid
+    if (!authUid) {
+      throw new UserFacingError('Oturum bulunamadı. Tekrar giriş yapın.')
+    }
+    const id = readingId.trim()
+    if (!id) throw new UserFacingError('Rapor bulunamadı.')
+
+    const ref = doc(getDb(), 'kameramanOdometerReadings', id)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) {
+      throw new UserFacingError('Kadran raporu bulunamadı.')
+    }
+    const data = snap.data() as { photoStoragePath?: string }
+    const fileId = String(data.photoStoragePath ?? '').trim()
+
+    await deleteDoc(ref)
+    if (fileId) void trashDriveFile(fileId)
+  } catch (error) {
+    if (error instanceof UserFacingError) throw error
+    throw new UserFacingError(
+      mapAppError(error, 'Kadran raporu silinemedi.'),
     )
   }
 }
