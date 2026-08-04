@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
+import { Button } from '@/components/ui/Button'
+import { DateInput } from '@/components/ui/DateInput'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { FormField } from '@/components/ui/FormField'
-import { Input } from '@/components/ui/Input'
+import { MonthPicker } from '@/components/ui/MonthPicker'
 import { Modal } from '@/components/ui/Modal'
 import { Skeleton } from '@/components/ui/Skeleton'
 import {
@@ -21,8 +24,12 @@ import {
 } from '@/features/kameraman/utils/odometerKm'
 import { fetchReporterSummary } from '@/features/reporter/services/reporterSummaryService'
 import {
+  currentYearMonthIstanbul,
   formatDateOnlyLongTr,
   formatDateOnlyShortTr,
+  formatYearMonthLongTr,
+  formatYearMonthRangeTr,
+  isValidDateOnly,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
@@ -47,7 +54,7 @@ function monthBounds(yearMonth: string): { start: string; end: string } {
 }
 
 function currentYearMonth(): string {
-  return todayDateOnlyIstanbul().slice(0, 7)
+  return currentYearMonthIstanbul()
 }
 
 function weekStartIstanbul(dateOnly: string): string {
@@ -84,7 +91,11 @@ function StatBox({
 
 export function FieldOpsPanel() {
   const [allReadings, setAllReadings] = useState<KameramanOdometerReading[]>([])
-  const [loadingReports, setLoadingReports] = useState(true)
+  const [reportDay, setReportDay] = useState(todayDateOnlyIstanbul)
+  const [dayReportReadings, setDayReportReadings] = useState<
+    KameramanOdometerReading[]
+  >([])
+  const [loadingDayReports, setLoadingDayReports] = useState(true)
   const [yearMonth, setYearMonth] = useState(currentYearMonth)
   const [monthDays, setMonthDays] = useState<KameramanDayKm[]>([])
   const [loadingMonthKm, setLoadingMonthKm] = useState(true)
@@ -105,18 +116,40 @@ export function FieldOpsPanel() {
   } | null>(null)
 
   useEffect(() => {
-    setLoadingReports(true)
     return subscribeAllOdometerReadings(
       (next) => {
         setAllReadings(next)
-        setLoadingReports(false)
       },
       (error) => {
-        setLoadingReports(false)
         toast.error(mapAppError(error, 'Kameraman raporları yüklenemedi.'))
       },
     )
   }, [])
+
+  useEffect(() => {
+    if (!isValidDateOnly(reportDay)) return
+    let cancelled = false
+    setLoadingDayReports(true)
+    void (async () => {
+      try {
+        const rows = await fetchOdometerReadingsInRange({
+          startDate: reportDay,
+          endDate: reportDay,
+        })
+        if (!cancelled) setDayReportReadings(rows)
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(mapAppError(error, 'Günün kadran raporları yüklenemedi.'))
+          setDayReportReadings([])
+        }
+      } finally {
+        if (!cancelled) setLoadingDayReports(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [reportDay])
 
   useEffect(() => {
     let cancelled = false
@@ -164,9 +197,16 @@ export function FieldOpsPanel() {
     [allReadings],
   )
 
+  const reportDayPairs = useMemo(
+    () => pairReadingsIntoDays(dayReportReadings),
+    [dayReportReadings],
+  )
+
   const today = todayDateOnlyIstanbul()
   const weekStart = weekStartIstanbul(today)
   const weekEnd = shiftDateOnly(weekStart, 6)
+  const isReportToday = reportDay === today
+  const canGoNextDay = reportDay < today
 
   const kmToday = useMemo(
     () => sumDayKm(dayPairs.filter((d) => d.reportDate === today)),
@@ -182,6 +222,10 @@ export function FieldOpsPanel() {
     [dayPairs, weekStart, weekEnd],
   )
   const kmMonth = useMemo(() => sumDayKm(monthDays), [monthDays])
+  const kmReportDay = useMemo(
+    () => sumDayKm(reportDayPairs),
+    [reportDayPairs],
+  )
 
   return (
     <div className="space-y-8">
@@ -191,15 +235,12 @@ export function FieldOpsPanel() {
         description="Saha km (kameraman kadran farkı) ve muhabir günlük raporlarından saha gider kalemleri. Genel kasaya karışmaz."
         defaultOpen
       >
-        <div className="mb-4 max-w-xs">
-          <FormField label="Ay" htmlFor="field-ops-month">
-            <Input
-              id="field-ops-month"
-              type="month"
-              value={yearMonth}
-              onChange={(e) => setYearMonth(e.target.value)}
-            />
-          </FormField>
+        <div className="mb-5">
+          <MonthPicker
+            id="field-ops-month"
+            value={yearMonth}
+            onChange={setYearMonth}
+          />
         </div>
 
         <div className="grid gap-3 sm:grid-cols-3">
@@ -214,13 +255,13 @@ export function FieldOpsPanel() {
             hint={`${formatDateOnlyShortTr(weekStart)} – ${formatDateOnlyShortTr(weekEnd)}`}
           />
           <StatBox
-            label="Seçili ay saha km"
+            label={`${formatYearMonthLongTr(yearMonth)} saha km`}
             value={
               loadingMonthKm
                 ? '…'
                 : `${kmMonth.toLocaleString('tr-TR')} km`
             }
-            hint={yearMonth}
+            hint={formatYearMonthRangeTr(yearMonth)}
           />
         </div>
 
@@ -278,22 +319,89 @@ export function FieldOpsPanel() {
       <AccordionSection
         number="02"
         title="Kameraman raporları"
-        description="Sabah / akşam kadran görselleri ve günlük km farkı (ikisi de girildiyse)."
+        description="Tarihe göre sabah / akşam kadran görselleri ve günlük km farkı."
         defaultOpen
       >
-        {loadingReports ? (
+        <div className="mb-4 space-y-3">
+          <div className="flex min-w-0 flex-wrap items-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              aria-label="Önceki gün"
+              className="shrink-0 px-2.5"
+              onClick={() => setReportDay((d) => shiftDateOnly(d, -1))}
+            >
+              <ChevronLeft className="size-4" aria-hidden="true" />
+            </Button>
+            <FormField
+              label="Rapor günü"
+              htmlFor="field-ops-report-day"
+              className="w-auto min-w-0 max-w-[14rem] flex-1 basis-[10.5rem] sm:flex-none"
+            >
+              <DateInput
+                id="field-ops-report-day"
+                value={reportDay}
+                max={today}
+                onChange={(e) => {
+                  const next = e.target.value
+                  if (!isValidDateOnly(next)) return
+                  setReportDay(next > today ? today : next)
+                }}
+              />
+            </FormField>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              aria-label="Sonraki gün"
+              className="shrink-0 px-2.5"
+              disabled={!canGoNextDay}
+              onClick={() =>
+                setReportDay((d) => {
+                  const next = shiftDateOnly(d, 1)
+                  return next > today ? today : next
+                })
+              }
+            >
+              <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+            {!isReportToday ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="shrink-0 whitespace-nowrap px-3.5"
+                onClick={() => setReportDay(today)}
+              >
+                Bugün
+              </Button>
+            ) : null}
+          </div>
+          <p className="text-sm text-text-secondary">
+            <span className="font-medium text-text-primary">
+              {formatDateOnlyLongTr(reportDay)}
+            </span>
+            {' · '}
+            {loadingDayReports
+              ? 'yükleniyor…'
+              : `${reportDayPairs.length} kameraman · ${kmReportDay.toLocaleString('tr-TR')} km saha`}
+          </p>
+        </div>
+
+        {loadingDayReports ? (
           <div className="space-y-2">
             <Skeleton className="h-20 w-full" />
             <Skeleton className="h-20 w-full" />
           </div>
-        ) : dayPairs.length === 0 ? (
+        ) : reportDayPairs.length === 0 ? (
           <EmptyState
-            title="Kameraman km raporu yok"
-            description="Kameramanlar sabah ve akşam kadran girişlerini burada toplar."
+            title="Bu günde rapor yok"
+            description={`${formatDateOnlyLongTr(reportDay)} için kadran girişi bulunamadı. Başka bir gün seçin.`}
           />
         ) : (
           <ul className="space-y-4">
-            {dayPairs.map((day) => (
+            {reportDayPairs.map((day) => (
               <li
                 key={`${day.createdByUid}-${day.reportDate}`}
                 className="rounded-[var(--radius-md)] border border-border bg-surface p-4 shadow-[var(--shadow-xs)]"

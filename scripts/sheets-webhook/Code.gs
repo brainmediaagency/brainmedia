@@ -11,6 +11,8 @@
  * v18: Turkish Drive folder names + rename legacy English folders.
  * v19: resetUserPassword — İK/yönetim/koordinatör temporary Auth password reset
  *      (requires FIREBASE_SERVICE_ACCOUNT_JSON Script property).
+ * v20: ROLES_DRIVE includes kameraman (KM kadran foto upload).
+ * v21: trashDriveFile — soft-delete previous Drive file on photo replace.
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -34,8 +36,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v19'
-var SCRIPT_VERSION = 'v19'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v21'
+var SCRIPT_VERSION = 'v21'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -53,6 +55,7 @@ var ROLES_DRIVE = {
   human_resources: true,
   coordinator: true,
   management: true,
+  kameraman: true,
 }
 /** Callers of notify* → pushNotify (audience default = all five role tags; optional externalIds). */
 var ROLES_PUSH = {
@@ -196,6 +199,9 @@ function doPost(e) {
     if (body.action === 'uploadFile') {
       return handleUpload_(body)
     }
+    if (body.action === 'trashDriveFile') {
+      return handleTrashDriveFile_(body)
+    }
     if (body.action === 'driveStorageUsage') {
       return handleDriveStorageUsage_()
     }
@@ -235,7 +241,7 @@ function doPost(e) {
     return jsonResponse_({
       ok: false,
       error:
-        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
+        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/trashDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     }, 400)
@@ -272,6 +278,7 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'updateSonDurum',
         'updateDkHaber',
         'uploadFile',
+        'trashDriveFile',
         'uploadResult',
         'driveStorageUsage',
         'wipeBrainUploads',
@@ -410,7 +417,8 @@ function roleAllowedForAction_(action, role) {
   if (
     action === 'uploadFile' ||
     action === 'uploadResult' ||
-    action === 'driveStorageUsage'
+    action === 'driveStorageUsage' ||
+    action === 'trashDriveFile'
   ) {
     return Boolean(ROLES_DRIVE[role])
   }
@@ -843,6 +851,28 @@ function handleUpload_(body) {
   } catch (err) {
     var message = err && err.message ? String(err.message) : 'Upload failed'
     cacheUploadResult_(body.uploadToken, { ok: false, error: message })
+    return jsonResponse_({ ok: false, error: message }, 500)
+  }
+}
+
+/**
+ * Soft-delete a Drive file by id (setTrashed). Used when replacing kadran photos.
+ * Only roles with Drive upload may call.
+ */
+function handleTrashDriveFile_(body) {
+  var fileId = String(body.fileId || '').trim()
+  if (!fileId || fileId.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    return jsonResponse_({ ok: false, error: 'Invalid fileId' }, 400)
+  }
+  try {
+    var file = DriveApp.getFileById(fileId)
+    if (file.isTrashed()) {
+      return jsonResponse_({ ok: true, fileId: fileId, alreadyTrashed: true })
+    }
+    file.setTrashed(true)
+    return jsonResponse_({ ok: true, fileId: fileId })
+  } catch (err) {
+    var message = err && err.message ? String(err.message) : 'Trash failed'
     return jsonResponse_({ ok: false, error: message }, 500)
   }
 }

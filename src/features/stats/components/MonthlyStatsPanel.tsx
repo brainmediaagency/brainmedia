@@ -9,8 +9,8 @@ import {
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { FormField } from '@/components/ui/FormField'
 import { MetricCard } from '@/components/ui/MetricCard'
+import { MonthPicker } from '@/components/ui/MonthPicker'
 import { Skeleton } from '@/components/ui/Skeleton'
 import {
   Table,
@@ -137,16 +137,14 @@ export function MonthlyStatsPanel({
       defaultOpen={defaultOpen}
     >
       <div className="space-y-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <FormField label="Ay" htmlFor="monthly-stats-month" className="sm:max-w-xs">
-            <input
-              id="monthly-stats-month"
-              type="month"
-              value={yearMonth}
-              onChange={(e) => setYearMonth(e.target.value)}
-              className="h-10 w-full rounded-[var(--radius-md)] border border-border bg-surface px-3 text-sm text-text-primary shadow-[var(--shadow-xs)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-cyan focus-visible:ring-offset-2"
-            />
-          </FormField>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <MonthPicker
+            id="monthly-stats-month"
+            value={yearMonth}
+            onChange={(next) => setYearMonth(next as YearMonth)}
+            disabled={loading}
+            className="sm:min-w-[18rem]"
+          />
           <Button type="button" variant="secondary" onClick={() => void load()} disabled={loading}>
             Yenile
           </Button>

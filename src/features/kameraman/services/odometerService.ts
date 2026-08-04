@@ -26,11 +26,13 @@ import type {
 import {
   buildDriveFolderKey,
   slotFileName,
+  slotLabelTr,
 } from '@/features/kameraman/utils/odometerKm'
-import { uploadFileToDrive, type DriveUploadProgress } from '@/lib/driveUpload'
-import { isValidDateOnly, todayDateOnlyIstanbul } from '@/lib/date'
+import { uploadFileToDrive, trashDriveFile, type DriveUploadProgress } from '@/lib/driveUpload'
+import { isValidDateOnly, todayDateOnlyIstanbul, formatDateOnlyShortTr } from '@/lib/date'
 import { DEFAULT_LIST_LIMIT } from '@/config/roles'
 import { UserFacingError, mapAppError } from '@/lib/errors'
+import { notifyManagement } from '@/features/notifications/services/notificationService'
 
 const converter: FirestoreDataConverter<KameramanOdometerReading> = {
   toFirestore(item: KameramanOdometerReading): DocumentData {
@@ -184,7 +186,8 @@ export async function upsertOdometerReading(input: {
   slot: OdometerSlot
   odometerKm: number
   note?: string | null
-  photoFile: File
+  /** Required for create; optional on update (keep existing photo). */
+  photoFile?: File | null
   createdByUid: string
   createdByNameSnapshot: string
   createdByEmailSnapshot: string
@@ -207,14 +210,15 @@ export async function upsertOdometerReading(input: {
     if (!Number.isFinite(km) || km < 0 || km > 9_999_999) {
       throw new UserFacingError('Geçerli bir kadran km sayısı girin.')
     }
-    if (!input.photoFile) {
-      throw new UserFacingError('Kadran görseli (PNG/JPG) zorunludur.')
-    }
-    if (!input.photoFile.type.startsWith('image/')) {
-      throw new UserFacingError('Yalnızca görsel dosyaları yüklenebilir.')
-    }
-    if (input.photoFile.size > 8 * 1024 * 1024) {
-      throw new UserFacingError('Görsel en fazla 8 MB olabilir.')
+
+    const photoFile = input.photoFile ?? null
+    if (photoFile) {
+      if (!photoFile.type.startsWith('image/')) {
+        throw new UserFacingError('Yalnızca görsel dosyaları yüklenebilir.')
+      }
+      if (photoFile.size > 8 * 1024 * 1024) {
+        throw new UserFacingError('Görsel en fazla 8 MB olabilir.')
+      }
     }
 
     const docId =
@@ -223,36 +227,66 @@ export async function upsertOdometerReading(input: {
     const ref = doc(getDb(), 'kameramanOdometerReadings', docId)
     const existing = await getDoc(ref)
 
-    const uploaded = await uploadOdometerPhoto({
-      photoFile: input.photoFile,
-      fullName: input.createdByNameSnapshot,
-      reportDate: input.reportDate,
-      slot: input.slot,
-      onProgress: input.onUploadProgress,
-    })
-
     const note =
       input.note?.trim() ? input.note.trim().slice(0, 500) : null
 
     if (existing.exists()) {
-      const data = existing.data() as { createdByUid?: string; reportDate?: string }
+      const data = existing.data() as {
+        createdByUid?: string
+        reportDate?: string
+        photoStoragePath?: string
+      }
       if (data.createdByUid !== authUid) {
         throw new UserFacingError('Bu rapor size ait değil.')
       }
       if (data.reportDate !== input.reportDate) {
         throw new UserFacingError('Rapor tarihi değiştirilemez.')
       }
-      await updateDoc(ref, {
-        odometerKm: km,
-        note,
-        photoStoragePath: uploaded.photoStoragePath,
-        photoDownloadUrl: uploaded.photoDownloadUrl,
-        driveFolderKey: uploaded.driveFolderKey,
-        slot: input.slot,
-        updatedAt: serverTimestamp(),
-      })
+      const previousFileId = String(data.photoStoragePath ?? '').trim()
+
+      if (photoFile) {
+        const uploaded = await uploadOdometerPhoto({
+          photoFile,
+          fullName: input.createdByNameSnapshot,
+          reportDate: input.reportDate,
+          slot: input.slot,
+          onProgress: input.onUploadProgress,
+        })
+        await updateDoc(ref, {
+          odometerKm: km,
+          note,
+          photoStoragePath: uploaded.photoStoragePath,
+          photoDownloadUrl: uploaded.photoDownloadUrl,
+          driveFolderKey: uploaded.driveFolderKey,
+          updatedAt: serverTimestamp(),
+        })
+        if (
+          previousFileId &&
+          previousFileId !== uploaded.photoStoragePath
+        ) {
+          void trashDriveFile(previousFileId)
+        }
+      } else {
+        await updateDoc(ref, {
+          odometerKm: km,
+          note,
+          updatedAt: serverTimestamp(),
+        })
+      }
       return docId
     }
+
+    if (!photoFile) {
+      throw new UserFacingError('Kadran görseli (PNG/JPG) zorunludur.')
+    }
+
+    const uploaded = await uploadOdometerPhoto({
+      photoFile,
+      fullName: input.createdByNameSnapshot,
+      reportDate: input.reportDate,
+      slot: input.slot,
+      onProgress: input.onUploadProgress,
+    })
 
     await setDoc(ref, {
       reportDate: input.reportDate,
@@ -268,6 +302,17 @@ export async function upsertOdometerReading(input: {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
+
+    void notifyManagement({
+      type: 'odometer_report',
+      title: 'Kameraman kadran raporu',
+      body: `${input.createdByNameSnapshot.trim()} — ${slotLabelTr(input.slot)} · ${km.toLocaleString('tr-TR')} km · ${formatDateOnlyShortTr(input.reportDate)}`,
+      link: '/coordinator?tab=field-ops',
+      createdByUid: authUid,
+      createdByNameSnapshot: input.createdByNameSnapshot.trim().slice(0, 120),
+      pushRoles: ['management', 'coordinator'],
+    })
+
     return docId
   } catch (error) {
     if (error instanceof UserFacingError) throw error

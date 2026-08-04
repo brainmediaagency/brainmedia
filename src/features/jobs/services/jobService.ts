@@ -23,6 +23,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
+import { getFirebaseAuth } from '@/lib/firebase/auth'
 import { JOB_STATUSES, DEFAULT_LIST_LIMIT, type JobStatus } from '@/config/roles'
 import type { JobDocument } from '@/features/jobs/types/job'
 import {
@@ -33,12 +34,21 @@ import {
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { notifyManagement, notifyUser } from '@/features/notifications/services/notificationService'
 import {
+  formatJobScheduleTr,
   isJobScheduleOnOrAfter,
   isJobSchedulePast,
   isValidDateOnly,
   isValidDateTimeLocal,
 } from '@/lib/date'
 import type { UserRole } from '@/config/roles'
+
+/** Push audience when a job already on the shoot calendar is content-edited. */
+const CALENDAR_JOB_EDIT_PUSH_ROLES: UserRole[] = [
+  'management',
+  'coordinator',
+  'reporter',
+  'kameraman',
+]
 
 function parseStatus(value: unknown): JobStatus {
   if (typeof value === 'string' && (JOB_STATUSES as readonly string[]).includes(value)) {
@@ -307,6 +317,9 @@ export async function updatePendingJob(
     )
   }
 
+  const wasOnShootingCalendar =
+    job.status === 'approved' && job.forwardedToReporter === true
+
   await updateDoc(ref, {
     companyName: input.companyName.trim(),
     companyNameNormalized: normalizeCompanyName(input.companyName),
@@ -332,6 +345,26 @@ export async function updatePendingJob(
   if (!fresh) {
     throw new UserFacingError('İş kaydı güncellendi ancak yeniden okunamadı.')
   }
+
+  if (wasOnShootingCalendar) {
+    const actor = getFirebaseAuth().currentUser
+    const actorUid = actor?.uid ?? ''
+    const actorName =
+      actor?.displayName?.trim() ||
+      fresh.reviewedByNameSnapshot?.trim() ||
+      'Yönetim'
+    void notifyManagement({
+      type: 'job_approved',
+      title: 'Çekim takvimi güncellendi',
+      body: `${fresh.companyName} — ${formatJobScheduleTr(fresh.plannedExecutionDate)}`,
+      link: '/reporter',
+      createdByUid: actorUid,
+      createdByNameSnapshot: actorName,
+      /** Muhabir, koordinatör, yönetim, kameraman — MPU/İK yok. */
+      pushRoles: CALENDAR_JOB_EDIT_PUSH_ROLES,
+    })
+  }
+
   return fresh
 }
 

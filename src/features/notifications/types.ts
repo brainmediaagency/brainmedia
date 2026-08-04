@@ -8,6 +8,7 @@ export type ManagementNotificationType =
   | 'z_report'
   | 'hr_report'
   | 'hiring_note'
+  | 'odometer_report'
 
 export type BroadcastNotificationType = 'region_created'
 

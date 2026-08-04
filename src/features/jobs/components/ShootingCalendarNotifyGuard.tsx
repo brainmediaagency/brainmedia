@@ -7,7 +7,7 @@ import {
 } from '@/features/jobs/services/shootingCalendarNotifyService'
 
 /**
- * Yönetim / koordinatör oturumundayken İstanbul 00:00’dan itibaren
+ * Yönetim / koordinatör oturumundayken İstanbul 21:00’dan itibaren
  * muhabir + kameraman’a “çekim takvimi hazır” push’unu günde bir kez gönderir.
  */
 export function ShootingCalendarNotifyGuard() {

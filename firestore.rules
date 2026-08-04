@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: voice-create-no-fullname-lock-27
+// rules-rev: kameraman-odometer-get-create-28
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -511,7 +511,8 @@ service cloud.firestore {
           'daily_report',
           'z_report',
           'hr_report',
-          'hiring_note'
+          'hiring_note',
+          'odometer_report'
         ]
         && isValidString(request.resource.data.title, 1, 120)
         && isValidString(request.resource.data.body, 0, 300)
@@ -1729,10 +1730,22 @@ service cloud.firestore {
 
     // ---------- kameramanOdometerReadings (Drive PNG + manual km) ----------
     match /kameramanOdometerReadings/{readingId} {
-      allow read: if isAuthenticated()
+      // getDoc on a missing id fails if rules require resource.data — allow
+      // kameraman (own id pattern) / mgmt read + owners on existing docs.
+      allow get: if isAuthenticated()
         && (
-          resource.data.createdByUid == request.auth.uid
-          || isCoordinatorOrManagement()
+          isCoordinatorOrManagement()
+          || (resource != null
+            && resource.data.createdByUid == request.auth.uid)
+          || (isKameraman()
+            && resource == null
+            && readingId.matches('^' + request.auth.uid + '_.*'))
+        );
+
+      allow list: if isAuthenticated()
+        && (
+          isCoordinatorOrManagement()
+          || isKameraman()
         );
 
       allow create: if isKameraman()
@@ -1755,8 +1768,7 @@ service cloud.firestore {
         && request.resource.data.createdByEmailSnapshot == userDoc(request.auth.uid).email
         && isDateOnly(request.resource.data.reportDate)
         && request.resource.data.slot in ['morning', 'evening']
-        && request.resource.data.odometerKm is int
-        && request.resource.data.odometerKm >= 0
+        && isNonNegWhole(request.resource.data.odometerKm)
         && request.resource.data.odometerKm <= 9999999
         && (
           request.resource.data.note == null
@@ -1788,8 +1800,7 @@ service cloud.firestore {
             'driveFolderKey',
             'updatedAt'
           ])
-        && request.resource.data.odometerKm is int
-        && request.resource.data.odometerKm >= 0
+        && isNonNegWhole(request.resource.data.odometerKm)
         && request.resource.data.odometerKm <= 9999999
         && (
           request.resource.data.note == null

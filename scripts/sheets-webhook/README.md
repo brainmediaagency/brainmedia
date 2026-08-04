@@ -8,6 +8,8 @@ Same Apps Script Web App handles:
    - `z-reports` → **Z raporu**
    - `voice-recordings` → **Ses kayıtları**
    - `hr-reports` → **Günlük İK raporu** (reserved)
+   - `kameraman-km` → **Kameraman KM Raporları** (+ nested `folderPath`)
+   - Replace photo: `action: "trashDriveFile"` + `fileId` soft-deletes previous Drive file
    - Legacy English names (`Hiring`, `ZReports`, …) are renamed on next upload after **v18** deploy
 3. **Drive quota** → account used/limit (`action: "driveStorageUsage"`)
 4. **OneSignal push** → all subscribed roles / optional externalIds (`action: "pushNotify"`) — see [`../onesignal/README.md`](../onesignal/README.md)
@@ -74,7 +76,7 @@ In the app: **Hesaplar → Şifre sıfırla**. Webhook generates a random tempor
 | Action | Allowed roles |
 |--------|----------------|
 | Sheet upsert / son durum / dk haber | reporter, media_planning, coordinator, management |
-| Drive upload / uploadResult / storage | + human_resources |
+| Drive upload / uploadResult / storage | + human_resources, kameraman (KM kadran) |
 | pushNotify | all of the above (callers of notify*; default audience = all five role tags; optional `externalIds`) |
 | resetUserPassword | human_resources, coordinator, management (+ manageable target role) |
 
