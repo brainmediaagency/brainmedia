@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2, Pencil, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import type { JobDocument } from '@/features/jobs/types/job'
+import { ApprovedJobEditForm } from '@/features/jobs/components/ApprovedJobEditForm'
 import { cancelJob, markJobAsShot } from '@/features/jobs/services/jobService'
 import {
   exportJobReviewToSheet,
@@ -11,6 +12,7 @@ import {
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { Drawer } from '@/components/ui/Drawer'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { FormField } from '@/components/ui/FormField'
 import { MobileDataCard } from '@/components/ui/MobileDataCard'
@@ -47,6 +49,7 @@ export function OverdueJobsConfirmationPanel({
   const [now, setNow] = useState(() => new Date())
   const [confirming, setConfirming] = useState<JobDocument | null>(null)
   const [cancelling, setCancelling] = useState<JobDocument | null>(null)
+  const [editing, setEditing] = useState<JobDocument | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const actionLockRef = useRef(false)
@@ -230,6 +233,16 @@ export function OverdueJobsConfirmationPanel({
                         size="sm"
                         variant="secondary"
                         disabled={!isOnline || submitting || !actor}
+                        onClick={() => setEditing(job)}
+                      >
+                        <Pencil className="size-4" aria-hidden="true" />
+                        Düzenle
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={!isOnline || submitting || !actor}
                         onClick={() => {
                           setCancelReason('')
                           setCancelling(job)
@@ -279,6 +292,16 @@ export function OverdueJobsConfirmationPanel({
                     onClick={() => setConfirming(job)}
                   >
                     Çekildi olarak işaretle
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="w-full"
+                    disabled={!isOnline || submitting || !actor}
+                    onClick={() => setEditing(job)}
+                  >
+                    Düzenle
                   </Button>
                   <Button
                     type="button"
@@ -382,6 +405,25 @@ export function OverdueJobsConfirmationPanel({
               </div>
             </div>
           </Modal>
+
+          <Drawer
+            open={editing !== null}
+            onClose={() => setEditing(null)}
+            title="İş kaydını düzenle"
+            description={editing?.companyName}
+            side="right"
+          >
+            {editing ? (
+              <ApprovedJobEditForm
+                job={editing}
+                onCancel={() => setEditing(null)}
+                onSuccess={(updated) => {
+                  onJobUpdated?.(updated)
+                  setEditing(null)
+                }}
+              />
+            ) : null}
+          </Drawer>
         </>
       ) : null}
     </>

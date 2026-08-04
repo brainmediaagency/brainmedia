@@ -439,6 +439,92 @@ describe('Job update', () => {
     )
   })
 
+  it('18d. management can reschedule approved job content (date/time)', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), 'jobs', 'job-approved'),
+        jobPayload({
+          status: 'approved',
+          statusVersion: 2,
+          plannedExecutionDate: '2026-07-10T14:00',
+          reviewedByUid: 'mgmt1',
+          reviewedByNameSnapshot: 'User mgmt1',
+          reviewedAt: Timestamp.now(),
+        }),
+      )
+    })
+    const db = testEnv
+      .authenticatedContext('mgmt1', authClaims('management'))
+      .firestore()
+    await assertSucceeds(
+      updateDoc(doc(db, 'jobs', 'job-approved'), {
+        companyName: 'Test Firma',
+        companyNameNormalized: 'test firma',
+        contactPersonName: 'Ali Veli',
+        contactPhone: '+905551112233',
+        contactCount: 1,
+        contacts: [
+          {
+            name: 'Ali Veli',
+            mobilePhone: '+905551112233',
+            workPhone: null,
+          },
+        ],
+        province: 'İstanbul',
+        district: 'Kadıköy',
+        fullAddress: 'Caferağa Mahallesi örnek sokak no 1',
+        instagram: null,
+        acquiredDate: '2026-07-01',
+        plannedExecutionDate: '2026-08-15T11:00',
+        agreedAmountKurus: 150000,
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
+  it('18e. media planning cannot edit approved job content', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), 'jobs', 'job-approved-2'),
+        jobPayload({
+          status: 'approved',
+          statusVersion: 2,
+          plannedExecutionDate: '2026-07-10T14:00',
+          reviewedByUid: 'mgmt1',
+          reviewedByNameSnapshot: 'User mgmt1',
+          reviewedAt: Timestamp.now(),
+        }),
+      )
+    })
+    const db = testEnv
+      .authenticatedContext('media1', authClaims('media_planning'))
+      .firestore()
+    await assertFails(
+      updateDoc(doc(db, 'jobs', 'job-approved-2'), {
+        companyName: 'Test Firma',
+        companyNameNormalized: 'test firma',
+        contactPersonName: 'Ali Veli',
+        contactPhone: '+905551112233',
+        contactCount: 1,
+        contacts: [
+          {
+            name: 'Ali Veli',
+            mobilePhone: '+905551112233',
+            workPhone: null,
+          },
+        ],
+        province: 'İstanbul',
+        district: 'Kadıköy',
+        fullAddress: 'Caferağa Mahallesi örnek sokak no 1',
+        instagram: null,
+        acquiredDate: '2026-07-01',
+        plannedExecutionDate: '2026-08-15T11:00',
+        agreedAmountKurus: 150000,
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
   it('19-20. coordinator/management can approve with stats+history', async () => {
     for (const actor of [
       { uid: 'coord1', role: 'coordinator', name: 'User coord1' },
