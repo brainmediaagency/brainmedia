@@ -71,9 +71,25 @@ export function KameramanOdometerPanel() {
 
   const dayPairs = useMemo(() => pairReadingsIntoDays(readings), [readings])
 
+  const todayBySlot = useMemo(() => {
+    const map: Record<OdometerSlot, KameramanOdometerReading | null> = {
+      morning: null,
+      evening: null,
+    }
+    for (const item of readings) {
+      if (item.reportDate !== today) continue
+      map[item.slot] = item
+    }
+    return map
+  }, [readings, today])
+
+  const existingForSlot = todayBySlot[slot]
+  const bothSlotsFilled = Boolean(todayBySlot.morning && todayBySlot.evening)
+  const isEditMode = Boolean(editingId) || Boolean(existingForSlot)
+
   const clearFile = () => {
     setFile(null)
-    if (preview) URL.revokeObjectURL(preview)
+    if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
     setPreview(null)
     if (inputRef.current) inputRef.current.value = ''
   }
@@ -83,13 +99,76 @@ export function KameramanOdometerPanel() {
     setEditingId(null)
     setOdometerKm('')
     setNote('')
-    setSlot('morning')
+    const preferred: OdometerSlot = !todayBySlot.morning
+      ? 'morning'
+      : !todayBySlot.evening
+        ? 'evening'
+        : 'morning'
+    setSlot(preferred)
+  }
+
+  /** Load an existing reading into the form (update, never second create). */
+  const startEdit = (
+    item: KameramanOdometerReading,
+    options?: { silent?: boolean },
+  ) => {
+    if (item.reportDate !== today) {
+      toast.error('Yalnızca bugünün raporları düzenlenebilir.')
+      return
+    }
+    clearFile()
+    setEditingId(item.id)
+    setSlot(item.slot)
+    setOdometerKm(String(item.odometerKm))
+    setNote(item.note ?? '')
+    setPreview(item.photoDownloadUrl)
+    if (!options?.silent) {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
+  // Prefer first empty slot; if selected slot already has a row, open update mode.
+  useEffect(() => {
+    if (editingId || loadingList) return
+    if (existingForSlot) {
+      startEdit(existingForSlot, { silent: true })
+      return
+    }
+    if (!todayBySlot.morning && slot !== 'morning') {
+      setSlot('morning')
+      return
+    }
+    if (todayBySlot.morning && !todayBySlot.evening && slot !== 'evening') {
+      setSlot('evening')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to today slot inventory
+  }, [todayBySlot.morning?.id, todayBySlot.evening?.id, loadingList])
+
+  const onSlotChange = (next: OdometerSlot) => {
+    setSlot(next)
+    const existing = todayBySlot[next]
+    if (existing) {
+      startEdit(existing, { silent: true })
+      toast.message(
+        `${slotLabelTr(next)} kadranı bugün zaten girilmiş. Güncelleme modu açıldı.`,
+      )
+      return
+    }
+    clearFile()
+    setEditingId(null)
+    setOdometerKm('')
+    setNote('')
   }
 
   const onFileChange = (next: File | null) => {
-    if (preview) URL.revokeObjectURL(preview)
+    if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
     if (!next) {
       clearFile()
+      if (editingId || existingForSlot) {
+        const src =
+          existingForSlot ?? readings.find((r) => r.id === editingId) ?? null
+        if (src?.photoDownloadUrl) setPreview(src.photoDownloadUrl)
+      }
       return
     }
     if (!next.type.startsWith('image/')) {
@@ -104,20 +183,6 @@ export function KameramanOdometerPanel() {
     setPreview(URL.createObjectURL(next))
   }
 
-  const startEdit = (item: KameramanOdometerReading) => {
-    if (item.reportDate !== today) {
-      toast.error('Yalnızca bugünün raporları düzenlenebilir.')
-      return
-    }
-    clearFile()
-    setEditingId(item.id)
-    setSlot(item.slot)
-    setOdometerKm(String(item.odometerKm))
-    setNote(item.note ?? '')
-    setPreview(item.photoDownloadUrl)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
   const onSubmit = async () => {
     if (!profile) return
     const km = Number(odometerKm.replace(',', '.'))
@@ -125,10 +190,23 @@ export function KameramanOdometerPanel() {
       toast.error('Geçerli bir kadran km sayısı girin.')
       return
     }
-    if (!editingId && !file) {
+
+    // Block a second create for the same day + slot; force update path.
+    const already = todayBySlot[slot]
+    if (already && !editingId) {
+      startEdit(already)
+      toast.message(
+        `${slotLabelTr(slot)} için kayıt var. Değişiklikleri güncelleme ile kaydedin.`,
+      )
+      return
+    }
+
+    if (!already && !file) {
       toast.error('Kadran görseli zorunludur.')
       return
     }
+
+    const resolvedEditId = editingId ?? already?.id ?? null
 
     setSubmitting(true)
     if (file) {
@@ -148,7 +226,7 @@ export function KameramanOdometerPanel() {
         createdByUid: profile.uid,
         createdByNameSnapshot: profile.fullName,
         createdByEmailSnapshot: profile.email,
-        existingId: editingId,
+        existingId: resolvedEditId,
         onUploadProgress: file
           ? (progress) => {
               setUploadUi({
@@ -160,7 +238,7 @@ export function KameramanOdometerPanel() {
           : undefined,
       })
       toast.success(
-        editingId
+        isEditMode || already
           ? `${slotLabelTr(slot)} kadranı güncellendi.`
           : `${slotLabelTr(slot)} kadranı kaydedildi.`,
       )
@@ -178,24 +256,50 @@ export function KameramanOdometerPanel() {
       <AccordionSection
         number="01"
         title="Km kadranı"
-        description="Her gün sabah (otel çıkışı) ve akşam (gün sonu) kadran km + PNG. Yalnızca bugün düzenlenebilir."
+        description="Her gün sabah ve akşam için tek kadran kaydı. Aynı slot tekrar açılamaz; mevcut olan güncellenir."
         defaultOpen
       >
         <div className="space-y-4">
           <p className="text-sm text-text-secondary">
-            Rapor günü: <span className="font-medium text-text-primary">{formatDateOnlyLongTr(today)}</span>
+            Rapor günü:{' '}
+            <span className="font-medium text-text-primary">
+              {formatDateOnlyLongTr(today)}
+            </span>
           </p>
+
+          {bothSlotsFilled ? (
+            <p className="rounded-[var(--radius-md)] border border-border bg-surface-muted/50 px-3 py-2 text-sm text-text-secondary">
+              Bugün sabah ve akşam kadranları girilmiş. Değiştirmek için slot
+              seçin veya alttan{' '}
+              <span className="font-medium text-text-primary">Düzenle</span>.
+            </p>
+          ) : null}
+
+          {existingForSlot && editingId === existingForSlot.id ? (
+            <p className="rounded-[var(--radius-md)] border border-brand-cyan/30 bg-brand-cyan/10 px-3 py-2 text-sm text-text-secondary">
+              <span className="font-medium text-text-primary">
+                {slotLabelTr(slot)}
+              </span>{' '}
+              kaydı güncelleniyor — yeni kayıt açılamaz.
+            </p>
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Slot" htmlFor="km-slot" required>
               <Select
                 id="km-slot"
                 value={slot}
-                onChange={(e) => setSlot(e.target.value as OdometerSlot)}
-                disabled={submitting || Boolean(editingId)}
+                onChange={(e) => onSlotChange(e.target.value as OdometerSlot)}
+                disabled={submitting}
               >
-                <option value="morning">Sabah (otel çıkışı)</option>
-                <option value="evening">Akşam (gün sonu)</option>
+                <option value="morning">
+                  Sabah (otel çıkışı)
+                  {todayBySlot.morning ? ' — kayıtlı, güncelle' : ''}
+                </option>
+                <option value="evening">
+                  Akşam (gün sonu)
+                  {todayBySlot.evening ? ' — kayıtlı, güncelle' : ''}
+                </option>
               </Select>
             </FormField>
             <FormField label="Kadran km" htmlFor="km-value" required>
@@ -203,7 +307,9 @@ export function KameramanOdometerPanel() {
                 id="km-value"
                 inputMode="numeric"
                 value={odometerKm}
-                onChange={(e) => setOdometerKm(e.target.value.replace(/[^\d]/g, ''))}
+                onChange={(e) =>
+                  setOdometerKm(e.target.value.replace(/[^\d]/g, ''))
+                }
                 disabled={submitting}
                 placeholder="örn. 125430"
               />
@@ -225,7 +331,7 @@ export function KameramanOdometerPanel() {
           <FormField
             label="Kadran görseli"
             htmlFor="km-photo"
-            required={!editingId}
+            required={!isEditMode}
           >
             <input
               ref={inputRef}
@@ -236,9 +342,10 @@ export function KameramanOdometerPanel() {
               disabled={submitting}
               onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
             />
-            {editingId ? (
+            {isEditMode ? (
               <p className="mt-1 text-xs text-text-secondary">
-                Yeni görsel seçmezseniz mevcut kadran fotoğrafı korunur; yalnızca km/not güncellenir.
+                Yeni görsel seçmezseniz mevcut kadran fotoğrafı korunur; yalnızca
+                km/not güncellenir.
               </p>
             ) : null}
           </FormField>
@@ -257,7 +364,7 @@ export function KameramanOdometerPanel() {
                   variant="secondary"
                   className="absolute right-2 top-2"
                   disabled={submitting}
-                  onClick={clearFile}
+                  onClick={() => onFileChange(null)}
                 >
                   <X className="size-3.5" aria-hidden="true" />
                   Kaldır
@@ -296,7 +403,7 @@ export function KameramanOdometerPanel() {
               disabled={submitting}
               onClick={() => void onSubmit()}
             >
-              {editingId ? 'Güncelle' : 'Kaydet'}
+              {isEditMode ? 'Güncelle' : 'Kaydet'}
             </Button>
           </div>
         </div>
@@ -391,7 +498,9 @@ export function KameramanOdometerPanel() {
                             ) : null}
                           </>
                         ) : (
-                          <p className="mt-2 text-sm text-text-secondary">Girilmedi</p>
+                          <p className="mt-2 text-sm text-text-secondary">
+                            Girilmedi
+                          </p>
                         )}
                       </div>
                     )

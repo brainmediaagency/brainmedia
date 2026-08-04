@@ -1783,34 +1783,65 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
-      allow update: if isKameraman()
-        && resource.data.createdByUid == request.auth.uid
-        && request.resource.data.createdByUid == resource.data.createdByUid
-        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
-        && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.reportDate == resource.data.reportDate
-        && request.resource.data.slot == resource.data.slot
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly([
-            'odometerKm',
-            'note',
-            'photoStoragePath',
-            'photoDownloadUrl',
-            'driveFolderKey',
-            'updatedAt'
-          ])
-        && isNonNegWhole(request.resource.data.odometerKm)
-        && request.resource.data.odometerKm <= 9999999
-        && (
-          request.resource.data.note == null
-          || isValidString(request.resource.data.note, 1, 500)
+      allow update: if (
+          isKameraman()
+          && resource.data.createdByUid == request.auth.uid
+          && request.resource.data.createdByUid == resource.data.createdByUid
+          && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+          && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.reportDate == resource.data.reportDate
+          && request.resource.data.slot == resource.data.slot
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'odometerKm',
+              'note',
+              'photoStoragePath',
+              'photoDownloadUrl',
+              'driveFolderKey',
+              'updatedAt'
+            ])
+          && isNonNegWhole(request.resource.data.odometerKm)
+          && request.resource.data.odometerKm <= 9999999
+          && (
+            request.resource.data.note == null
+            || isValidString(request.resource.data.note, 1, 500)
+          )
+          && isValidString(request.resource.data.photoStoragePath, 1, 500)
+          && isValidString(request.resource.data.photoDownloadUrl, 8, 2000)
+          && request.resource.data.photoDownloadUrl.matches('https://.*')
+          && isValidString(request.resource.data.driveFolderKey, 1, 160)
+          && request.resource.data.updatedAt == request.time
         )
-        && isValidString(request.resource.data.photoStoragePath, 1, 500)
-        && isValidString(request.resource.data.photoDownloadUrl, 8, 2000)
-        && request.resource.data.photoDownloadUrl.matches('https://.*')
-        && isValidString(request.resource.data.driveFolderKey, 1, 160)
-        && request.resource.data.updatedAt == request.time;
+        || (
+          isCoordinatorOrManagement()
+          && request.resource.data.createdByUid == resource.data.createdByUid
+          && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+          && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.reportDate == resource.data.reportDate
+          && request.resource.data.slot == resource.data.slot
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'odometerKm',
+              'note',
+              'photoStoragePath',
+              'photoDownloadUrl',
+              'driveFolderKey',
+              'updatedAt'
+            ])
+          && isNonNegWhole(request.resource.data.odometerKm)
+          && request.resource.data.odometerKm <= 9999999
+          && (
+            request.resource.data.note == null
+            || isValidString(request.resource.data.note, 1, 500)
+          )
+          && isValidString(request.resource.data.photoStoragePath, 1, 500)
+          && isValidString(request.resource.data.photoDownloadUrl, 8, 2000)
+          && request.resource.data.photoDownloadUrl.matches('https://.*')
+          && isValidString(request.resource.data.driveFolderKey, 1, 160)
+          && request.resource.data.updatedAt == request.time
+        );
 
       allow delete: if (isKameraman()
           && resource.data.createdByUid == request.auth.uid)

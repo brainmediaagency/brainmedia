@@ -1,15 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { DateInput } from '@/components/ui/DateInput'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { FileUploadStatus } from '@/components/ui/FileUploadStatus'
 import { FormField } from '@/components/ui/FormField'
+import { Input } from '@/components/ui/Input'
 import { MonthPicker } from '@/components/ui/MonthPicker'
 import { Modal } from '@/components/ui/Modal'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { Textarea } from '@/components/ui/Textarea'
+import { useAuth } from '@/features/auth/hooks/useAuth'
 import {
+  adminUpdateOdometerReading,
+  deleteOdometerReading,
   fetchOdometerReadingsInRange,
   subscribeAllOdometerReadings,
 } from '@/features/kameraman/services/odometerService'
@@ -33,6 +40,7 @@ import {
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
+import { driveUploadPhaseLabel } from '@/lib/driveUpload'
 import { mapAppError } from '@/lib/errors'
 
 function shiftDateOnly(dateOnly: string, deltaDays: number): string {
@@ -90,12 +98,17 @@ function StatBox({
 }
 
 export function FieldOpsPanel() {
+  const { profile, claims } = useAuth()
+  const role = claims?.role ?? profile?.role
+  const canManageReports = role === 'management' || role === 'coordinator'
+
   const [allReadings, setAllReadings] = useState<KameramanOdometerReading[]>([])
   const [reportDay, setReportDay] = useState(todayDateOnlyIstanbul)
   const [dayReportReadings, setDayReportReadings] = useState<
     KameramanOdometerReading[]
   >([])
   const [loadingDayReports, setLoadingDayReports] = useState(true)
+  const [dayRefreshKey, setDayRefreshKey] = useState(0)
   const [yearMonth, setYearMonth] = useState(currentYearMonth)
   const [monthDays, setMonthDays] = useState<KameramanDayKm[]>([])
   const [loadingMonthKm, setLoadingMonthKm] = useState(true)
@@ -114,6 +127,23 @@ export function FieldOpsPanel() {
     url: string
     title: string
   } | null>(null)
+  const [editTarget, setEditTarget] = useState<KameramanOdometerReading | null>(
+    null,
+  )
+  const [editKm, setEditKm] = useState('')
+  const [editNote, setEditNote] = useState('')
+  const [editFile, setEditFile] = useState<File | null>(null)
+  const [editPreview, setEditPreview] = useState<string | null>(null)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editUploadUi, setEditUploadUi] = useState<{
+    label: string
+    detail: string
+    percent: number
+  } | null>(null)
+  const [deleteTarget, setDeleteTarget] =
+    useState<KameramanOdometerReading | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const editFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     return subscribeAllOdometerReadings(
@@ -149,7 +179,7 @@ export function FieldOpsPanel() {
     return () => {
       cancelled = true
     }
-  }, [reportDay])
+  }, [reportDay, dayRefreshKey])
 
   useEffect(() => {
     let cancelled = false
@@ -226,6 +256,109 @@ export function FieldOpsPanel() {
     () => sumDayKm(reportDayPairs),
     [reportDayPairs],
   )
+
+  const reloadDay = () => setDayRefreshKey((k) => k + 1)
+
+  const openEdit = (item: KameramanOdometerReading) => {
+    setEditTarget(item)
+    setEditKm(String(item.odometerKm))
+    setEditNote(item.note ?? '')
+    setEditFile(null)
+    setEditPreview(item.photoDownloadUrl)
+    if (editFileRef.current) editFileRef.current.value = ''
+  }
+
+  const closeEdit = () => {
+    if (editPreview?.startsWith('blob:')) URL.revokeObjectURL(editPreview)
+    setEditTarget(null)
+    setEditKm('')
+    setEditNote('')
+    setEditFile(null)
+    setEditPreview(null)
+    setEditUploadUi(null)
+    if (editFileRef.current) editFileRef.current.value = ''
+  }
+
+  const onEditFileChange = (file: File | null) => {
+    if (editPreview?.startsWith('blob:')) URL.revokeObjectURL(editPreview)
+    if (!file) {
+      setEditFile(null)
+      setEditPreview(editTarget?.photoDownloadUrl ?? null)
+      if (editFileRef.current) editFileRef.current.value = ''
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      toast.error('Yalnızca görsel dosyaları yüklenebilir (PNG/JPG).')
+      return
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast.error('Görsel en fazla 8 MB olabilir.')
+      return
+    }
+    setEditFile(file)
+    setEditPreview(URL.createObjectURL(file))
+  }
+
+  const saveEdit = async () => {
+    if (!editTarget) return
+    const km = Number(editKm.replace(',', '.'))
+    if (!Number.isFinite(km) || km < 0) {
+      toast.error('Geçerli bir kadran km sayısı girin.')
+      return
+    }
+    setEditSaving(true)
+    if (editFile) {
+      setEditUploadUi({
+        label: 'Kadran görseli yükleniyor…',
+        detail: slotLabelTr(editTarget.slot),
+        percent: 0,
+      })
+    }
+    try {
+      await adminUpdateOdometerReading({
+        readingId: editTarget.id,
+        odometerKm: Math.floor(km),
+        note: editNote,
+        photoFile: editFile,
+        onUploadProgress: editFile
+          ? (progress) => {
+              setEditUploadUi({
+                label: driveUploadPhaseLabel(progress.phase),
+                detail: progress.fileName || slotLabelTr(editTarget.slot),
+                percent: Math.round(progress.ratio * 100),
+              })
+            }
+          : undefined,
+      })
+      toast.success(
+        `${editTarget.createdByNameSnapshot} · ${slotLabelTr(editTarget.slot)} güncellendi.`,
+      )
+      closeEdit()
+      reloadDay()
+    } catch (error) {
+      toast.error(mapAppError(error, 'Kadran raporu güncellenemedi.'))
+    } finally {
+      setEditSaving(false)
+      setEditUploadUi(null)
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteLoading(true)
+    try {
+      await deleteOdometerReading(deleteTarget.id)
+      toast.success(
+        `${deleteTarget.createdByNameSnapshot} · ${slotLabelTr(deleteTarget.slot)} silindi.`,
+      )
+      setDeleteTarget(null)
+      reloadDay()
+    } catch (error) {
+      toast.error(mapAppError(error, 'Kadran raporu silinemedi.'))
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -319,7 +452,7 @@ export function FieldOpsPanel() {
       <AccordionSection
         number="02"
         title="Kameraman raporları"
-        description="Tarihe göre sabah / akşam kadran görselleri ve günlük km farkı."
+        description="Tarihe göre sabah / akşam kadran görselleri ve günlük km farkı. Yönetim ve koordinatör düzenleyip silebilir."
         defaultOpen
       >
         <div className="mb-4 space-y-3">
@@ -462,6 +595,34 @@ export function FieldOpsPanel() {
                                 />
                               </button>
                             ) : null}
+                            {canManageReports ? (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => openEdit(item)}
+                                >
+                                  <Pencil
+                                    className="size-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Düzenle
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => setDeleteTarget(item)}
+                                >
+                                  <Trash2
+                                    className="size-3.5"
+                                    aria-hidden="true"
+                                  />
+                                  Sil
+                                </Button>
+                              </div>
+                            ) : null}
                           </>
                         ) : (
                           <p className="mt-2 text-sm text-text-secondary">
@@ -491,6 +652,115 @@ export function FieldOpsPanel() {
           />
         ) : null}
       </Modal>
+
+      <Modal
+        open={editTarget !== null}
+        onClose={() => {
+          if (!editSaving) closeEdit()
+        }}
+        title={
+          editTarget
+            ? `Kadran düzenle · ${editTarget.createdByNameSnapshot}`
+            : 'Kadran düzenle'
+        }
+        description={
+          editTarget
+            ? `${slotLabelTr(editTarget.slot)} · ${formatDateOnlyLongTr(editTarget.reportDate)}`
+            : undefined
+        }
+      >
+        {editTarget ? (
+          <div className="space-y-4">
+            <FormField label="Kadran km" htmlFor="admin-odometer-km" required>
+              <Input
+                id="admin-odometer-km"
+                inputMode="numeric"
+                value={editKm}
+                onChange={(e) =>
+                  setEditKm(e.target.value.replace(/[^\d]/g, ''))
+                }
+                disabled={editSaving}
+              />
+            </FormField>
+            <FormField label="Not" htmlFor="admin-odometer-note">
+              <Textarea
+                id="admin-odometer-note"
+                rows={2}
+                value={editNote}
+                onChange={(e) => setEditNote(e.target.value)}
+                disabled={editSaving}
+                maxLength={500}
+              />
+            </FormField>
+            <FormField label="Kadran görseli (opsiyonel)" htmlFor="admin-odometer-photo">
+              <input
+                ref={editFileRef}
+                id="admin-odometer-photo"
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/*"
+                className="block w-full text-sm text-text-secondary file:mr-3 file:rounded-md file:border-0 file:bg-surface-muted file:px-3 file:py-2 file:text-sm file:font-medium file:text-text-primary"
+                disabled={editSaving}
+                onChange={(e) =>
+                  onEditFileChange(e.target.files?.[0] ?? null)
+                }
+              />
+              <p className="mt-1 text-xs text-text-secondary">
+                Yeni görsel seçilmezse mevcut fotoğraf korunur.
+              </p>
+            </FormField>
+            {editPreview ? (
+              <img
+                src={editPreview}
+                alt="Kadran önizleme"
+                className="max-h-48 w-full rounded border border-border object-contain bg-surface-muted"
+              />
+            ) : null}
+            {editUploadUi ? (
+              <FileUploadStatus
+                label={editUploadUi.label}
+                detail={editUploadUi.detail}
+                percent={editUploadUi.percent}
+              />
+            ) : null}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={editSaving}
+                onClick={closeEdit}
+              >
+                Vazgeç
+              </Button>
+              <Button
+                type="button"
+                loading={editSaving}
+                disabled={editSaving}
+                onClick={() => void saveEdit()}
+              >
+                Kaydet
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => {
+          if (!deleteLoading) setDeleteTarget(null)
+        }}
+        onConfirm={() => void confirmDelete()}
+        title="Kadran raporu silinsin mi?"
+        description={
+          deleteTarget
+            ? `${deleteTarget.createdByNameSnapshot} · ${slotLabelTr(deleteTarget.slot)} · ${formatDateOnlyLongTr(deleteTarget.reportDate)} kaydı kalıcı olarak silinir.`
+            : undefined
+        }
+        confirmLabel="Sil"
+        cancelLabel="Vazgeç"
+        loading={deleteLoading}
+        destructive
+      />
     </div>
   )
 }
