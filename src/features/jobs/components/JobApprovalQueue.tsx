@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import type { JobDocument } from '@/features/jobs/types/job'
 import {
@@ -7,6 +8,7 @@ import {
 } from '@/features/jobs/services/jobService'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { Drawer } from '@/components/ui/Drawer'
 import { MobileDataCard } from '@/components/ui/MobileDataCard'
 import { PaginationControls } from '@/components/ui/PaginationControls'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -17,6 +19,7 @@ import { useClientPagination } from '@/hooks/useClientPagination'
 import { formatJobScheduleTr, formatDateTimeTr } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
 import { formatJobCreator, formatJobCreatorPrimary, formatJobCreatorSecondary } from '@/features/jobs/utils/formatJobCreator'
+import { ApprovedJobEditForm } from '@/features/jobs/components/ApprovedJobEditForm'
 import { JobReviewDrawer } from '@/features/jobs/components/JobReviewDrawer'
 import { mapAppError } from '@/lib/errors'
 
@@ -229,8 +232,9 @@ export function ReviewedJobsQueue({
   onLoadMore,
   onJobUpdated,
 }: ReviewedJobsQueueProps) {
-  const { profile, claims } = useAuth()
+  const { profile, claims, isOnline } = useAuth()
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
+  const [editingJob, setEditingJob] = useState<JobDocument | null>(null)
   const [forwardingId, setForwardingId] = useState<string | null>(null)
   const {
     page,
@@ -255,11 +259,11 @@ export function ReviewedJobsQueue({
   }, [jobs, selectedJobId])
 
   const actorRole = claims?.role ?? profile?.role
-  const canForward =
+  const canManageApproved =
     actorRole === 'management' || actorRole === 'coordinator'
 
   async function handleForward(job: JobDocument) {
-    if (!profile || !actorRole || !canForward) return
+    if (!profile || !actorRole || !canManageApproved) return
     setForwardingId(job.id)
     try {
       const updated = await forwardJobToReporter(job.id, {
@@ -354,22 +358,34 @@ export function ReviewedJobsQueue({
                     >
                       Detay
                     </Button>
-                    {canForward && job.status === 'approved' ? (
-                      job.forwardedToReporter ? (
-                        <Button type="button" size="sm" variant="ghost" disabled>
-                          İletildi
-                        </Button>
-                      ) : (
+                    {canManageApproved && job.status === 'approved' ? (
+                      <>
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => void handleForward(job)}
-                          loading={forwardingId === job.id}
-                          disabled={forwardingId !== null}
+                          variant="secondary"
+                          disabled={!isOnline || forwardingId !== null}
+                          onClick={() => setEditingJob(job)}
                         >
-                          Muhabire ilet
+                          <Pencil className="size-4" aria-hidden="true" />
+                          Düzenle
                         </Button>
-                      )
+                        {job.forwardedToReporter ? (
+                          <Button type="button" size="sm" variant="ghost" disabled>
+                            İletildi
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleForward(job)}
+                            loading={forwardingId === job.id}
+                            disabled={!isOnline || forwardingId !== null}
+                          >
+                            Muhabire ilet
+                          </Button>
+                        )}
+                      </>
                     ) : null}
                   </div>
                 </TableCell>
@@ -415,23 +431,35 @@ export function ReviewedJobsQueue({
                 >
                   Detay
                 </Button>
-                {canForward && job.status === 'approved' ? (
-                  job.forwardedToReporter ? (
-                    <Button type="button" size="sm" variant="ghost" className="w-full" disabled>
-                      İletildi
-                    </Button>
-                  ) : (
+                {canManageApproved && job.status === 'approved' ? (
+                  <>
                     <Button
                       type="button"
                       size="sm"
+                      variant="secondary"
                       className="w-full"
-                      onClick={() => void handleForward(job)}
-                      loading={forwardingId === job.id}
-                      disabled={forwardingId !== null}
+                      disabled={!isOnline || forwardingId !== null}
+                      onClick={() => setEditingJob(job)}
                     >
-                      Muhabire ilet
+                      Düzenle
                     </Button>
-                  )
+                    {job.forwardedToReporter ? (
+                      <Button type="button" size="sm" variant="ghost" className="w-full" disabled>
+                        İletildi
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => void handleForward(job)}
+                        loading={forwardingId === job.id}
+                        disabled={!isOnline || forwardingId !== null}
+                      >
+                        Muhabire ilet
+                      </Button>
+                    )}
+                  </>
                 ) : null}
               </div>
             }
@@ -470,6 +498,25 @@ export function ReviewedJobsQueue({
         mode="reviewed"
         onJobUpdated={onJobUpdated}
       />
+
+      <Drawer
+        open={editingJob !== null}
+        onClose={() => setEditingJob(null)}
+        title="İş kaydını düzenle"
+        description={editingJob?.companyName}
+        side="right"
+      >
+        {editingJob ? (
+          <ApprovedJobEditForm
+            job={editingJob}
+            onCancel={() => setEditingJob(null)}
+            onSuccess={(updated) => {
+              onJobUpdated?.(updated)
+              setEditingJob(null)
+            }}
+          />
+        ) : null}
+      </Drawer>
     </>
   )
 }
