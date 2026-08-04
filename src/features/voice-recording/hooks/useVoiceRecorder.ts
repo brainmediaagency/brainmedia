@@ -5,7 +5,11 @@ import {
   type ScreenWakeLock,
 } from '@/lib/screenWakeLock'
 
-export const MAX_RECORDING_MS = 30 * 60 * 1000
+/**
+ * Upper bound for a single take. `null` = unlimited (user stops manually).
+ * Soft OS limits (mic reclaim, tab sleep) still apply — see stream_ended.
+ */
+export const MAX_RECORDING_MS: number | null = null
 
 export type VoiceRecorderStatus =
   | 'idle'
@@ -28,6 +32,8 @@ export type VoiceRecording = {
   durationMs: number
   createdAt: number
 }
+
+export type VoiceStopReason = 'manual' | 'stream_ended'
 
 function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined
@@ -86,6 +92,21 @@ export function voiceRecorderErrorMessage(code: VoiceRecorderErrorCode): string 
   }
 }
 
+/** Pure helpers — unit-tested without MediaRecorder / push. */
+export function mediaRecorderStartArgs(): [] {
+  // Never pass timeslice: mobile engines often truncate after ~1–2 min.
+  return []
+}
+
+export function clampRecordingDurationMs(
+  elapsedMs: number,
+  maxMs: number | null = MAX_RECORDING_MS,
+): number {
+  const safe = Math.max(0, elapsedMs)
+  if (maxMs === null || !Number.isFinite(maxMs)) return safe
+  return Math.min(safe, maxMs)
+}
+
 export function downloadVoiceRecording(recording: VoiceRecording): void {
   const ext = extensionForMime(recording.mimeType)
   const stamp = new Date(recording.createdAt)
@@ -106,9 +127,7 @@ export function useVoiceRecorder() {
   const [elapsedMs, setElapsedMs] = useState(0)
   const [error, setError] = useState<VoiceRecorderErrorCode | null>(null)
   const [recording, setRecording] = useState<VoiceRecording | null>(null)
-  const [stoppedReason, setStoppedReason] = useState<
-    'manual' | 'max_duration' | 'stream_ended' | null
-  >(null)
+  const [stoppedReason, setStoppedReason] = useState<VoiceStopReason | null>(null)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -116,12 +135,9 @@ export function useVoiceRecorder() {
   const mimeTypeRef = useRef('audio/webm')
   const elapsedBaseRef = useRef(0)
   const segmentStartedAtRef = useRef<number | null>(null)
-  const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const recordingUrlRef = useRef<string | null>(null)
-  const stopReasonRef = useRef<'manual' | 'max_duration' | 'stream_ended'>(
-    'manual',
-  )
+  const stopReasonRef = useRef<VoiceStopReason>('manual')
   const aliveRef = useRef(true)
   const wakeLockRef = useRef<ScreenWakeLock | null>(null)
   /** Buffers finalization across React Strict Mode / drawer remounts. */
@@ -136,17 +152,6 @@ export function useVoiceRecorder() {
     const lock = wakeLockRef.current
     wakeLockRef.current = null
     void releaseScreenWakeLock(lock)
-  }, [])
-
-  const clearTimers = useCallback(() => {
-    if (maxTimerRef.current !== null) {
-      clearTimeout(maxTimerRef.current)
-      maxTimerRef.current = null
-    }
-    if (tickTimerRef.current !== null) {
-      clearInterval(tickTimerRef.current)
-      tickTimerRef.current = null
-    }
   }, [])
 
   const releaseStream = useCallback(() => {
@@ -191,30 +196,8 @@ export function useVoiceRecorder() {
     }, 250)
   }, [readElapsedMs, stopTick])
 
-  const scheduleMaxDurationStop = useCallback((remainingMs: number) => {
-    if (maxTimerRef.current !== null) {
-      clearTimeout(maxTimerRef.current)
-      maxTimerRef.current = null
-    }
-    maxTimerRef.current = setTimeout(() => {
-      stopReasonRef.current = 'max_duration'
-      const recorder = mediaRecorderRef.current
-      if (recorder && recorder.state !== 'inactive') {
-        try {
-          recorder.stop()
-        } catch {
-          /* ignore */
-        }
-      }
-    }, Math.max(0, remainingMs))
-  }, [])
-
   const finalizeRecording = useCallback(
-    (
-      blob: Blob,
-      durationMs: number,
-      reason: 'manual' | 'max_duration' | 'stream_ended',
-    ) => {
+    (blob: Blob, durationMs: number, reason: VoiceStopReason) => {
       clearRecordingUrl()
       const url = URL.createObjectURL(blob)
       recordingUrlRef.current = url
@@ -286,11 +269,10 @@ export function useVoiceRecorder() {
       }
 
       const finishFromRecorder = () => {
-        clearTimers()
         stopTick()
         releaseWakeLock()
         segmentStartedAtRef.current = null
-        const durationMs = Math.min(Math.max(0, readElapsedMs()), MAX_RECORDING_MS)
+        const durationMs = clampRecordingDurationMs(readElapsedMs())
         elapsedBaseRef.current = durationMs
         const blob = new Blob(chunksRef.current, {
           type: mimeTypeRef.current,
@@ -310,7 +292,6 @@ export function useVoiceRecorder() {
       recorder.onstop = finishFromRecorder
 
       recorder.onerror = () => {
-        clearTimers()
         stopTick()
         releaseWakeLock()
         releaseStream()
@@ -342,11 +323,10 @@ export function useVoiceRecorder() {
       segmentStartedAtRef.current = Date.now()
       stopReasonRef.current = 'manual'
       setElapsedMs(0)
-      // No timeslice argument — full buffer until stop (mobile-safe).
-      recorder.start()
+      recorder.start(...mediaRecorderStartArgs())
       setStatus('recording')
       startTick()
-      scheduleMaxDurationStop(MAX_RECORDING_MS)
+      // No automatic max-duration stop — recording is unlimited until manual stop.
       void acquireWakeLock()
     } catch (err) {
       releaseWakeLock()
@@ -358,12 +338,10 @@ export function useVoiceRecorder() {
   }, [
     acquireWakeLock,
     clearRecordingUrl,
-    clearTimers,
     finalizeRecording,
     readElapsedMs,
     releaseStream,
     releaseWakeLock,
-    scheduleMaxDurationStop,
     startTick,
     stopTick,
   ])
@@ -378,10 +356,6 @@ export function useVoiceRecorder() {
     segmentStartedAtRef.current = null
     stopTick()
     releaseWakeLock()
-    if (maxTimerRef.current !== null) {
-      clearTimeout(maxTimerRef.current)
-      maxTimerRef.current = null
-    }
     setElapsedMs(elapsedBaseRef.current)
     setStatus('paused')
   }, [readElapsedMs, releaseWakeLock, stopTick])
@@ -395,15 +369,13 @@ export function useVoiceRecorder() {
     recorder.resume()
     setStatus('recording')
     startTick()
-    scheduleMaxDurationStop(MAX_RECORDING_MS - elapsedBaseRef.current)
     void acquireWakeLock()
-  }, [acquireWakeLock, scheduleMaxDurationStop, startTick])
+  }, [acquireWakeLock, startTick])
 
   const stop = useCallback(() => {
     const recorder = mediaRecorderRef.current
     if (!recorder || recorder.state === 'inactive') return
     stopReasonRef.current = 'manual'
-    clearTimers()
     if (segmentStartedAtRef.current !== null) {
       elapsedBaseRef.current = readElapsedMs()
       segmentStartedAtRef.current = null
@@ -418,7 +390,7 @@ export function useVoiceRecorder() {
       /* optional */
     }
     recorder.stop()
-  }, [clearTimers, readElapsedMs, stopTick])
+  }, [readElapsedMs, stopTick])
 
   const clearRecording = useCallback(() => {
     clearRecordingUrl()
@@ -434,7 +406,6 @@ export function useVoiceRecorder() {
     return () => {
       aliveRef.current = false
       sessionEpochRef.current += 1
-      clearTimers()
       stopTick()
       const recorder = mediaRecorderRef.current
       if (recorder && recorder.state !== 'inactive') {
@@ -452,7 +423,7 @@ export function useVoiceRecorder() {
       releaseWakeLock()
       clearRecordingUrl()
     }
-  }, [clearRecordingUrl, clearTimers, releaseStream, releaseWakeLock, stopTick])
+  }, [clearRecordingUrl, releaseStream, releaseWakeLock, stopTick])
 
   /** Browsers drop the wake lock while hidden — take it back on return. */
   useEffect(() => {

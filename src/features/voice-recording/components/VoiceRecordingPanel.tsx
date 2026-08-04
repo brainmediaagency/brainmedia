@@ -9,7 +9,6 @@ import { useAuth } from '@/features/auth/hooks/useAuth'
 import { saveVoiceRecording } from '@/features/voice-recording/services/voiceRecordingService'
 import {
   downloadVoiceRecording,
-  MAX_RECORDING_MS,
   useVoiceRecorder,
   voiceRecorderErrorMessage,
   type VoiceRecorderStatus,
@@ -73,8 +72,6 @@ export function VoiceRecordingPanel({
   } = useVoiceRecorder()
 
   const isActive = status === 'recording' || status === 'paused'
-  const remainingMs = Math.max(0, MAX_RECORDING_MS - elapsedMs)
-  const nearLimit = isActive && remainingMs <= 60_000
   const canSaveToSystem =
     Boolean(recording && profile && companyName.trim()) && isDriveUploadConfigured()
 
@@ -146,18 +143,6 @@ export function VoiceRecordingPanel({
           )}
         >
           {voiceRecorderErrorMessage(error)}
-        </p>
-      ) : null}
-
-      {stoppedReason === 'max_duration' ? (
-        <p
-          role="status"
-          className={cn(
-            'rounded-[var(--radius-md)] border border-brand-cyan/30 bg-brand-cyan/5 text-text-primary',
-            compact ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm',
-          )}
-        >
-          Maksimum süre (30 dakika) doldu. Kayıt otomatik olarak durduruldu.
         </p>
       ) : null}
 
@@ -303,7 +288,7 @@ export function VoiceRecordingPanel({
           <div className="min-w-0 space-y-0.5">
             <p className="text-sm font-medium text-text-primary">Ses kaydı</p>
             <p className="text-xs text-text-secondary">
-              En fazla 30 dk · Kaydet = sisteme yaz
+              Süre sınırı yok · Kaydet = sisteme yaz
             </p>
           </div>
           <div
@@ -338,11 +323,6 @@ export function VoiceRecordingPanel({
             >
               {formatRecordingClock(isActive || status === 'stopped' ? elapsedMs : 0)}
             </p>
-            {nearLimit ? (
-              <p className="text-[11px] text-warning">
-                Kalan {formatRecordingClock(remainingMs)}
-              </p>
-            ) : null}
           </div>
           {controls}
         </div>
@@ -356,7 +336,7 @@ export function VoiceRecordingPanel({
     <AccordionSection
       number={sectionNumber}
       title="Ses kaydı"
-      description="En fazla 30 dakika. Kaydet ile Google Drive’a ve listeye yazılır."
+      description="Süre sınırı yok. Kaydet ile Google Drive’a ve listeye yazılır."
       defaultOpen
     >
       <div className="space-y-5">
@@ -379,10 +359,7 @@ export function VoiceRecordingPanel({
                 {formatRecordingClock(isActive || status === 'stopped' ? elapsedMs : 0)}
               </p>
               <p className="text-xs text-text-secondary">
-                Üst sınır {formatRecordingClock(MAX_RECORDING_MS)}
-                {nearLimit
-                  ? ` · kalan ${formatRecordingClock(remainingMs)}`
-                  : null}
+                Durdurana kadar kayıt devam eder
               </p>
             </div>
 
