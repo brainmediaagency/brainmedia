@@ -54,6 +54,57 @@ export function formatDateOnlyLongTr(dateOnly: string): string {
   return formatInTimeZone(instant, COMPANY_TIMEZONE, 'd MMMM yyyy', { locale: tr })
 }
 
+/** `yyyy-MM` (Istanbul calendar month). */
+export function isValidYearMonth(value: string): boolean {
+  if (!/^\d{4}-\d{2}$/.test(value)) return false
+  const month = Number(value.slice(5, 7))
+  return month >= 1 && month <= 12
+}
+
+/** Istanbul wall-clock `yyyy-MM` for the current month. */
+export function currentYearMonthIstanbul(now: Date = new Date()): string {
+  return todayDateOnlyIstanbul(now).slice(0, 7)
+}
+
+/**
+ * `yyyy-MM` → "Ağustos 2026"
+ * Invalid input returns the raw string.
+ */
+export function formatYearMonthLongTr(yearMonth: string): string {
+  if (!isValidYearMonth(yearMonth)) return yearMonth
+  const instant = fromZonedTime(`${yearMonth}-01T12:00:00`, COMPANY_TIMEZONE)
+  return formatInTimeZone(instant, COMPANY_TIMEZONE, 'MMMM yyyy', { locale: tr })
+}
+
+/**
+ * Human range label for a calendar month: "1 – 31 Ağustos 2026"
+ */
+export function formatYearMonthRangeTr(yearMonth: string): string {
+  if (!isValidYearMonth(yearMonth)) return yearMonth
+  const [y, m] = yearMonth.split('-').map(Number)
+  const lastDay = new Date(Date.UTC(y!, m!, 0)).getUTCDate()
+  const start = fromZonedTime(`${yearMonth}-01T12:00:00`, COMPANY_TIMEZONE)
+  const end = fromZonedTime(
+    `${yearMonth}-${String(lastDay).padStart(2, '0')}T12:00:00`,
+    COMPANY_TIMEZONE,
+  )
+  const startDay = formatInTimeZone(start, COMPANY_TIMEZONE, 'd', { locale: tr })
+  const endLabel = formatInTimeZone(end, COMPANY_TIMEZONE, 'd MMMM yyyy', {
+    locale: tr,
+  })
+  return `${startDay} – ${endLabel}`
+}
+
+/** Shift `yyyy-MM` by whole months (negative = past). */
+export function shiftYearMonth(yearMonth: string, deltaMonths: number): string {
+  if (!isValidYearMonth(yearMonth)) return yearMonth
+  const [y, m] = yearMonth.split('-').map(Number)
+  const date = new Date(Date.UTC(y!, (m ?? 1) - 1 + deltaMonths, 1))
+  const yy = date.getUTCFullYear()
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0')
+  return `${yy}-${mm}`
+}
+
 export function formatDurationMinutes(minutes: number): string {
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60

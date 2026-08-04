@@ -268,6 +268,30 @@ export async function uploadFileToDrive(input: {
   return result
 }
 
+/**
+ * Soft-delete a Google Drive file by id (trash). Best-effort for photo replace.
+ * Failures are swallowed by callers so the primary write is not blocked.
+ */
+export async function trashDriveFile(fileId: string): Promise<void> {
+  const id = fileId.trim()
+  if (!id || id.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    return
+  }
+  if (!isSheetsWebhookConfigured()) return
+
+  try {
+    const parsed = await postWebhookForm({
+      action: 'trashDriveFile',
+      fileId: id,
+    })
+    if (!parsed.ok) {
+      console.warn('[trashDriveFile]', parsed.error || parsed.detail || 'failed')
+    }
+  } catch (error) {
+    console.warn('[trashDriveFile]', error)
+  }
+}
+
 export function isDriveUploadConfigured(): boolean {
   return isSheetsWebhookConfigured()
 }

@@ -19,7 +19,7 @@ import { shiftDateOnlyDays } from '@/features/media-planning/services/dailyRegio
 const META_PATH = ['appMeta', 'shootingCalendarNotify'] as const
 
 /** İstanbul wall-clock hour when the shoot calendar evening notify may fire. */
-export const SHOOTING_CALENDAR_NOTIFY_HOUR = 0
+export const SHOOTING_CALENDAR_NOTIFY_HOUR = 21
 
 export type ShootingCalendarNotifyResult =
   | { skipped: true; reason: string; date?: string }
@@ -27,7 +27,6 @@ export type ShootingCalendarNotifyResult =
 
 /**
  * Milliseconds until the next İstanbul occurrence of `hour:00`.
- * For hour 0 this is the next calendar midnight.
  */
 export function msUntilNextIstanbulHour(
   hour: number,
@@ -47,16 +46,12 @@ export function isAtOrAfterIstanbulHour(
   hour: number,
   now: Date = new Date(),
 ): boolean {
-  if (hour === 0) {
-    // Midnight window: fire from 00:00 onward on the calendar day (catch-up all day).
-    return true
-  }
   const currentHour = Number(formatInTimeZone(now, COMPANY_TIMEZONE, 'H'))
   return currentHour >= hour
 }
 
 /**
- * Once per Istanbul day from midnight onward, if any forwarded open (approved)
+ * Once per Istanbul day from 21:00 onward, if any forwarded open (approved)
  * jobs exist for today's planned shoot date, push muhabir + kameraman.
  * Dedup via appMeta/shootingCalendarNotify.lastNotifiedDate.
  */

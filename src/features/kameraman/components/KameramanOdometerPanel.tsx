@@ -125,17 +125,19 @@ export function KameramanOdometerPanel() {
       toast.error('Geçerli bir kadran km sayısı girin.')
       return
     }
-    if (!file) {
-      toast.error(editingId ? 'Güncellemek için yeni kadran görseli seçin.' : 'Kadran görseli zorunludur.')
+    if (!editingId && !file) {
+      toast.error('Kadran görseli zorunludur.')
       return
     }
 
     setSubmitting(true)
-    setUploadUi({
-      label: 'Kadran görseli yükleniyor…',
-      detail: slotLabelTr(slot),
-      percent: 0,
-    })
+    if (file) {
+      setUploadUi({
+        label: 'Kadran görseli yükleniyor…',
+        detail: slotLabelTr(slot),
+        percent: 0,
+      })
+    }
     try {
       await upsertOdometerReading({
         reportDate: today,
@@ -147,13 +149,15 @@ export function KameramanOdometerPanel() {
         createdByNameSnapshot: profile.fullName,
         createdByEmailSnapshot: profile.email,
         existingId: editingId,
-        onUploadProgress: (progress) => {
-          setUploadUi({
-            label: driveUploadPhaseLabel(progress.phase),
-            detail: progress.fileName || slotLabelTr(slot),
-            percent: Math.round(progress.ratio * 100),
-          })
-        },
+        onUploadProgress: file
+          ? (progress) => {
+              setUploadUi({
+                label: driveUploadPhaseLabel(progress.phase),
+                detail: progress.fileName || slotLabelTr(slot),
+                percent: Math.round(progress.ratio * 100),
+              })
+            }
+          : undefined,
       })
       toast.success(
         editingId
@@ -218,7 +222,11 @@ export function KameramanOdometerPanel() {
             />
           </FormField>
 
-          <FormField label="Kadran görseli" htmlFor="km-photo" required>
+          <FormField
+            label="Kadran görseli"
+            htmlFor="km-photo"
+            required={!editingId}
+          >
             <input
               ref={inputRef}
               id="km-photo"
@@ -228,6 +236,11 @@ export function KameramanOdometerPanel() {
               disabled={submitting}
               onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
             />
+            {editingId ? (
+              <p className="mt-1 text-xs text-text-secondary">
+                Yeni görsel seçmezseniz mevcut kadran fotoğrafı korunur; yalnızca km/not güncellenir.
+              </p>
+            ) : null}
           </FormField>
 
           {preview ? (

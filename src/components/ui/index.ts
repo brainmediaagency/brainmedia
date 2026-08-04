@@ -14,6 +14,7 @@ export { Input, type InputProps } from '@/components/ui/Input'
 export { MetricCard, type MetricAccent, type MetricCardProps } from '@/components/ui/MetricCard'
 export { MobileDataCard, type MobileDataCardProps, type MobileDataCardRow } from '@/components/ui/MobileDataCard'
 export { Modal, type ModalProps } from '@/components/ui/Modal'
+export { MonthPicker, type MonthPickerProps } from '@/components/ui/MonthPicker'
 export { PageHeader, type PageHeaderProps } from '@/components/ui/PageHeader'
 export {
   PaginationControls,
