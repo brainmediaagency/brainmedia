@@ -266,6 +266,11 @@ export type UpdatePendingJobInput = {
   agreedAmountKurus: number
 }
 
+/**
+ * Content edit for pending (owner / coord / mgmt) or approved (coord / mgmt only).
+ * Status is never changed — rescheduling approved jobs updates plannedExecutionDate
+ * so the job re-slots onto that day/time on calendars and leaves Çekim Durumu when future.
+ */
 export async function updatePendingJob(
   input: UpdatePendingJobInput,
 ): Promise<JobDocument> {
@@ -280,8 +285,25 @@ export async function updatePendingJob(
     throw new UserFacingError('İş kaydı bulunamadı.')
   }
   const job = snap.data()
-  if (job.status !== 'pending') {
-    throw new UserFacingError('Yalnızca konfirme bekleyen işler düzenlenebilir.')
+  if (job.status !== 'pending' && job.status !== 'approved') {
+    throw new UserFacingError(
+      'Yalnızca konfirme bekleyen veya konfirme işler düzenlenebilir.',
+    )
+  }
+
+  const planned = input.plannedExecutionDate.trim()
+  const acquired = input.acquiredDate.trim()
+  if (job.status === 'approved') {
+    if (!isValidDateTimeLocal(planned)) {
+      throw new UserFacingError(
+        'Konfirme işlerde planlanan çekim tarihi ve saati gereklidir.',
+      )
+    }
+  }
+  if (!isJobScheduleOnOrAfter(planned, acquired)) {
+    throw new UserFacingError(
+      'Planlanan çekim, iş alım tarihinden önce olamaz.',
+    )
   }
 
   await updateDoc(ref, {
@@ -299,8 +321,8 @@ export async function updatePendingJob(
     district: input.district,
     fullAddress: input.fullAddress.trim(),
     instagram: input.instagram?.trim() ? input.instagram.trim() : null,
-    acquiredDate: input.acquiredDate,
-    plannedExecutionDate: input.plannedExecutionDate,
+    acquiredDate: acquired,
+    plannedExecutionDate: planned,
     agreedAmountKurus: input.agreedAmountKurus,
     updatedAt: serverTimestamp(),
   })

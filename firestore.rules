@@ -799,6 +799,40 @@ service cloud.firestore {
         && isJobSchedule(request.resource.data.acquiredDate)
         && isJobSchedule(request.resource.data.plannedExecutionDate)
         && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
+
+      // Approved content edit — coordinator / management only (Çekim Durumu reschedule).
+      // Keeps status approved; plannedExecutionDate may move the job to another day/time.
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.statusVersion == resource.data.statusVersion
+        && isCoordinatorOrManagement()
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'companyName', 'companyNameNormalized', 'contactPersonName', 'contactPhone',
+            'contactCount', 'contacts', 'province', 'district', 'fullAddress', 'instagram',
+            'acquiredDate', 'plannedExecutionDate', 'agreedAmountKurus', 'updatedAt'
+          ])
+        && isValidString(request.resource.data.companyName, 2, 120)
+        && isValidString(request.resource.data.companyNameNormalized, 2, 120)
+        && isValidString(request.resource.data.contactPersonName, 2, 100)
+        && isValidString(request.resource.data.contactPhone, 10, 20)
+        && request.resource.data.contactCount in [1, 2, 3]
+        && request.resource.data.contacts is list
+        && request.resource.data.contacts.size() == request.resource.data.contactCount
+        && isValidJobContacts(request.resource.data.contacts)
+        && request.resource.data.contactPersonName == request.resource.data.contacts[0].name
+        && request.resource.data.contactPhone == request.resource.data.contacts[0].mobilePhone
+        && isValidString(request.resource.data.province, 2, 50)
+        && isValidString(request.resource.data.district, 2, 50)
+        && isValidString(request.resource.data.fullAddress, 10, 500)
+        && (request.resource.data.instagram == null
+          || isValidString(request.resource.data.instagram, 1, 100))
+        && isPosWhole(request.resource.data.agreedAmountKurus)
+        && isJobSchedule(request.resource.data.acquiredDate)
+        && isJobScheduleDateTime(request.resource.data.plannedExecutionDate)
+        && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
+
       // Reviewer status transitions — status checks FIRST (budget), then role bump.
       // pending → rejected (reddet)
       allow update: if resource.data.status == 'pending'
