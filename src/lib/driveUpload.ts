@@ -16,6 +16,7 @@ export type DriveUploadFolder =
   | 'z-reports'
   | 'voice-recordings'
   | 'hr-reports'
+  | 'kameraman-km'
 
 export type DriveUploadProgress = {
   phase: 'encoding' | 'uploading' | 'finishing'
@@ -188,6 +189,11 @@ export async function uploadFileToDrive(input: {
   fileName: string
   mimeType: string
   folder: DriveUploadFolder
+  /**
+   * Optional nested folder under the feature root
+   * (e.g. "Ali_Veli_2026-05-19" under Kameraman KM Raporları).
+   */
+  folderPath?: string
   onProgress?: (progress: DriveUploadProgress) => void
 }): Promise<DriveUploadResult> {
   const url = getSheetsWebhookUrl()
@@ -220,6 +226,8 @@ export async function uploadFileToDrive(input: {
     fileName: input.fileName,
   })
 
+  const folderPath = input.folderPath?.trim() || ''
+
   // no-cors avoids Safari OPTIONS preflight (Apps Script returns 405).
   await fetch(url, {
     method: 'POST',
@@ -229,6 +237,7 @@ export async function uploadFileToDrive(input: {
       action: 'uploadFile',
       idToken,
       folder: input.folder,
+      ...(folderPath ? { folderPath } : {}),
       fileName: input.fileName,
       mimeType: input.mimeType,
       base64,

@@ -8,6 +8,7 @@ import { MonthlyStatsPanel } from '@/features/stats/components/MonthlyStatsPanel
 import { SheetsExcelPanel } from '@/features/sheets/components/SheetsExcelPanel'
 import { VoiceRecordingsListPanel } from '@/features/voice-recording/components/VoiceRecordingsListPanel'
 import { RegionPlannerPanel } from '@/features/media-planning/components/RegionPlannerPanel'
+import { FieldOpsPanel } from '@/features/kameraman/components/FieldOpsPanel'
 import { usePageTab } from '@/hooks/usePageTab'
 
 const TAB_IDS = COORDINATOR_SECTIONS.map((section) => section.id)
@@ -37,6 +38,7 @@ export function CoordinatorPage() {
         {tab === 'regions' && <RegionPlannerPanel />}
         {tab === 'voice' && <VoiceRecordingsListPanel sectionNumber="01" />}
         {tab === 'cash' && <CashRegisterPanel sectionNumber={1} />}
+        {tab === 'field-ops' && <FieldOpsPanel />}
         {tab === 'stats' && <MonthlyStatsPanel sectionNumber="01" />}
         {tab === 'excel' && <SheetsExcelPanel />}
       </div>

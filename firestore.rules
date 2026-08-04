@@ -1727,6 +1727,85 @@ service cloud.firestore {
         || isCoordinatorOrManagement();
     }
 
+    // ---------- kameramanOdometerReadings (Drive PNG + manual km) ----------
+    match /kameramanOdometerReadings/{readingId} {
+      allow read: if isAuthenticated()
+        && (
+          resource.data.createdByUid == request.auth.uid
+          || isCoordinatorOrManagement()
+        );
+
+      allow create: if isKameraman()
+        && request.resource.data.keys().hasOnly([
+          'reportDate',
+          'slot',
+          'odometerKm',
+          'note',
+          'photoStoragePath',
+          'photoDownloadUrl',
+          'driveFolderKey',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdByEmailSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && request.resource.data.createdByEmailSnapshot == userDoc(request.auth.uid).email
+        && isDateOnly(request.resource.data.reportDate)
+        && request.resource.data.slot in ['morning', 'evening']
+        && request.resource.data.odometerKm is int
+        && request.resource.data.odometerKm >= 0
+        && request.resource.data.odometerKm <= 9999999
+        && (
+          request.resource.data.note == null
+          || isValidString(request.resource.data.note, 1, 500)
+        )
+        && isValidString(request.resource.data.photoStoragePath, 1, 500)
+        && isValidString(request.resource.data.photoDownloadUrl, 8, 2000)
+        && request.resource.data.photoDownloadUrl.matches('https://.*')
+        && isValidString(request.resource.data.driveFolderKey, 1, 160)
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && isValidString(request.resource.data.createdByEmailSnapshot, 3, 254)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isKameraman()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.reportDate == resource.data.reportDate
+        && request.resource.data.slot == resource.data.slot
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'odometerKm',
+            'note',
+            'photoStoragePath',
+            'photoDownloadUrl',
+            'driveFolderKey',
+            'updatedAt'
+          ])
+        && request.resource.data.odometerKm is int
+        && request.resource.data.odometerKm >= 0
+        && request.resource.data.odometerKm <= 9999999
+        && (
+          request.resource.data.note == null
+          || isValidString(request.resource.data.note, 1, 500)
+        )
+        && isValidString(request.resource.data.photoStoragePath, 1, 500)
+        && isValidString(request.resource.data.photoDownloadUrl, 8, 2000)
+        && request.resource.data.photoDownloadUrl.matches('https://.*')
+        && isValidString(request.resource.data.driveFolderKey, 1, 160)
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if (isKameraman()
+          && resource.data.createdByUid == request.auth.uid)
+        || isCoordinatorOrManagement();
+    }
+
     // ---------- voiceRecordings (Drive-backed; no Firebase Storage) ----------
     match /voiceRecordings/{recordingId} {
       allow read: if isCoordinatorOrManagement();
