@@ -35,6 +35,7 @@ import { notifyManagement, notifyUser } from '@/features/notifications/services/
 import {
   isJobScheduleOnOrAfter,
   isJobSchedulePast,
+  isValidDateOnly,
   isValidDateTimeLocal,
 } from '@/lib/date'
 import type { UserRole } from '@/config/roles'
@@ -991,7 +992,79 @@ export function subscribeAllPendingJobs(
 /** Cap for schedule calendar fetch; UI shows truncation when hit. */
 export const SCHEDULE_JOBS_FETCH_LIMIT = 500
 
-/** Operational jobs for daily hour calendar (higher limit than approval queues). */
+/** Next calendar day after a `yyyy-MM-dd` (UTC arithmetic — safe for date-only). */
+export function nextDateOnly(dateOnly: string): string {
+  const [y, m, d] = dateOnly.split('-').map(Number)
+  const date = new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1))
+  date.setUTCDate(date.getUTCDate() + 1)
+  const yy = date.getUTCFullYear()
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(date.getUTCDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+/**
+ * Calendar day string for a job (`yyyy-MM-dd`).
+ * Works for date-only and datetime-local `plannedExecutionDate` values.
+ */
+export function jobPlannedDay(job: Pick<JobDocument, 'plannedExecutionDate'>): string {
+  const raw = String(job.plannedExecutionDate ?? '').trim()
+  if (raw.length >= 10) return raw.slice(0, 10)
+  return ''
+}
+
+/**
+ * Jobs whose planned shoot falls on `day` (date-only or same-day datetime).
+ * Used by the hour calendar so rescheduled jobs always land on the chosen day
+ * even when they fall outside the “recently updated” window of the broad feed.
+ */
+export function subscribeJobsForCalendarDay(
+  day: string,
+  scope: 'operations' | 'reporter',
+  onData: (
+    jobs: JobDocument[],
+    meta?: { truncated: boolean; fetchLimit: number },
+  ) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe {
+  if (!isValidDateOnly(day)) {
+    onData([], { truncated: false, fetchLimit: 0 })
+    return () => {}
+  }
+
+  const dayEnd = nextDateOnly(day)
+  const q =
+    scope === 'reporter'
+      ? query(
+          jobsCollection(),
+          where('status', '==', 'approved'),
+          where('forwardedToReporter', '==', true),
+          where('plannedExecutionDate', '>=', day),
+          where('plannedExecutionDate', '<', dayEnd),
+          orderBy('plannedExecutionDate', 'asc'),
+          limit(SCHEDULE_JOBS_FETCH_LIMIT),
+        )
+      : query(
+          jobsCollection(),
+          where('status', 'in', ['approved', 'shot', 'cancelled']),
+          where('plannedExecutionDate', '>=', day),
+          where('plannedExecutionDate', '<', dayEnd),
+          orderBy('plannedExecutionDate', 'asc'),
+          limit(SCHEDULE_JOBS_FETCH_LIMIT),
+        )
+
+  return onSnapshot(
+    q,
+    (snap) =>
+      onData(snap.docs.map((d) => d.data()), {
+        truncated: snap.docs.length >= SCHEDULE_JOBS_FETCH_LIMIT,
+        fetchLimit: SCHEDULE_JOBS_FETCH_LIMIT,
+      }),
+    (err) => onError?.(err),
+  )
+}
+
+/** Operational jobs feed (recently updated) — other-day chips / bulk tools. */
 export function subscribeScheduleJobs(
   onData: (jobs: JobDocument[], meta?: { truncated: boolean; fetchLimit: number }) => void,
   onError?: (error: Error) => void,
