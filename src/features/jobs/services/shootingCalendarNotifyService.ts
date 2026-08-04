@@ -11,6 +11,7 @@ import {
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz'
 import { COMPANY_TIMEZONE } from '@/config/roles'
 import { todayDateOnlyIstanbul } from '@/lib/date'
+import { nextDateOnly } from '@/features/jobs/services/jobService'
 import { getDb } from '@/lib/firebase/firestore'
 import { sendOneSignalPush } from '@/features/notifications/services/oneSignalPush'
 import { shiftDateOnlyDays } from '@/features/media-planning/services/dailyRegionService'
@@ -72,12 +73,16 @@ export async function runDueShootingCalendarNotify(actor: {
   }
 
   const today = todayDateOnlyIstanbul()
+  const dayEnd = nextDateOnly(today)
+  // Equality on date-only fails for datetime-local values (`yyyy-MM-ddTHH:mm`).
+  // Use half-open range so both legacy date-only and approve/edit timestamps match.
   const jobsSnap = await getDocs(
     query(
       collection(getDb(), 'jobs'),
       where('status', '==', 'approved'),
       where('forwardedToReporter', '==', true),
-      where('plannedExecutionDate', '==', today),
+      where('plannedExecutionDate', '>=', today),
+      where('plannedExecutionDate', '<', dayEnd),
       limit(50),
     ),
   )

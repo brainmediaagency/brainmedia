@@ -6,7 +6,10 @@ import { toast } from 'sonner'
 import { z } from 'zod'
 import turkeyLocations from '@/data/turkeyLocations.json'
 import type { JobDocument } from '@/features/jobs/types/job'
-import { updatePendingJob } from '@/features/jobs/services/jobService'
+import {
+  jobPlannedDay,
+  updatePendingJob,
+} from '@/features/jobs/services/jobService'
 import {
   SHEET_SON_DURUM,
   upsertJobRowToSheet,
@@ -207,6 +210,7 @@ export function ApprovedJobEditForm({
         }
       })
 
+      const previousDay = jobPlannedDay(job)
       const plannedExecutionDate = combineJobDateAndTime(
         values.plannedDate,
         values.plannedTime,
@@ -226,7 +230,14 @@ export function ApprovedJobEditForm({
         agreedAmountKurus: tryToKurus(values.agreedAmount),
       })
 
-      toast.success('İş kaydı güncellendi.')
+      const newDay = jobPlannedDay(updated)
+      if (previousDay && newDay && previousDay !== newDay) {
+        toast.success(
+          `İş kaydı güncellendi · çekim takvimi ${newDay} gününe taşındı.`,
+        )
+      } else {
+        toast.success('İş kaydı güncellendi.')
+      }
       onSuccess(updated)
 
       try {

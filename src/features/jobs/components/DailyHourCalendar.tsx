@@ -9,7 +9,9 @@ import { FormField } from '@/components/ui/FormField'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import {
+  jobPlannedDay,
   subscribeApprovedOpenJobs,
+  subscribeJobsForCalendarDay,
   subscribeScheduleJobs,
 } from '@/features/jobs/services/jobService'
 import type { JobDocument } from '@/features/jobs/types/job'
@@ -28,7 +30,7 @@ const HOUR_START = 9
 const HOUR_END = 21 // inclusive full hours 09:00 … 21:00
 
 function jobDay(job: JobDocument): string {
-  return normalizeJobSchedule(job.plannedExecutionDate).slice(0, 10)
+  return jobPlannedDay(job)
 }
 
 function jobHour(job: JobDocument): number {
@@ -184,7 +186,10 @@ export function DailyHourCalendar({
   const [day, setDay] = useState(
     () => initialDay || todayDateOnlyIstanbul(),
   )
-  const [jobs, setJobs] = useState<JobDocument[]>([])
+  /** Jobs planned for the selected day (day-scoped Firestore query). */
+  const [dayJobsRaw, setDayJobsRaw] = useState<JobDocument[]>([])
+  /** Broader feed — used only for "other days with work" chips + auto-jump. */
+  const [directoryJobs, setDirectoryJobs] = useState<JobDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [fetchTruncated, setFetchTruncated] = useState(false)
   const [fetchLimit, setFetchLimit] = useState(0)
@@ -194,24 +199,15 @@ export function DailyHourCalendar({
     if (initialDay) setDay(initialDay)
   }, [initialDay])
 
+  // Primary: query this calendar day so rescheduled jobs always land here.
   useEffect(() => {
     setLoading(true)
     setFetchTruncated(false)
-    if (isReporterScope) {
-      return subscribeApprovedOpenJobs(
-        (next) => {
-          setJobs(next)
-          setLoading(false)
-        },
-        (error) => {
-          setLoading(false)
-          toast.error(mapAppError(error, 'Takvim işleri yüklenemedi.'))
-        },
-      )
-    }
-    return subscribeScheduleJobs(
+    return subscribeJobsForCalendarDay(
+      day,
+      isReporterScope ? 'reporter' : 'operations',
       (next, meta) => {
-        setJobs(next)
+        setDayJobsRaw(next)
         setFetchTruncated(meta?.truncated === true)
         setFetchLimit(meta?.fetchLimit ?? 0)
         setLoading(false)
@@ -220,6 +216,20 @@ export function DailyHourCalendar({
         setLoading(false)
         toast.error(mapAppError(error, 'Takvim işleri yüklenemedi.'))
       },
+    )
+  }, [day, isReporterScope])
+
+  // Secondary: recent/open jobs for other-day shortcuts + first-load jump.
+  useEffect(() => {
+    if (isReporterScope) {
+      return subscribeApprovedOpenJobs(
+        (next) => setDirectoryJobs(next),
+        () => setDirectoryJobs([]),
+      )
+    }
+    return subscribeScheduleJobs(
+      (next) => setDirectoryJobs(next),
+      () => setDirectoryJobs([]),
     )
   }, [isReporterScope])
 
@@ -230,38 +240,38 @@ export function DailyHourCalendar({
    */
   useEffect(() => {
     if (loading || didAutoJumpRef.current || initialDay) return
-    if (!isReporterScope || jobs.length === 0) return
+    if (!isReporterScope || directoryJobs.length === 0) return
 
     const today = todayDateOnlyIstanbul()
     if (day !== today) return
-    if (jobs.some((job) => jobDay(job) === today)) return
+    if (directoryJobs.some((job) => jobDay(job) === today)) return
 
-    const days = [...new Set(jobs.map(jobDay))].sort()
+    const days = [...new Set(directoryJobs.map(jobDay).filter(Boolean))].sort()
     const upcoming = days.find((d) => d >= today)
     const target = upcoming ?? days[days.length - 1]
     if (target && target !== day) {
       didAutoJumpRef.current = true
       setDay(target)
     }
-  }, [loading, jobs, day, initialDay, isReporterScope])
+  }, [loading, directoryJobs, day, initialDay, isReporterScope])
 
   const dayJobs = useMemo(() => {
-    return jobs
-      .filter((job) => jobDay(job) === day)
-      .sort((a, b) => {
-        const byTime = normalizeJobSchedule(a.plannedExecutionDate).localeCompare(
-          normalizeJobSchedule(b.plannedExecutionDate),
-        )
-        if (byTime !== 0) return byTime
-        return a.companyName.localeCompare(b.companyName, 'tr')
-      })
-  }, [jobs, day])
+    return [...dayJobsRaw].sort((a, b) => {
+      const byTime = normalizeJobSchedule(a.plannedExecutionDate).localeCompare(
+        normalizeJobSchedule(b.plannedExecutionDate),
+      )
+      if (byTime !== 0) return byTime
+      return a.companyName.localeCompare(b.companyName, 'tr')
+    })
+  }, [dayJobsRaw])
 
   const otherDaysWithJobs = useMemo(() => {
-    return [...new Set(jobs.map(jobDay))]
+    return [...new Set(directoryJobs.map(jobDay).filter(Boolean))]
       .filter((d) => d !== day)
       .sort()
-  }, [jobs, day])
+  }, [directoryJobs, day])
+
+  const directoryJobCount = directoryJobs.length
 
   const slots = useMemo(() => buildCalendarSlots(dayJobs), [dayJobs])
 
@@ -373,7 +383,7 @@ export function DailyHourCalendar({
           {otherDaysWithJobs.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-border bg-surface-muted/40 px-3 py-3">
               <p className="w-full text-sm text-text-secondary">
-                Başka günlerde {jobs.length} iş var:
+                Başka günlerde {directoryJobCount} iş var:
               </p>
               {otherDaysWithJobs.slice(0, 6).map((d) => (
                 <Button
