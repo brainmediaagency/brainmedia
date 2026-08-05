@@ -1878,10 +1878,10 @@ service cloud.firestore {
         && request.resource.data.webViewLink.matches('https://.*')
         && request.resource.data.durationMs is number
         && request.resource.data.durationMs >= 0
-        && request.resource.data.durationMs <= 30 * 60 * 1000
+        && request.resource.data.durationMs <= 8 * 60 * 60 * 1000
         && request.resource.data.size is number
         && isPosWhole(request.resource.data.size)
-        && request.resource.data.size <= 100 * 1024 * 1024
+        && request.resource.data.size <= 200 * 1024 * 1024
         && (
           request.resource.data.jobId == null
           || isValidString(request.resource.data.jobId, 1, 120)

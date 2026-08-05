@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download, Mic, Pause, Play, Save, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
@@ -28,13 +28,23 @@ export type VoiceRecordingPanelProps = {
   /** Firma adı — sisteme kaydetmek için gerekli. */
   companyName?: string
   jobId?: string | null
+  /**
+   * When true (default for job review), a successful stop auto-uploads to Drive.
+   * User only presses Başlat → Durdur.
+   */
+  autoSaveOnStop?: boolean
 }
 
 function formatRecordingClock(ms: number): string {
   return formatTimer(Math.floor(ms / 1000))
 }
 
-function statusLabel(status: VoiceRecorderStatus, hasRecording: boolean): string {
+function statusLabel(
+  status: VoiceRecorderStatus,
+  hasRecording: boolean,
+  saving: boolean,
+): string {
+  if (saving) return 'Sisteme yazılıyor…'
   if (status === 'recording') return 'Kayıt alınıyor'
   if (status === 'paused') return 'Duraklatıldı'
   if (status === 'requesting') return 'Mikrofon izni bekleniyor'
@@ -47,10 +57,12 @@ export function VoiceRecordingPanel({
   compact = false,
   companyName = '',
   jobId = null,
+  autoSaveOnStop = true,
 }: VoiceRecordingPanelProps) {
   const { profile } = useAuth()
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
+  const autoSavedKeyRef = useRef<string | null>(null)
   const [uploadUi, setUploadUi] = useState<{
     label: string
     detail: string
@@ -75,17 +87,25 @@ export function VoiceRecordingPanel({
   const canSaveToSystem =
     Boolean(recording && profile && companyName.trim()) && isDriveUploadConfigured()
 
-  const handleSave = async () => {
+  const handleSave = async (fromAuto = false) => {
     if (savingRef.current) return
     if (!recording || !profile) return
     if (!companyName.trim()) {
-      toast.error('Firma adı olmadan kaydedilemez.')
+      if (!fromAuto) toast.error('Firma adı olmadan kaydedilemez.')
       return
     }
     if (!isDriveUploadConfigured()) {
-      toast.error('Dosya yükleme yapılandırılmamış (webhook).')
+      if (!fromAuto) toast.error('Dosya yükleme yapılandırılmamış (webhook).')
       return
     }
+
+    const dedupeKey = `${recording.createdAt}_${recording.durationMs}_${recording.blob.size}`
+    if (fromAuto) {
+      if (autoSavedKeyRef.current === dedupeKey) return
+      // Mark before await so the effect cannot re-enter on the same take.
+      autoSavedKeyRef.current = dedupeKey
+    }
+
     savingRef.current = true
     setSaving(true)
     setUploadUi({
@@ -113,6 +133,10 @@ export function VoiceRecordingPanel({
       toast.success('Ses kaydı sisteme kaydedildi.')
       clearRecording()
     } catch (err) {
+      if (fromAuto) {
+        // Allow one manual/retry path: clear dedupe so user can save again.
+        autoSavedKeyRef.current = null
+      }
       toast.error(mapAppError(err, 'Ses kaydı kaydedilemedi.'))
     } finally {
       savingRef.current = false
@@ -120,6 +144,15 @@ export function VoiceRecordingPanel({
       setUploadUi(null)
     }
   }
+
+  // Durdur sonrası otomatik sisteme yaz (iş inceleme akışı).
+  useEffect(() => {
+    if (!autoSaveOnStop) return
+    if (status !== 'stopped' || !recording) return
+    if (!canSaveToSystem) return
+    void handleSave(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to new stopped take
+  }, [status, recording, autoSaveOnStop, canSaveToSystem])
 
   const alerts = (
     <>
@@ -146,7 +179,7 @@ export function VoiceRecordingPanel({
         </p>
       ) : null}
 
-      {stoppedReason === 'stream_ended' ? (
+      {stoppedReason === 'stream_ended' && recording ? (
         <p
           role="status"
           className={cn(
@@ -154,8 +187,8 @@ export function VoiceRecordingPanel({
             compact ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm',
           )}
         >
-          Mikrofon kesildi; o ana kadar alınan ses saklandı. Ekranı açık tutup
-          yeniden kaydedebilirsiniz.
+          Mikrofon cihaz tarafından kesildi; o ana kadar alınan ses korundu
+          {autoSaveOnStop ? ' ve kaydediliyor.' : '.'}
         </p>
       ) : null}
     </>
@@ -168,7 +201,7 @@ export function VoiceRecordingPanel({
           size={compact ? 'sm' : 'md'}
           onClick={() => void start()}
           loading={status === 'requesting'}
-          disabled={!supported || status === 'requesting'}
+          disabled={!supported || status === 'requesting' || saving}
         >
           <Mic className="size-4" aria-hidden="true" />
           {compact ? 'Başlat' : 'Kaydı başlat'}
@@ -200,6 +233,7 @@ export function VoiceRecordingPanel({
             size={compact ? 'sm' : 'md'}
             variant="danger"
             onClick={stop}
+            disabled={saving}
           >
             <Square className="size-4" aria-hidden="true" />
             Durdur
@@ -221,6 +255,7 @@ export function VoiceRecordingPanel({
       ) : (
         <p className="text-xs text-text-secondary">
           Süre {formatRecordingClock(recording.durationMs)}
+          {autoSaveOnStop ? ' · sisteme yazılıyor…' : ''}
         </p>
       )}
 
@@ -243,22 +278,24 @@ export function VoiceRecordingPanel({
       ) : null}
 
       <div className={cn('flex flex-wrap gap-2', compact && 'gap-1.5')}>
-        <Button
-          size={compact ? 'sm' : 'md'}
-          onClick={() => void handleSave()}
-          loading={saving}
-          disabled={saving || !canSaveToSystem}
-          title={
-            !companyName.trim()
-              ? 'Firma adı gerekli'
-              : !isDriveUploadConfigured()
-                ? 'Webhook yapılandırılmamış'
-                : undefined
-          }
-        >
-          <Save className="size-4" aria-hidden="true" />
-          Kaydet
-        </Button>
+        {!autoSaveOnStop ? (
+          <Button
+            size={compact ? 'sm' : 'md'}
+            onClick={() => void handleSave(false)}
+            loading={saving}
+            disabled={saving || !canSaveToSystem}
+            title={
+              !companyName.trim()
+                ? 'Firma adı gerekli'
+                : !isDriveUploadConfigured()
+                  ? 'Webhook yapılandırılmamış'
+                  : undefined
+            }
+          >
+            <Save className="size-4" aria-hidden="true" />
+            Kaydet
+          </Button>
+        ) : null}
         <Button
           size={compact ? 'sm' : 'md'}
           variant="secondary"
@@ -288,7 +325,9 @@ export function VoiceRecordingPanel({
           <div className="min-w-0 space-y-0.5">
             <p className="text-sm font-medium text-text-primary">Ses kaydı</p>
             <p className="text-xs text-text-secondary">
-              Süre sınırı yok · Kaydet = sisteme yaz
+              {autoSaveOnStop
+                ? 'Durdurana kadar devam eder · Durdur = sisteme yaz'
+                : 'Durdurana kadar devam eder'}
             </p>
           </div>
           <div
@@ -311,7 +350,7 @@ export function VoiceRecordingPanel({
         <div className="flex items-center justify-between gap-3">
           <div className="space-y-0.5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-              {statusLabel(status, Boolean(recording))}
+              {statusLabel(status, Boolean(recording), saving)}
             </p>
             <p
               className={cn(
@@ -336,7 +375,11 @@ export function VoiceRecordingPanel({
     <AccordionSection
       number={sectionNumber}
       title="Ses kaydı"
-      description="Süre sınırı yok. Kaydet ile Google Drive’a ve listeye yazılır."
+      description={
+        autoSaveOnStop
+          ? 'Başlat → konuş → Durdur. Kayıt otomatik Drive’a ve listeye yazılır.'
+          : 'Durdurana kadar kayıt devam eder. Kaydet ile sisteme yazılır.'
+      }
       defaultOpen
     >
       <div className="space-y-5">
@@ -346,7 +389,7 @@ export function VoiceRecordingPanel({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                {statusLabel(status, Boolean(recording))}
+                {statusLabel(status, Boolean(recording), saving)}
               </p>
               <p
                 className={cn(
@@ -360,6 +403,7 @@ export function VoiceRecordingPanel({
               </p>
               <p className="text-xs text-text-secondary">
                 Durdurana kadar kayıt devam eder
+                {autoSaveOnStop ? ' · Durdur = sisteme yaz' : ''}
               </p>
             </div>
 
