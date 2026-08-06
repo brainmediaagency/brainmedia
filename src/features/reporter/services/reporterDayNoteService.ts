@@ -4,7 +4,6 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -98,15 +97,17 @@ export function subscribeDayNotesForDate(
     onNext([])
     return () => {}
   }
-  const q = query(
-    notesCollection(),
-    where('noteDate', '==', noteDate),
-    orderBy('createdByNameSnapshot', 'asc'),
-  )
+  // Equality-only query (no orderBy) so we don't depend on a composite index
+  // status — sort by name on the client for management/coordinator viewers.
+  const q = query(notesCollection(), where('noteDate', '==', noteDate))
   return onSnapshot(
     q,
     (snap) => {
-      onNext(snap.docs.map((d) => d.data()))
+      const notes = snap.docs.map((d) => d.data())
+      notes.sort((a, b) =>
+        a.createdByNameSnapshot.localeCompare(b.createdByNameSnapshot, 'tr'),
+      )
+      onNext(notes)
     },
     (error) => {
       onError?.(error)
