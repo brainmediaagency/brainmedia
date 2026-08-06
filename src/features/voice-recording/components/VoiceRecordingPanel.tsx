@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { Download, Mic, Pause, Play, Save, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
@@ -8,15 +8,20 @@ import { FileUploadStatus } from '@/components/ui/FileUploadStatus'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { saveVoiceRecording } from '@/features/voice-recording/services/voiceRecordingService'
 import {
+  endVoiceUpload,
+  getVoiceUploadUiSnapshot,
+  isVoiceUploadInFlight,
+  subscribeVoiceUploadUi,
+  tryBeginVoiceUpload,
+  updateVoiceUploadProgress,
+} from '@/features/voice-recording/services/voiceUploadUiStore'
+import {
   downloadVoiceRecording,
   useVoiceRecorder,
   voiceRecorderErrorMessage,
   type VoiceRecorderStatus,
 } from '@/features/voice-recording/hooks/useVoiceRecorder'
-import {
-  driveUploadPhaseLabel,
-  isDriveUploadConfigured,
-} from '@/lib/driveUpload'
+import { isDriveUploadConfigured } from '@/lib/driveUpload'
 import { cn } from '@/lib/classNames'
 import { formatTimer } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
@@ -52,6 +57,14 @@ function statusLabel(
   return 'Hazır'
 }
 
+function recordingDedupeKey(recording: {
+  createdAt: number
+  durationMs: number
+  blob: Blob
+}): string {
+  return `${recording.createdAt}_${recording.durationMs}_${recording.blob.size}`
+}
+
 export function VoiceRecordingPanel({
   sectionNumber = '01',
   compact = false,
@@ -60,14 +73,13 @@ export function VoiceRecordingPanel({
   autoSaveOnStop = true,
 }: VoiceRecordingPanelProps) {
   const { profile } = useAuth()
-  const [saving, setSaving] = useState(false)
-  const savingRef = useRef(false)
   const autoSavedKeyRef = useRef<string | null>(null)
-  const [uploadUi, setUploadUi] = useState<{
-    label: string
-    detail: string
-    percent: number
-  } | null>(null)
+  const uploadUi = useSyncExternalStore(
+    subscribeVoiceUploadUi,
+    getVoiceUploadUiSnapshot,
+    getVoiceUploadUiSnapshot,
+  )
+  const saving = uploadUi.active
   const {
     status,
     elapsedMs,
@@ -85,65 +97,70 @@ export function VoiceRecordingPanel({
 
   const isActive = status === 'recording' || status === 'paused'
   const canSaveToSystem =
-    Boolean(recording && profile && companyName.trim()) && isDriveUploadConfigured()
+    Boolean(recording && profile && companyName.trim()) &&
+    isDriveUploadConfigured()
 
-  const handleSave = async (fromAuto = false) => {
-    if (savingRef.current) return
-    if (!recording || !profile) return
-    if (!companyName.trim()) {
-      if (!fromAuto) toast.error('Firma adı olmadan kaydedilemez.')
-      return
-    }
-    if (!isDriveUploadConfigured()) {
-      if (!fromAuto) toast.error('Dosya yükleme yapılandırılmamış (webhook).')
-      return
-    }
-
-    const dedupeKey = `${recording.createdAt}_${recording.durationMs}_${recording.blob.size}`
-    if (fromAuto) {
-      if (autoSavedKeyRef.current === dedupeKey) return
-      // Mark before await so the effect cannot re-enter on the same take.
-      autoSavedKeyRef.current = dedupeKey
-    }
-
-    savingRef.current = true
-    setSaving(true)
-    setUploadUi({
-      label: 'Ses kaydı yükleniyor…',
-      detail: companyName.trim(),
-      percent: 0,
-    })
-    try {
-      await saveVoiceRecording({
-        blob: recording.blob,
-        mimeType: recording.mimeType,
-        durationMs: recording.durationMs,
-        companyName,
-        jobId,
-        createdByUid: profile.uid,
-        createdByNameSnapshot: profile.fullName,
-        onUploadProgress: (progress) => {
-          setUploadUi({
-            label: driveUploadPhaseLabel(progress.phase),
-            detail: progress.fileName || companyName.trim(),
-            percent: Math.round(progress.ratio * 100),
-          })
-        },
-      })
-      toast.success('Ses kaydı sisteme kaydedildi.')
-      clearRecording()
-    } catch (err) {
-      if (fromAuto) {
-        // Allow one manual/retry path: clear dedupe so user can save again.
-        autoSavedKeyRef.current = null
+  const handleSave = useCallback(
+    async (fromAuto = false) => {
+      if (!recording || !profile) return
+      if (!companyName.trim()) {
+        if (!fromAuto) toast.error('Firma adı olmadan kaydedilemez.')
+        return
       }
-      toast.error(mapAppError(err, 'Ses kaydı kaydedilemedi.'))
-    } finally {
-      savingRef.current = false
-      setSaving(false)
-      setUploadUi(null)
-    }
-  }
+      if (!isDriveUploadConfigured()) {
+        if (!fromAuto) toast.error('Dosya yükleme yapılandırılmamış (webhook).')
+        return
+      }
+
+      const dedupeKey = recordingDedupeKey(recording)
+      if (fromAuto) {
+        if (autoSavedKeyRef.current === dedupeKey) return
+        // Mark early so re-entry after remount joins the existing store, not a second save.
+        autoSavedKeyRef.current = dedupeKey
+      }
+
+      if (isVoiceUploadInFlight(dedupeKey)) {
+        return
+      }
+
+      if (
+        !tryBeginVoiceUpload({
+          dedupeKey,
+          detail: companyName.trim(),
+        })
+      ) {
+        return
+      }
+
+      try {
+        await saveVoiceRecording({
+          blob: recording.blob,
+          mimeType: recording.mimeType,
+          durationMs: recording.durationMs,
+          companyName,
+          jobId,
+          createdByUid: profile.uid,
+          createdByNameSnapshot: profile.fullName,
+          onUploadProgress: (progress) => {
+            updateVoiceUploadProgress(progress, companyName.trim())
+          },
+        })
+        // Only primary uploader finishes the take (remounted panels exit early above).
+        if (getVoiceUploadUiSnapshot().dedupeKey === dedupeKey) {
+          toast.success('Ses kaydı sisteme kaydedildi.')
+          clearRecording()
+        }
+      } catch (err) {
+        if (fromAuto) {
+          autoSavedKeyRef.current = null
+        }
+        toast.error(mapAppError(err, 'Ses kaydı kaydedilemedi.'))
+      } finally {
+        endVoiceUpload(dedupeKey)
+      }
+    },
+    [recording, profile, companyName, jobId, clearRecording],
+  )
 
   // Durdur sonrası otomatik sisteme yaz (iş inceleme akışı).
   useEffect(() => {
@@ -151,8 +168,7 @@ export function VoiceRecordingPanel({
     if (status !== 'stopped' || !recording) return
     if (!canSaveToSystem) return
     void handleSave(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to new stopped take
-  }, [status, recording, autoSaveOnStop, canSaveToSystem])
+  }, [status, recording, autoSaveOnStop, canSaveToSystem, handleSave])
 
   const alerts = (
     <>
@@ -214,6 +230,7 @@ export function VoiceRecordingPanel({
                 size={compact ? 'sm' : 'md'}
                 variant="secondary"
                 onClick={resume}
+                disabled={saving}
               >
                 <Play className="size-4" aria-hidden="true" />
                 Devam et
@@ -223,6 +240,7 @@ export function VoiceRecordingPanel({
                 size={compact ? 'sm' : 'md'}
                 variant="secondary"
                 onClick={pause}
+                disabled={saving}
               >
                 <Pause className="size-4" aria-hidden="true" />
                 Duraklat
@@ -243,38 +261,56 @@ export function VoiceRecordingPanel({
     </div>
   )
 
+  const uploadBlock = saving ? (
+    <FileUploadStatus
+      compact={compact}
+      label={uploadUi.label || 'Ses kaydı yükleniyor…'}
+      detail={
+        uploadUi.detail ||
+        companyName.trim() ||
+        'Uzun kayıtlar parça parça yüklenir; lütfen bekleyin.'
+      }
+      percent={uploadUi.percent}
+    />
+  ) : null
+
   const playback = recording ? (
     <div className={cn('space-y-3', compact && 'space-y-2')}>
       {!compact ? (
         <div className="space-y-1">
-          <p className="text-sm font-medium text-text-primary">Kayıt hazır</p>
+          <p className="text-sm font-medium text-text-primary">
+            {saving ? 'Sisteme yazılıyor…' : 'Kayıt hazır'}
+          </p>
           <p className="text-xs text-text-secondary">
             Süre {formatRecordingClock(recording.durationMs)}
+            {saving
+              ? ' · pencereyi kapatmayın, yükleme devam ediyor'
+              : ''}
           </p>
         </div>
       ) : (
         <p className="text-xs text-text-secondary">
           Süre {formatRecordingClock(recording.durationMs)}
-          {autoSaveOnStop ? ' · sisteme yazılıyor…' : ''}
+          {saving
+            ? ' · yükleniyor, lütfen bekleyin'
+            : autoSaveOnStop && status === 'stopped'
+              ? ' · kayıt hazır'
+              : ''}
         </p>
       )}
 
-      <audio
-        controls
-        src={recording.url}
-        className="w-full"
-        preload="metadata"
-      >
-        Tarayıcınız ses oynatmayı desteklemiyor.
-      </audio>
+      {uploadBlock}
 
-      {uploadUi ? (
-        <FileUploadStatus
-          compact={compact}
-          label={uploadUi.label}
-          detail={uploadUi.detail}
-          percent={uploadUi.percent}
-        />
+      {/* Avoid native media chrome looking like a stalled spinner during multi‑minute upload */}
+      {!saving ? (
+        <audio
+          controls
+          src={recording.url}
+          className="w-full"
+          preload="metadata"
+        >
+          Tarayıcınız ses oynatmayı desteklemiyor.
+        </audio>
       ) : null}
 
       <div className={cn('flex flex-wrap gap-2', compact && 'gap-1.5')}>
@@ -333,11 +369,13 @@ export function VoiceRecordingPanel({
           <div
             className={cn(
               'flex size-9 shrink-0 items-center justify-center rounded-full border',
-              status === 'recording'
-                ? 'border-danger/40 bg-danger/10 text-danger'
-                : status === 'paused'
-                  ? 'border-warning/40 bg-warning/10 text-warning'
-                  : 'border-border bg-surface text-text-secondary',
+              saving
+                ? 'border-brand-cyan/40 bg-brand-cyan/10 text-brand-blue'
+                : status === 'recording'
+                  ? 'border-danger/40 bg-danger/10 text-danger'
+                  : status === 'paused'
+                    ? 'border-warning/40 bg-warning/10 text-warning'
+                    : 'border-border bg-surface text-text-secondary',
             )}
             aria-hidden="true"
           >
@@ -346,6 +384,8 @@ export function VoiceRecordingPanel({
         </div>
 
         {alerts}
+
+        {uploadBlock && !recording ? uploadBlock : null}
 
         <div className="flex items-center justify-between gap-3">
           <div className="space-y-0.5">
@@ -360,7 +400,11 @@ export function VoiceRecordingPanel({
               aria-live="polite"
               aria-atomic="true"
             >
-              {formatRecordingClock(isActive || status === 'stopped' ? elapsedMs : 0)}
+              {formatRecordingClock(
+                isActive || status === 'stopped' || (saving && recording)
+                  ? elapsedMs || recording?.durationMs || 0
+                  : 0,
+              )}
             </p>
           </div>
           {controls}
@@ -399,7 +443,11 @@ export function VoiceRecordingPanel({
                 aria-live="polite"
                 aria-atomic="true"
               >
-                {formatRecordingClock(isActive || status === 'stopped' ? elapsedMs : 0)}
+                {formatRecordingClock(
+                  isActive || status === 'stopped' || (saving && recording)
+                    ? elapsedMs || recording?.durationMs || 0
+                    : 0,
+                )}
               </p>
               <p className="text-xs text-text-secondary">
                 Durdurana kadar kayıt devam eder
@@ -410,11 +458,13 @@ export function VoiceRecordingPanel({
             <div
               className={cn(
                 'flex size-14 shrink-0 items-center justify-center rounded-full border',
-                status === 'recording'
-                  ? 'border-danger/40 bg-danger/10 text-danger'
-                  : status === 'paused'
-                    ? 'border-warning/40 bg-warning/10 text-warning'
-                    : 'border-border bg-surface-muted text-text-secondary',
+                saving
+                  ? 'border-brand-cyan/40 bg-brand-cyan/10 text-brand-blue'
+                  : status === 'recording'
+                    ? 'border-danger/40 bg-danger/10 text-danger'
+                    : status === 'paused'
+                      ? 'border-warning/40 bg-warning/10 text-warning'
+                      : 'border-border bg-surface-muted text-text-secondary',
               )}
               aria-hidden="true"
             >
@@ -423,6 +473,7 @@ export function VoiceRecordingPanel({
           </div>
 
           {controls}
+          {uploadBlock && !recording ? uploadBlock : null}
         </Card>
 
         {recording ? <Card className="space-y-4">{playback}</Card> : null}
