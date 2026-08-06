@@ -30,6 +30,10 @@ import {
 } from '@/lib/date'
 import { formatInTimeZone } from 'date-fns-tz'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
+import {
+  applyCompanyCashContributionDelta,
+  reportNetCashKurus,
+} from '@/features/cash/services/companyCashService'
 
 /** Firestore rules expect non-negative whole numbers (int or whole float). */
 function toKurusInt(value: number): number {
@@ -354,6 +358,12 @@ export async function createDailyReport(input: DailyReportWriteInput & {
       pushRoles: ['management', 'coordinator'],
     })
 
+    void applyCompanyCashContributionDelta(reportNetCashKurus(content)).catch(
+      () => {
+        /* muhabir kasa snapshot best-effort */
+      },
+    )
+
     return ref.id
   } catch (error) {
     if (error instanceof UserFacingError) throw error
@@ -369,6 +379,8 @@ export async function updateDailyReport(
   const db = getDb()
   const ref = doc(db, 'reporterDailyReports', reportId)
   try {
+    let prevNetCash = 0
+    let nextNetCash = 0
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(ref)
       if (!snap.exists()) throw new UserFacingError('Rapor bulunamadı.')
@@ -378,6 +390,8 @@ export async function updateDailyReport(
       }
 
       const content = reportContent(input)
+      prevNetCash = reportNetCashKurus(current)
+      nextNetCash = reportNetCashKurus(content)
       const nextJobIds = uniqueCompanyJobIds(content.companies)
       const prevCompanies = Array.isArray(current.companies) ? current.companies : []
       const prevJobIds = uniqueCompanyJobIds(
@@ -436,6 +450,11 @@ export async function updateDailyReport(
         }
       }
     })
+    void applyCompanyCashContributionDelta(nextNetCash - prevNetCash).catch(
+      () => {
+        /* muhabir kasa snapshot best-effort */
+      },
+    )
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(mapAppError(error, 'Günlük rapor güncellenemedi.'))
@@ -449,11 +468,16 @@ export async function softDeleteDailyReport(
   const db = getDb()
   const ref = doc(db, 'reporterDailyReports', reportId)
   try {
+    let removedNetCash = 0
+    let didDelete = false
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(ref)
       if (!snap.exists()) throw new UserFacingError('Rapor bulunamadı.')
       const current = snap.data()
       if (current.deletedAt != null) return
+
+      didDelete = true
+      removedNetCash = reportNetCashKurus(current)
 
       const prevCompanies = Array.isArray(current.companies) ? current.companies : []
       const jobIds = uniqueCompanyJobIds(
@@ -493,6 +517,11 @@ export async function softDeleteDailyReport(
         }
       }
     })
+    if (didDelete) {
+      void applyCompanyCashContributionDelta(-removedNetCash).catch(() => {
+        /* muhabir kasa snapshot best-effort */
+      })
+    }
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(mapAppError(error, 'Günlük rapor silinemedi.'))

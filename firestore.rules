@@ -1365,6 +1365,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ---------- opsCash (devreden kasa snapshot; muhabir paneli) ----------
+    // Muhabir diğer günlük raporları okuyamaz; şirket bakiyesi burada tutulur.
+    match /opsCash/{docId} {
+      allow read: if isAuthenticated()
+        && (
+          isReporter()
+          || isCoordinatorOrManagement()
+        );
+      allow create, update: if isAuthenticated()
+        && (
+          isReporter()
+          || isCoordinatorOrManagement()
+        );
+      allow delete: if false;
+    }
+
     // ---------- reporterDailyReports ----------
     match /reporterDailyReports/{reportId} {
       allow read: if isAuthenticated()

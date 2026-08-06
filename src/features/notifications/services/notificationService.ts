@@ -111,7 +111,7 @@ function inboxPayload(input: {
 /**
  * In-app inbox (Firestore) + OneSignal Web Push (via Apps Script webhook).
  * Failures are swallowed so the primary write (job/report) is never blocked.
- * Push default audience = all five app roles (subscribers with matching role tags).
+ * Push default audience = all app push roles (subscribers with matching role tags).
  */
 export async function notifyManagement(
   input: NotifyManagementInput,

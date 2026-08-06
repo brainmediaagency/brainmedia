@@ -2,7 +2,7 @@
  * Sends Web Push via the Apps Script webhook (`pushNotify`).
  * REST API key stays server-side. Auth: Firebase ID token.
  *
- * Default audience = all five app roles (OR tag filters).
+ * Default audience = all app push roles (OR tag filters; Apps Script ROLES_PUSH).
  * Optional `externalIds` targets by OneSignal external_id (= Firebase uid).
  * Optional `roles` / `audience: 'all'` are forwarded when role filters are used.
  */
@@ -23,7 +23,7 @@ export async function sendOneSignalPush(input: {
   externalIds?: string[]
   /** Firebase uids to exclude (OneSignal exclude_aliases.external_id). */
   excludeExternalIds?: string[]
-  /** Role tag filter; ignored when externalIds is set. Default: audience all five roles. */
+  /** Role tag filter; ignored when externalIds is set. Default: audience all push roles. */
   roles?: UserRole[]
   /** Explicit all-roles audience (Apps Script default). Ignored when externalIds is set. */
   audience?: OneSignalPushAudience
@@ -67,7 +67,7 @@ export async function sendOneSignalPush(input: {
       payload.excludeExternalIds = excludeExternalIds
     }
   } else {
-    // Default: all subscribed app roles (management|coordinator|media_planning|reporter|human_resources)
+    // Default: all subscribed app roles (Apps Script ROLES_PUSH, includes kameraman)
     payload.audience = input.audience ?? 'all'
     if (excludeExternalIds.length > 0) {
       payload.excludeExternalIds = excludeExternalIds

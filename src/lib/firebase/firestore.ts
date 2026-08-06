@@ -12,7 +12,7 @@ export function getDb(): Firestore {
   if (!firestoreInstance) {
     firestoreInstance = getFirestore(getFirebaseApp())
     if (isEmulatorMode() && !emulatorConnected) {
-      connectFirestoreEmulator(firestoreInstance, '127.0.0.1', 8080)
+      connectFirestoreEmulator(firestoreInstance, '127.0.0.1', 8180)
       emulatorConnected = true
     }
   }

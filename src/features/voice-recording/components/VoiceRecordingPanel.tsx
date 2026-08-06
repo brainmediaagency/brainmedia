@@ -326,7 +326,7 @@ export function VoiceRecordingPanel({
             <p className="text-sm font-medium text-text-primary">Ses kaydı</p>
             <p className="text-xs text-text-secondary">
               {autoSaveOnStop
-                ? 'Durdurana kadar devam eder · Durdur = sisteme yaz'
+                ? 'Durdurana kadar devam eder · Durdur = sisteme yaz (uzun kayıtlar parça parça yüklenir)'
                 : 'Durdurana kadar devam eder'}
             </p>
           </div>

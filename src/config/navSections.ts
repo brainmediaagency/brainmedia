@@ -85,6 +85,8 @@ export const REPORTER_SECTIONS = [
   { id: 'my-reports', label: 'Raporlarım', icon: ClipboardList },
   { id: 'muhabir-ozet', label: 'Muhabir Özet', icon: BarChart3 },
   { id: 'z-report', label: 'Z Raporu', icon: FileText },
+  /** Yalnızca `reporter` rolü — yönetim/koordinatör muhabir görünümünde yok */
+  { id: 'cash', label: 'Kasa', icon: Wallet },
 ] as const satisfies readonly NavSectionItem[]
 
 export const REPORTER_VIEWER_SECTIONS = [

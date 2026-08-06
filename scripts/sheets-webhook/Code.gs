@@ -15,6 +15,11 @@
  * v21: trashDriveFile — soft-delete previous Drive file on photo replace.
  * v22: pushNotify — when `roles` is a non-empty array, do not expand to all
  *      roles just because `audience` is "all" (İK push was reaching MPU).
+ * v23: pushNotify ALL_PUSH_ROLES includes kameraman (evening shoot calendar +
+ *      calendar-edit pushes were dropping kameraman because only five roles
+ *      were allowlisted while ROLES_PUSH already included Kameraman).
+ * v24: uploadFileInit + uploadFileChunk — Drive resumable for large voice files
+ *      (Apps Script single base64 body cannot hold 25+ min recordings).
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -39,7 +44,7 @@
  */
 
 var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v21'
-var SCRIPT_VERSION = 'v22'
+var SCRIPT_VERSION = 'v24'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -201,6 +206,12 @@ function doPost(e) {
     if (body.action === 'uploadFile') {
       return handleUpload_(body)
     }
+    if (body.action === 'uploadFileInit') {
+      return handleUploadInit_(body)
+    }
+    if (body.action === 'uploadFileChunk') {
+      return handleUploadChunk_(body)
+    }
     if (body.action === 'trashDriveFile') {
       return handleTrashDriveFile_(body)
     }
@@ -243,7 +254,7 @@ function doPost(e) {
     return jsonResponse_({
       ok: false,
       error:
-        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/trashDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
+        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadFileInit/uploadFileChunk/trashDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     }, 400)
@@ -280,6 +291,8 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'updateSonDurum',
         'updateDkHaber',
         'uploadFile',
+        'uploadFileInit',
+        'uploadFileChunk',
         'trashDriveFile',
         'uploadResult',
         'driveStorageUsage',
@@ -418,6 +431,8 @@ function roleAllowedForAction_(action, role) {
   }
   if (
     action === 'uploadFile' ||
+    action === 'uploadFileInit' ||
+    action === 'uploadFileChunk' ||
     action === 'uploadResult' ||
     action === 'driveStorageUsage' ||
     action === 'trashDriveFile'
@@ -858,6 +873,260 @@ function handleUpload_(body) {
 }
 
 /**
+ * Start a Drive v3 resumable upload session (large voice / files).
+ * Stores Location URL in ScriptCache keyed by uploadToken.
+ */
+function handleUploadInit_(body) {
+  var uploadToken = String(body.uploadToken || '').trim()
+  if (!uploadToken || uploadToken.length > 80) {
+    return jsonResponse_({ ok: false, error: 'Missing uploadToken' }, 400)
+  }
+  var totalBytes = Number(body.totalBytes || 0)
+  if (!(totalBytes > 0) || totalBytes > 80 * 1024 * 1024 || totalBytes !== Math.floor(totalBytes)) {
+    return jsonResponse_({ ok: false, error: 'Invalid size' }, 400)
+  }
+  if (!body.fileName) {
+    return jsonResponse_({ ok: false, error: 'Missing fileName' }, 400)
+  }
+
+  try {
+    var folderKey = body.folder || 'misc'
+    var subName = FOLDER_NAMES[folderKey] || 'Diğer'
+    var folder = getOrCreateUploadFolder_(subName, folderKey)
+    var folderPath = String(body.folderPath || '').trim()
+    if (folderPath) {
+      var pathParts = folderPath.split('/')
+      for (var pi = 0; pi < pathParts.length; pi += 1) {
+        var part = String(pathParts[pi] || '')
+          .trim()
+          .replace(/[\\/]+/g, '')
+          .slice(0, 120)
+        if (part) {
+          folder = getOrCreateFolderByName_(folder, part)
+        }
+      }
+    }
+
+    var mimeType = String(body.mimeType || 'application/octet-stream').slice(0, 120)
+    var fileName = String(body.fileName).slice(0, 180)
+    var metadata = {
+      name: fileName,
+      parents: [folder.getId()],
+    }
+    var oauth = ScriptApp.getOAuthToken()
+    var resp = UrlFetchApp.fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true',
+      {
+        method: 'post',
+        contentType: 'application/json; charset=UTF-8',
+        headers: {
+          Authorization: 'Bearer ' + oauth,
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': String(totalBytes),
+        },
+        payload: JSON.stringify(metadata),
+        muteHttpExceptions: true,
+      },
+    )
+    var code = resp.getResponseCode()
+    if (code < 200 || code >= 300) {
+      return jsonResponse_(
+        {
+          ok: false,
+          error: 'Drive resumable session failed',
+          detail: String(resp.getContentText() || '').substring(0, 280),
+        },
+        502,
+      )
+    }
+    var headers = resp.getAllHeaders()
+    var location =
+      headers.Location ||
+      headers.location ||
+      headers['Location'] ||
+      headers['location']
+    if (!location) {
+      return jsonResponse_({ ok: false, error: 'No resumable location' }, 502)
+    }
+
+    CacheService.getScriptCache().put(
+      'uresume:' + uploadToken,
+      JSON.stringify({
+        location: String(location),
+        total: totalBytes,
+        next: 0,
+        mimeType: mimeType,
+      }),
+      3600,
+    )
+    return jsonResponse_({ ok: true, resumed: true, totalBytes: totalBytes })
+  } catch (err) {
+    var message = err && err.message ? String(err.message) : 'Upload init failed'
+    return jsonResponse_({ ok: false, error: message }, 500)
+  }
+}
+
+/**
+ * PUT one content range into an existing Drive resumable session.
+ */
+function handleUploadChunk_(body) {
+  var uploadToken = String(body.uploadToken || '').trim()
+  if (!uploadToken) {
+    return jsonResponse_({ ok: false, error: 'Missing uploadToken' }, 400)
+  }
+  if (!body.base64) {
+    return jsonResponse_({ ok: false, error: 'Missing chunk' }, 400)
+  }
+
+  var rawSession = CacheService.getScriptCache().get('uresume:' + uploadToken)
+  if (!rawSession) {
+    return jsonResponse_(
+      { ok: false, error: 'Upload session expired. Retry.' },
+      400,
+    )
+  }
+
+  var session
+  try {
+    session = JSON.parse(rawSession)
+  } catch (parseErr) {
+    return jsonResponse_({ ok: false, error: 'Corrupt upload session' }, 500)
+  }
+
+  var start = Number(body.byteStart)
+  var end = Number(body.byteEnd)
+  var total = Number(body.totalBytes || session.total || 0)
+  if (
+    !isFinite(start) ||
+    !isFinite(end) ||
+    start < 0 ||
+    end < start ||
+    total <= 0
+  ) {
+    return jsonResponse_({ ok: false, error: 'Invalid byte range' }, 400)
+  }
+  if (start !== Number(session.next || 0)) {
+    return jsonResponse_(
+      {
+        ok: false,
+        error: 'Chunk order mismatch',
+        expected: session.next,
+      },
+      400,
+    )
+  }
+
+  try {
+    var bytes = Utilities.base64Decode(body.base64)
+    var expectedLen = end - start + 1
+    if (bytes.length !== expectedLen) {
+      return jsonResponse_(
+        {
+          ok: false,
+          error: 'Chunk size mismatch',
+          detail: 'got ' + bytes.length + ' expected ' + expectedLen,
+        },
+        400,
+      )
+    }
+
+    var mimeType =
+      String(body.mimeType || session.mimeType || 'application/octet-stream').slice(
+        0,
+        120,
+      )
+    var chunkBlob = Utilities.newBlob(bytes, mimeType)
+    var oauth = ScriptApp.getOAuthToken()
+    var resp = UrlFetchApp.fetch(String(session.location), {
+      method: 'put',
+      contentType: mimeType,
+      headers: {
+        Authorization: 'Bearer ' + oauth,
+        'Content-Length': String(bytes.length),
+        'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
+      },
+      payload: chunkBlob,
+      muteHttpExceptions: true,
+    })
+    var code = resp.getResponseCode()
+    var text = String(resp.getContentText() || '')
+
+    // Intermediate: 308 Resume Incomplete
+    if (code === 308) {
+      session.next = end + 1
+      CacheService.getScriptCache().put(
+        'uresume:' + uploadToken,
+        JSON.stringify(session),
+        3600,
+      )
+      return jsonResponse_({
+        ok: true,
+        pending: true,
+        next: session.next,
+      })
+    }
+
+    if (code >= 200 && code < 300) {
+      var file = null
+      try {
+        file = JSON.parse(text)
+      } catch (jErr) {
+        file = null
+      }
+      var fileId = file && file.id ? String(file.id) : ''
+      if (!fileId) {
+        return jsonResponse_(
+          {
+            ok: false,
+            error: 'Drive upload finished without file id',
+            detail: text.substring(0, 280),
+          },
+          502,
+        )
+      }
+      try {
+        DriveApp.getFileById(fileId).setSharing(
+          DriveApp.Access.ANYONE_WITH_LINK,
+          DriveApp.Permission.VIEW,
+        )
+      } catch (shareErr) {
+        // Sharing is best-effort; link may still work for signed-in users.
+      }
+      var webView = ''
+      try {
+        webView = DriveApp.getFileById(fileId).getUrl()
+      } catch (uErr) {
+        webView = 'https://drive.google.com/file/d/' + fileId + '/view'
+      }
+      var result = {
+        ok: true,
+        done: true,
+        fileId: fileId,
+        url: 'https://drive.google.com/uc?export=view&id=' + fileId,
+        webViewLink: webView,
+      }
+      cacheUploadResult_(uploadToken, result)
+      try {
+        CacheService.getScriptCache().remove('uresume:' + uploadToken)
+      } catch (rmErr) {}
+      return jsonResponse_(result)
+    }
+
+    return jsonResponse_(
+      {
+        ok: false,
+        error: 'Chunk failed HTTP ' + code,
+        detail: text.substring(0, 280),
+      },
+      502,
+    )
+  } catch (err) {
+    var message = err && err.message ? String(err.message) : 'Chunk upload failed'
+    return jsonResponse_({ ok: false, error: message }, 500)
+  }
+}
+
+/**
  * Soft-delete a Drive file by id (setTrashed). Used when replacing kadran photos.
  * Only roles with Drive upload may call.
  */
@@ -1105,7 +1374,7 @@ function ensureJobIdHeader_(sheet) {
  * Targeting (priority):
  * 1. body.externalIds: string[] → include_aliases.external_id (Firebase uid)
  * 2. body.roles: string[] → OR tag filters for those roles
- * 3. body.audience === 'all' or omitted → all five app roles (OR)
+ * 3. body.audience === 'all' or omitted → all ROLES_PUSH tags (OR)
  * Optional: body.excludeExternalIds → exclude_aliases.external_id (skip actor)
  */
 function handlePushNotify_(body) {
@@ -1129,13 +1398,8 @@ function handlePushNotify_(body) {
   if (!message) message = title
   var url = String(body.url || 'https://brain-c5fcb.web.app/management')
 
-  var ALL_PUSH_ROLES = [
-    'management',
-    'coordinator',
-    'media_planning',
-    'reporter',
-    'human_resources',
-  ]
+  // Keep in sync with ROLES_PUSH (includes kameraman).
+  var ALL_PUSH_ROLES = Object.keys(ROLES_PUSH)
 
   var payload = {
     app_id: appId,

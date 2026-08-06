@@ -10,6 +10,7 @@ import {
   emptyReportCashTotals,
   subscribeReportCashGroups,
 } from '@/features/cash/services/cashService'
+import { publishCompanyCashSnapshot } from '@/features/cash/services/companyCashService'
 import type { ReportCashGroup, ReportCashTotals } from '@/features/cash/types/cash'
 import { DailyReportDetailBody } from '@/features/reporter/components/DailyReportDetailBody'
 import { getDailyReport } from '@/features/reporter/services/dailyReportService'
@@ -103,6 +104,10 @@ export function CashRegisterPanel({ sectionNumber }: CashRegisterPanelProps) {
     return subscribeReportCashGroups((groups, totals) => {
       setReportGroups(groups)
       setReportTotals(totals)
+      // Muhabir “Kasa” sekmesindeki devreden bakiye ile senkron tut
+      void publishCompanyCashSnapshot(totals).catch(() => {
+        /* best-effort snapshot; panel fails soft */
+      })
     }, onError)
   }, [])
 

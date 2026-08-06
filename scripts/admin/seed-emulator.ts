@@ -3,7 +3,7 @@
  * Seed Firebase Emulator with test users for local development.
  * Never run against production.
  *
- * Prerequisite: emulators running (auth :9099, firestore :8080)
+ * Prerequisite: emulators running (auth :9099, firestore :8180)
  *   npm run emulators
  *   npm run seed:emulator
  */
@@ -13,7 +13,7 @@ import { getAuth } from 'firebase-admin/auth'
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'
 
 process.env.FIREBASE_AUTH_EMULATOR_HOST ??= '127.0.0.1:9099'
-process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080'
+process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8180'
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? 'brain-workspace-demo'
 

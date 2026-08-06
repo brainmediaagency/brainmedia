@@ -46,7 +46,7 @@ export type NotifyManagementInput = {
   link: string
   createdByUid: string
   createdByNameSnapshot: string
-  /** Push role filter; omit for all five roles. */
+  /** Push role filter; omit for all app push roles. */
   pushRoles?: UserRole[]
 }
 
@@ -62,7 +62,7 @@ export type NotifyBroadcastInput = {
    * (used for system day-start region notify triggered by a logged-in admin).
    */
   notifyActor?: boolean
-  /** Push role filter; omit for all five roles. */
+  /** Push role filter; omit for all app push roles. */
   pushRoles?: UserRole[]
 }
 

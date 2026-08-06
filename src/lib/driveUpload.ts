@@ -25,6 +25,18 @@ export type DriveUploadProgress = {
   fileName?: string
 }
 
+/**
+ * Whole-body base64 POST is only safe below this size (Apps Script request body).
+ * Larger files use Drive resumable chunks.
+ */
+export const DRIVE_SINGLE_SHOT_MAX_BYTES = 1.5 * 1024 * 1024
+
+/** Raw binary per resumable chunk (~1 MB base64 after encode). */
+export const DRIVE_CHUNK_BYTES = 768 * 1024
+
+/** Hard ceiling: protects tab memory + Apps Script / Drive sessions. */
+export const DRIVE_HARD_MAX_BYTES = 80 * 1024 * 1024
+
 function fileToBase64(
   file: Blob,
   onEncodingProgress?: (ratio: number) => void,
@@ -46,6 +58,18 @@ function fileToBase64(
   })
 }
 
+/** Binary slice → base64 (no data: URL prefix). */
+export function uint8ToBase64(bytes: Uint8Array): string {
+  // Stay under engine apply-argument limits (avoid 32k+ spread).
+  const chunk = 0x2000
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, Math.min(i + chunk, bytes.length))
+    binary += String.fromCharCode.apply(null, Array.from(slice))
+  }
+  return btoa(binary)
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
@@ -57,7 +81,6 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
   const detail = String(parsed.detail ?? '').trim()
   const combined = [raw, detail].filter(Boolean).join(' — ')
   if (!raw && !detail) return fallback
-  // Older deployments JSON.parse form bodies and surface this V8 message.
   if (/is not valid JSON/i.test(combined) || /Unexpected token/i.test(combined)) {
     return (
       'Drive webhook eski sürümde. Apps Script’e güncel Code.gs yapıştırıp New version yayınlayın.'
@@ -76,6 +99,11 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
   if (/unauthorized|forbidden/i.test(combined)) {
     return (
       'Drive webhook yetkisiz. Çıkış yapıp tekrar giriş edin; sürmezse Apps Script’te FIREBASE_WEB_API_KEY ve rol claim’lerini kontrol edin.'
+    )
+  }
+  if (/session expired|chunk order|resumable|too large|Invalid size|payload/i.test(combined)) {
+    return (
+      'Dosya çok büyük veya yükleme oturumu düştü. Kayıt hâlâ bu cihazda; İndir ile bilgisayara alın, sonra daha kısa parçalar halinde tekrar yükleyin. Apps Script v24+ (uploadFileInit) gerekir.'
     )
   }
   return raw || detail || fallback
@@ -107,7 +135,6 @@ export async function postWebhookForm(
   let text = await response.text()
 
   if (!looksLikeJson_(text)) {
-    // Some environments leave a 302 HTML body; retry Location once.
     const location =
       response.headers.get('Location')
       || response.headers.get('location')
@@ -180,9 +207,191 @@ async function pollUploadResult(
   )
 }
 
+function resultFromParsed(parsed: Record<string, unknown>): DriveUploadResult {
+  if (!parsed.ok || !parsed.fileId || !parsed.url) {
+    throw new UserFacingError(
+      webhookErrorMessage(parsed, 'Dosya Google Drive’a yüklenemedi.'),
+    )
+  }
+  return {
+    fileId: String(parsed.fileId),
+    url: String(parsed.url),
+    webViewLink: String(parsed.webViewLink ?? parsed.url),
+  }
+}
+
+async function uploadFileSingleShot(input: {
+  file: Blob
+  fileName: string
+  mimeType: string
+  folder: DriveUploadFolder
+  folderPath?: string
+  onProgress?: (progress: DriveUploadProgress) => void
+}): Promise<DriveUploadResult> {
+  input.onProgress?.({
+    phase: 'encoding',
+    ratio: 0,
+    fileName: input.fileName,
+  })
+
+  const base64 = await fileToBase64(input.file, (encodingRatio) => {
+    input.onProgress?.({
+      phase: 'encoding',
+      ratio: encodingRatio * 0.2,
+      fileName: input.fileName,
+    })
+  })
+
+  const uploadToken = crypto.randomUUID()
+  const folderPath = input.folderPath?.trim() || ''
+
+  input.onProgress?.({
+    phase: 'uploading',
+    ratio: 0.25,
+    fileName: input.fileName,
+  })
+
+  const parsed = await postWebhookForm({
+    action: 'uploadFile',
+    folder: input.folder,
+    ...(folderPath ? { folderPath } : {}),
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    base64,
+    uploadToken,
+  })
+
+  if (parsed.pending) {
+    input.onProgress?.({
+      phase: 'finishing',
+      ratio: 0.35,
+      fileName: input.fileName,
+    })
+    return pollUploadResult(uploadToken, (ratio) => {
+      input.onProgress?.({
+        phase: 'finishing',
+        ratio,
+        fileName: input.fileName,
+      })
+    })
+  }
+
+  const result = resultFromParsed(parsed)
+  input.onProgress?.({
+    phase: 'finishing',
+    ratio: 1,
+    fileName: input.fileName,
+  })
+  return result
+}
+
+/**
+ * Drive resumable upload via Apps Script (one chunk at a time — no huge body).
+ * Requires webhook v24+ (uploadFileInit / uploadFileChunk).
+ */
+async function uploadFileResumable(input: {
+  file: Blob
+  fileName: string
+  mimeType: string
+  folder: DriveUploadFolder
+  folderPath?: string
+  onProgress?: (progress: DriveUploadProgress) => void
+}): Promise<DriveUploadResult> {
+  const totalBytes = input.file.size
+  const uploadToken = crypto.randomUUID()
+  const folderPath = input.folderPath?.trim() || ''
+
+  input.onProgress?.({
+    phase: 'uploading',
+    ratio: 0.02,
+    fileName: input.fileName,
+  })
+
+  const init = await postWebhookForm({
+    action: 'uploadFileInit',
+    uploadToken,
+    folder: input.folder,
+    ...(folderPath ? { folderPath } : {}),
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+    totalBytes: String(totalBytes),
+  })
+
+  if (!init.ok) {
+    throw new UserFacingError(
+      webhookErrorMessage(
+        init,
+        'Büyük dosya yükleme oturumu açılamadı. Apps Script v24 (uploadFileInit) yayınlayın.',
+      ),
+    )
+  }
+
+  const buffer = new Uint8Array(await input.file.arrayBuffer())
+  let offset = 0
+  let chunkIndex = 0
+  const approxChunks = Math.max(1, Math.ceil(totalBytes / DRIVE_CHUNK_BYTES))
+
+  while (offset < totalBytes) {
+    const endExclusive = Math.min(offset + DRIVE_CHUNK_BYTES, totalBytes)
+    const endInclusive = endExclusive - 1
+    const slice = buffer.subarray(offset, endExclusive)
+    const base64 = uint8ToBase64(slice)
+
+    input.onProgress?.({
+      phase: 'uploading',
+      ratio: 0.05 + (offset / totalBytes) * 0.9,
+      fileName: input.fileName,
+    })
+
+    const parsed = await postWebhookForm({
+      action: 'uploadFileChunk',
+      uploadToken,
+      base64,
+      byteStart: String(offset),
+      byteEnd: String(endInclusive),
+      totalBytes: String(totalBytes),
+      mimeType: input.mimeType,
+      chunkIndex: String(chunkIndex),
+      approxChunks: String(approxChunks),
+    })
+
+    if (!parsed.ok) {
+      throw new UserFacingError(
+        webhookErrorMessage(parsed, 'Dosya Google Drive’a yüklenemedi.'),
+      )
+    }
+
+    if (parsed.done || (parsed.fileId && parsed.url)) {
+      input.onProgress?.({
+        phase: 'finishing',
+        ratio: 1,
+        fileName: input.fileName,
+      })
+      return resultFromParsed(parsed)
+    }
+
+    if (parsed.pending) {
+      offset = endExclusive
+      chunkIndex += 1
+      continue
+    }
+
+    throw new UserFacingError(
+      webhookErrorMessage(parsed, 'Dosya Google Drive’a yüklenemedi.'),
+    )
+  }
+
+  throw new UserFacingError(
+    'Yükleme tamamlanamadı (son parça yanıtı yok). Apps Script v24 kontrol edin.',
+  )
+}
+
 /**
  * Upload a file to Google Drive via the free Apps Script webhook.
  * Does not use Firebase Storage.
+ *
+ * Small files: single base64 POST.
+ * Large files (voice ~25 dk): Drive resumable chunks (webhook v24+).
  */
 export async function uploadFileToDrive(input: {
   file: Blob
@@ -203,69 +412,22 @@ export async function uploadFileToDrive(input: {
     )
   }
 
-  input.onProgress?.({
-    phase: 'encoding',
-    ratio: 0,
-    fileName: input.fileName,
-  })
+  if (input.file.size <= 0) {
+    throw new UserFacingError('Dosya boş.')
+  }
 
-  const base64 = await fileToBase64(input.file, (encodingRatio) => {
-    input.onProgress?.({
-      phase: 'encoding',
-      ratio: encodingRatio * 0.15,
-      fileName: input.fileName,
-    })
-  })
+  if (input.file.size > DRIVE_HARD_MAX_BYTES) {
+    const mb = Math.round(DRIVE_HARD_MAX_BYTES / (1024 * 1024))
+    throw new UserFacingError(
+      `Dosya çok büyük (en fazla ~${mb} MB). Kayıt bu cihazda kalır — İndir ile alın veya daha kısa parçalara bölün.`,
+    )
+  }
 
-  const uploadToken = crypto.randomUUID()
-  const idToken = await getWebhookIdToken()
+  if (input.file.size <= DRIVE_SINGLE_SHOT_MAX_BYTES) {
+    return uploadFileSingleShot(input)
+  }
 
-  input.onProgress?.({
-    phase: 'uploading',
-    ratio: 0.15,
-    fileName: input.fileName,
-  })
-
-  const folderPath = input.folderPath?.trim() || ''
-
-  // no-cors avoids Safari OPTIONS preflight (Apps Script returns 405).
-  await fetch(url, {
-    method: 'POST',
-    mode: 'no-cors',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      action: 'uploadFile',
-      idToken,
-      folder: input.folder,
-      ...(folderPath ? { folderPath } : {}),
-      fileName: input.fileName,
-      mimeType: input.mimeType,
-      base64,
-      uploadToken,
-    }),
-  })
-
-  input.onProgress?.({
-    phase: 'finishing',
-    ratio: 0.2,
-    fileName: input.fileName,
-  })
-
-  const result = await pollUploadResult(uploadToken, (ratio) => {
-    input.onProgress?.({
-      phase: 'finishing',
-      ratio,
-      fileName: input.fileName,
-    })
-  })
-
-  input.onProgress?.({
-    phase: 'finishing',
-    ratio: 1,
-    fileName: input.fileName,
-  })
-
-  return result
+  return uploadFileResumable(input)
 }
 
 /**
