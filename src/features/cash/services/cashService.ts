@@ -27,13 +27,27 @@ export function reportIncomeKurus(report: ReporterDailyReport): number {
   return Math.max(0, Number(report.earningsKurus ?? 0))
 }
 
+/**
+ * Toplam gider = saha giderleri + ücretler.
+ * KDV gelire dahildir, gidere eklenmez (eski kayıtlarda `totalExpenseKurus`
+ * KDV içerebilir — her zaman işletme + çalışan üzerinden hesapla).
+ */
 export function reportExpenseKurus(report: ReporterDailyReport): number {
-  const stored = Number(report.totalExpenseKurus ?? NaN)
-  if (Number.isFinite(stored) && stored >= 0) return stored
-  const operating = Number(report.operatingExpenseKurus ?? 0)
-  const employee = Number(report.employeeExpenseKurus ?? 0)
-  const vat = Number(report.totalVatKurus ?? 0)
-  return Math.max(0, operating + employee + vat)
+  const hotel = Math.max(0, Number(report.hotelExpenseKurus ?? 0))
+  const stationery = Math.max(0, Number(report.stationeryExpenseKurus ?? 0))
+  const fuel = Math.max(0, Number(report.fuelExpenseKurus ?? 0))
+  const extra = Math.max(0, Number(report.extraExpenseKurus ?? 0))
+  const operatingStored = Number(report.operatingExpenseKurus ?? NaN)
+  const operating = Number.isFinite(operatingStored) && operatingStored >= 0
+    ? operatingStored
+    : hotel + stationery + fuel + extra
+  const reporter = Math.max(0, Number(report.totalReporterEarningsKurus ?? 0))
+  const cameraman = Math.max(0, Number(report.totalCameramanEarningsKurus ?? 0))
+  const employeeStored = Number(report.employeeExpenseKurus ?? NaN)
+  const employee = Number.isFinite(employeeStored) && employeeStored >= 0
+    ? employeeStored
+    : reporter + cameraman
+  return Math.max(0, Math.trunc(operating + employee))
 }
 
 export function resolveReportDate(report: ReporterDailyReport): string {

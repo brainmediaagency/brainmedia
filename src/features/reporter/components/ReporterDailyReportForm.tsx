@@ -247,8 +247,7 @@ export function ReporterDailyReportForm({
     parseTryToKurus(extraExpenseTry)
   const employeeExpenseKurus =
     liveFees.totalReporterEarningsKurus + liveFees.totalCameramanEarningsKurus
-  const totalExpenseKurus =
-    operatingExpenseKurus + employeeExpenseKurus + liveFees.totalVatKurus
+  const totalExpenseKurus = operatingExpenseKurus + employeeExpenseKurus
   const totalIncomeKurus = liveFees.totalIncomeKurus
   const fieldPaidKurus = parseTryToKurus(fieldPaidTry)
 
@@ -744,7 +743,6 @@ export function ReporterDailyReportForm({
           label="+ Saha ücretleri (muhabir + kameraman)"
           valueKurus={employeeExpenseKurus}
         />
-        <MoneyRow label="Toplam KDV" valueKurus={liveFees.totalVatKurus} />
         <MoneyRow label="Toplam gider" valueKurus={totalExpenseKurus} />
       </CategoryPanel>
 

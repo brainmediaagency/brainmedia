@@ -34,7 +34,7 @@ export type ReporterDailyReport = {
   operatingExpenseKurus: number
   /** Muhabir + kameraman ücretleri toplamı */
   employeeExpenseKurus: number
-  /** İşletme + çalışan + KDV */
+  /** Saha giderleri + ücretler (KDV hariç) */
   totalExpenseKurus: number
   /** Toplam gelir = KDV matrahı + KDV (kasaya geçen tutar) */
   earningsKurus: number

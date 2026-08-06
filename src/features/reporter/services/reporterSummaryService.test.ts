@@ -84,7 +84,7 @@ describe('aggregateReporterSummary', () => {
         hotelExpenseKurus: 10_00,
         operatingExpenseKurus: 10_00,
         employeeExpenseKurus: 105_00,
-        totalExpenseKurus: 155_00,
+        totalExpenseKurus: 115_00,
       }),
       report({
         id: 'r2',

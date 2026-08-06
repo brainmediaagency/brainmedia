@@ -86,7 +86,7 @@ export function ReporterCashPanel() {
           <SummaryCard
             label="Toplam gider"
             valueKurus={totals.totalExpenseKurus}
-            hint="Saha giderleri + ücretler + KDV"
+            hint="Saha giderleri + ücretler (KDV hariç)"
             tone="expense"
           />
           <SummaryCard

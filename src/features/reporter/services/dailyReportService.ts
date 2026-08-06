@@ -146,7 +146,7 @@ const converter: FirestoreDataConverter<ReporterDailyReport> = {
       operatingExpenseKurus,
       employeeExpenseKurus,
       totalExpenseKurus: Number(
-        data.totalExpenseKurus ?? operatingExpenseKurus + employeeExpenseKurus + totalVatKurus,
+        data.totalExpenseKurus ?? operatingExpenseKurus + employeeExpenseKurus,
       ),
       earningsKurus: Number(data.earningsKurus ?? incomeFromCompanies),
       fieldPaidKurus: Number(data.fieldPaidKurus ?? 0),
@@ -237,7 +237,8 @@ function reportContent(input: DailyReportWriteInput) {
   const operatingExpenseKurus =
     hotelExpenseKurus + stationeryExpenseKurus + fuelExpenseKurus + extraExpenseKurus
   const employeeExpenseKurus = totalReporterEarningsKurus + totalCameramanEarningsKurus
-  const totalExpenseKurus = operatingExpenseKurus + employeeExpenseKurus + totalVatKurus
+  // Toplam gider = saha giderleri + ücretler (KDV gelire eklenir, gidere değil)
+  const totalExpenseKurus = operatingExpenseKurus + employeeExpenseKurus
   const earningsKurus = vatBaseKurus + totalVatKurus
 
   return {

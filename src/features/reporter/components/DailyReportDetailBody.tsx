@@ -93,8 +93,7 @@ export function DailyReportDetailBody({
   const employee =
     report.employeeExpenseKurus ||
     totals.totalReporterEarningsKurus + totals.totalCameramanEarningsKurus
-  const totalExpense =
-    report.totalExpenseKurus || operating + employee + totals.totalVatKurus
+  const totalExpense = operating + employee
   const netCash = totals.totalIncomeKurus - report.fieldPaidKurus
 
   return (
