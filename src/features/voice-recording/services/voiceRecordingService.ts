@@ -1,6 +1,8 @@
 import {
   collection,
+  deleteDoc,
   doc,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -15,7 +17,11 @@ import {
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
 import { getFirebaseAuth } from '@/lib/firebase/auth'
-import { uploadFileToDrive, type DriveUploadProgress } from '@/lib/driveUpload'
+import {
+  trashDriveFile,
+  uploadFileToDrive,
+  type DriveUploadProgress,
+} from '@/lib/driveUpload'
 import { todayDateOnlyIstanbul } from '@/lib/date'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import type { VoiceRecordingDoc } from '@/features/voice-recording/types/voiceRecording'
@@ -170,6 +176,35 @@ export async function saveVoiceRecording(input: {
   })()
 
   return savePromise
+}
+
+/**
+ * Yönetim / koordinatör: listeden kaydı siler + Drive dosyasını trash’ler.
+ * Firestore rules: isCoordinatorOrManagement().
+ */
+export async function deleteVoiceRecording(recordingId: string): Promise<void> {
+  try {
+    const authUid = getFirebaseAuth().currentUser?.uid
+    if (!authUid) {
+      throw new UserFacingError('Oturum bulunamadı. Tekrar giriş yapın.')
+    }
+    const id = recordingId.trim()
+    if (!id) throw new UserFacingError('Kayıt bulunamadı.')
+
+    const ref = doc(getDb(), 'voiceRecordings', id)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) {
+      throw new UserFacingError('Ses kaydı bulunamadı.')
+    }
+    const data = snap.data() as { driveFileId?: string }
+    const fileId = String(data.driveFileId ?? '').trim()
+
+    await deleteDoc(ref)
+    if (fileId) void trashDriveFile(fileId)
+  } catch (error) {
+    if (error instanceof UserFacingError) throw error
+    throw new UserFacingError(mapAppError(error, 'Ses kaydı silinemedi.'))
+  }
 }
 
 export function voiceRecordingTitle(item: VoiceRecordingDoc): string {
