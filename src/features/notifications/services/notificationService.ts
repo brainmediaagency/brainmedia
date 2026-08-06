@@ -70,6 +70,7 @@ export function isOwnActionNotification(
  * Broadcast rows reach every role in Firestore, so day-of region rows are
  * filtered out for reporters here — they do not act on region planning.
  * Kameraman only receives the evening shooting-calendar push (not inbox noise).
+ * İK rapor / CV bildirimleri yalnızca yönetim inbox'ında (media_planning hariç).
  */
 export function isNotificationVisibleForRole(
   item: AppNotification,
@@ -77,6 +78,10 @@ export function isNotificationVisibleForRole(
 ): boolean {
   if (role === 'kameraman') return false
   if (role === 'reporter' && item.type === 'region_created') return false
+  // İK içerikleri managementNotifications + pushRoles: management; defense-in-depth for other roles.
+  if (item.type === 'hr_report' || item.type === 'hiring_note') {
+    return role === 'management'
+  }
   return true
 }
 
@@ -125,7 +130,9 @@ export async function notifyManagement(
     body: payload.body,
     link: payload.link,
     roles: input.pushRoles,
-    audience: 'all',
+    // Only use audience 'all' when no role filter is given; Apps Script treats
+    // audience===all as "every role" and would ignore pushRoles otherwise.
+    audience: input.pushRoles?.length ? undefined : 'all',
     excludeExternalIds: actorUid ? [actorUid] : undefined,
   })
 }
@@ -151,7 +158,7 @@ export async function notifyBroadcast(
     body: payload.body,
     link: payload.link,
     roles: input.pushRoles,
-    audience: 'all',
+    audience: input.pushRoles?.length ? undefined : 'all',
     excludeExternalIds:
       !notifyActor && actorUid ? [actorUid] : undefined,
   })

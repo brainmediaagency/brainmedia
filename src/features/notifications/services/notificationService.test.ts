@@ -83,6 +83,23 @@ describe('isNotificationVisibleForRole', () => {
   it('keeps unrelated types for reporters', () => {
     expect(isNotificationVisibleForRole(item('uid-1'), 'reporter')).toBe(true)
   })
+
+  it('hides İK report and hiring notes from media_planning and other non-management roles', () => {
+    const hrReport = { ...item('hr-1'), type: 'hr_report' as const }
+    const hiring = { ...item('hr-1'), type: 'hiring_note' as const }
+    expect(isNotificationVisibleForRole(hrReport, 'management')).toBe(true)
+    expect(isNotificationVisibleForRole(hiring, 'management')).toBe(true)
+    for (const role of [
+      'media_planning',
+      'coordinator',
+      'reporter',
+      'human_resources',
+      'kameraman',
+    ] as const) {
+      expect(isNotificationVisibleForRole(hrReport, role)).toBe(false)
+      expect(isNotificationVisibleForRole(hiring, role)).toBe(false)
+    }
+  })
 })
 
 describe('push role targeting', () => {
@@ -106,8 +123,30 @@ describe('push role targeting', () => {
     expect(sendOneSignalPush).toHaveBeenCalledWith(
       expect.objectContaining({
         roles: ['management'],
+        audience: undefined,
       }),
     )
+    const call = sendOneSignalPush.mock.calls[0]?.[0] as {
+      roles?: string[]
+      audience?: string
+    }
+    expect(call.roles).not.toContain('media_planning')
+  })
+
+  it('keeps hiring notes push away from media_planning', async () => {
+    await notifyManagement({
+      type: 'hiring_note',
+      title: 'Yeni CV',
+      body: 'aday',
+      link: '/human-resources?tab=interviews',
+      createdByUid: 'hr-1',
+      createdByNameSnapshot: 'İK',
+      pushRoles: ['management'],
+    })
+
+    const call = sendOneSignalPush.mock.calls[0]?.[0] as { roles?: string[] }
+    expect(call.roles).toEqual(['management'])
+    expect(call.roles).not.toContain('media_planning')
   })
 
   it('keeps günün bölgesi push away from reporters', async () => {

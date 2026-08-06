@@ -15,6 +15,7 @@ describe('permissions', () => {
   it('maps roles to routes', () => {
     expect(canAccessRoute('media_planning', 'media-planning')).toBe(true)
     expect(canAccessRoute('media_planning', 'management')).toBe(false)
+    expect(canAccessRoute('media_planning', 'human-resources')).toBe(false)
     expect(canAccessRoute('coordinator', 'management')).toBe(false)
     expect(canAccessRoute('coordinator', 'media-planning')).toBe(true)
     expect(canAccessRoute('management', 'management')).toBe(true)

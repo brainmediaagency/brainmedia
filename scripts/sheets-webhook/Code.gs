@@ -13,6 +13,8 @@
  *      (requires FIREBASE_SERVICE_ACCOUNT_JSON Script property).
  * v20: ROLES_DRIVE includes kameraman (KM kadran foto upload).
  * v21: trashDriveFile — soft-delete previous Drive file on photo replace.
+ * v22: pushNotify — when `roles` is a non-empty array, do not expand to all
+ *      roles just because `audience` is "all" (İK push was reaching MPU).
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -37,7 +39,7 @@
  */
 
 var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v21'
-var SCRIPT_VERSION = 'v21'
+var SCRIPT_VERSION = 'v22'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -1325,21 +1327,22 @@ function normalizePushRoles_(rolesRaw, audience, allRoles) {
   for (var a = 0; a < allRoles.length; a++) {
     allowed[allRoles[a]] = true
   }
+  // Prefer explicit role list over audience=all (client may send both).
+  if (Array.isArray(rolesRaw) && rolesRaw.length > 0) {
+    var out = []
+    var seen = {}
+    for (var i = 0; i < rolesRaw.length; i++) {
+      var role = String(rolesRaw[i] || '').trim()
+      if (!role || !allowed[role] || seen[role]) continue
+      seen[role] = true
+      out.push(role)
+    }
+    if (out.length > 0) return out
+  }
   if (audience === 'all' || rolesRaw == null) {
     return allRoles.slice()
   }
-  if (!Array.isArray(rolesRaw) || rolesRaw.length === 0) {
-    return allRoles.slice()
-  }
-  var out = []
-  var seen = {}
-  for (var i = 0; i < rolesRaw.length; i++) {
-    var role = String(rolesRaw[i] || '').trim()
-    if (!role || !allowed[role] || seen[role]) continue
-    seen[role] = true
-    out.push(role)
-  }
-  return out.length > 0 ? out : allRoles.slice()
+  return allRoles.slice()
 }
 
 function buildRoleOrFilters_(roles) {
