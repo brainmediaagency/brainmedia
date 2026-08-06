@@ -78,7 +78,7 @@ describe('QA · push allowlist (apps script contract)', () => {
 
   it('Code.gs v26+ prefers Firebase UIDs over role tags for role lists', () => {
     const gs = readFileSync(
-      resolve(process.cwd(), 'scripts/sheets-webhook/Code.gs'),
+      join(process.cwd(), 'scripts/sheets-webhook/Code.gs'),
       'utf8',
     )
     expect(gs).toMatch(/SCRIPT_VERSION = 'v2[6-9]'|SCRIPT_VERSION = 'v[3-9]\d'/)
