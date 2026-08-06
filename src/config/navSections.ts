@@ -85,15 +85,16 @@ export const REPORTER_SECTIONS = [
   { id: 'my-reports', label: 'Raporlarım', icon: ClipboardList },
   { id: 'muhabir-ozet', label: 'Muhabir Özet', icon: BarChart3 },
   { id: 'z-report', label: 'Z Raporu', icon: FileText },
-  /** Yalnızca `reporter` rolü — yönetim/koordinatör muhabir görünümünde yok */
   { id: 'cash', label: 'Kasa', icon: Wallet },
 ] as const satisfies readonly NavSectionItem[]
 
+/** Yönetim / koordinatör: muhabir paneli (form girişi yok; kasa özeti var). */
 export const REPORTER_VIEWER_SECTIONS = [
   { id: 'jobs', label: 'Çekim Takvimi', icon: CalendarDays },
   { id: 'daily-reports', label: 'Günlük Raporlar', icon: ClipboardList },
   { id: 'muhabir-ozet', label: 'Muhabir Özet', icon: BarChart3 },
   { id: 'z-reports', label: 'Z Raporları', icon: FileText },
+  { id: 'cash', label: 'Kasa', icon: Wallet },
 ] as const satisfies readonly NavSectionItem[]
 
 /** İK: yalnızca çekim takvimi. Kameraman: takvim + km raporları. */

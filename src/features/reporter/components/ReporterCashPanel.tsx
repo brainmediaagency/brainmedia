@@ -41,8 +41,8 @@ function SummaryCard({
 }
 
 /**
- * Yalnızca muhabir rolü: şirket kasa özeti (yönetim kasa kartlarıyla aynı 4 kalem).
- * Rapor listesi / detay yok. Yönetim/koord muhabir paneline eklenmez.
+ * Yalnızca muhabir + yönetim/koordinatör (muhabir paneli): şirket kasa özeti.
+ * Aynı 4 kalem; rapor listesi yok. İK / kameraman / MPU bu sekmeyi görmez.
  */
 export function ReporterCashPanel() {
   const [snapshot, setSnapshot] = useState<CompanyCashSnapshot | null | undefined>(

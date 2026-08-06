@@ -78,10 +78,10 @@ describe('QA · role route matrix', () => {
   })
 })
 
-describe('QA · nav tab isolation (reporter cash only for muhabir)', () => {
-  it('REPORTER_SECTIONS includes Kasa; viewer and kameraman do not', () => {
+describe('QA · nav tab isolation (reporter / viewer cash)', () => {
+  it('REPORTER_SECTIONS and VIEWER include Kasa; kameraman/HR calendar do not', () => {
     expect(REPORTER_SECTIONS.some((s) => s.id === 'cash')).toBe(true)
-    expect(REPORTER_VIEWER_SECTIONS.some((s) => s.id === 'cash')).toBe(false)
+    expect(REPORTER_VIEWER_SECTIONS.some((s) => s.id === 'cash')).toBe(true)
     expect(KAMERAMAN_SECTIONS.some((s) => s.id === 'cash')).toBe(false)
     expect(CALENDAR_ONLY_REPORTER_SECTIONS.some((s) => s.id === 'cash')).toBe(
       false,
@@ -89,7 +89,7 @@ describe('QA · nav tab isolation (reporter cash only for muhabir)', () => {
     expect(MANAGEMENT_SECTIONS.some((s) => s.id === 'cash')).toBe(true)
   })
 
-  it('getNavSections(reporter) returns cash only for role=reporter', () => {
+  it('getNavSections(reporter) returns cash for muhabir and mgmt/coord viewers', () => {
     const byRole: Record<UserRole, readonly { id: string }[]> = {
       reporter: getNavSections('reporter', 'reporter'),
       management: getNavSections('reporter', 'management'),
@@ -99,8 +99,8 @@ describe('QA · nav tab isolation (reporter cash only for muhabir)', () => {
       media_planning: getNavSections('reporter', 'media_planning'),
     }
     expect(byRole.reporter.some((s) => s.id === 'cash')).toBe(true)
-    expect(byRole.management.some((s) => s.id === 'cash')).toBe(false)
-    expect(byRole.coordinator.some((s) => s.id === 'cash')).toBe(false)
+    expect(byRole.management.some((s) => s.id === 'cash')).toBe(true)
+    expect(byRole.coordinator.some((s) => s.id === 'cash')).toBe(true)
     expect(byRole.kameraman.some((s) => s.id === 'cash')).toBe(false)
     expect(byRole.human_resources.some((s) => s.id === 'cash')).toBe(false)
     expect(byRole.media_planning).toEqual([])

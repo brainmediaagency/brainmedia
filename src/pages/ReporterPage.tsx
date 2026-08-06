@@ -161,6 +161,7 @@ export function ReporterPage() {
         {tab === 'daily-reports' && <ManagementReporterInbox view="daily" />}
         {tab === 'muhabir-ozet' && <ReporterSummaryPanel allowReporterPicker />}
         {tab === 'z-reports' && <ManagementReporterInbox view="z" />}
+        {tab === 'cash' && <ReporterCashPanel />}
       </div>
     </div>
   )
