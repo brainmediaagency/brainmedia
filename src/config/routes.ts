@@ -3,6 +3,7 @@ import type { UserRole } from '@/config/roles'
 import {
   Briefcase,
   Camera,
+  Car,
   LayoutDashboard,
   Newspaper,
   Shield,
@@ -18,6 +19,8 @@ export const APP_ROUTES = {
   humanResources: '/human-resources',
   coordinator: '/coordinator',
   management: '/management',
+  /** Yönetim/koordinatör saha özeti — solda “Kameraman” menüsü. */
+  kameramanField: '/kameraman',
   newsSites: '/news-sites',
   game: '/game',
   unauthorized: '/unauthorized',
@@ -42,6 +45,12 @@ export const NAV_ITEMS: NavItem[] = [
     path: APP_ROUTES.reporter,
     label: 'Muhabir',
     icon: Camera,
+  },
+  {
+    key: 'kameraman-field',
+    path: APP_ROUTES.kameramanField,
+    label: 'Kameraman',
+    icon: Car,
   },
   {
     key: 'human-resources',

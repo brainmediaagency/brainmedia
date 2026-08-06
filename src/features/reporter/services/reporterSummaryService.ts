@@ -14,7 +14,11 @@ import {
 import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
 import { getDb } from '@/lib/firebase/firestore'
 import { UserFacingError, mapAppError } from '@/lib/errors'
-import { isValidDateOnly } from '@/lib/date'
+import {
+  expandStatsQueryDateRange,
+  isDateOnlyInStatsRange,
+  isValidDateOnly,
+} from '@/lib/date'
 
 const SUMMARY_FETCH_LIMIT = 2000
 
@@ -158,6 +162,9 @@ export async function fetchReportsForSummary(
     throw new UserFacingError('Başlangıç tarihi bitişten sonra olamaz.')
   }
 
+  const expanded = expandStatsQueryDateRange(range.startDate, range.endDate)
+  if (!expanded) return []
+
   const col = collection(getDb(), 'reporterDailyReports')
   const uid = range.createdByUid?.trim() || null
 
@@ -165,14 +172,14 @@ export async function fetchReportsForSummary(
     const constraints = uid
       ? [
           where('createdByUid', '==', uid),
-          where('reportDate', '>=', range.startDate),
-          where('reportDate', '<=', range.endDate),
+          where('reportDate', '>=', expanded.startDate),
+          where('reportDate', '<=', expanded.endDate),
           orderBy('reportDate', 'asc'),
           limit(SUMMARY_FETCH_LIMIT),
         ]
       : [
-          where('reportDate', '>=', range.startDate),
-          where('reportDate', '<=', range.endDate),
+          where('reportDate', '>=', expanded.startDate),
+          where('reportDate', '<=', expanded.endDate),
           orderBy('reportDate', 'asc'),
           limit(SUMMARY_FETCH_LIMIT),
         ]
@@ -181,10 +188,13 @@ export async function fetchReportsForSummary(
     return snap.docs
       .map((d) => mapRawReport(d.id, d.data() as Record<string, unknown>))
       .filter((r) => r.deletedAt == null)
-      .filter((r) => {
-        const reportDate = resolveReportDate(r)
-        return reportDate >= range.startDate && reportDate <= range.endDate
-      })
+      .filter((r) =>
+        isDateOnlyInStatsRange(
+          resolveReportDate(r),
+          range.startDate,
+          range.endDate,
+        ),
+      )
   } catch (error) {
     try {
       const snap = uid
@@ -203,10 +213,13 @@ export async function fetchReportsForSummary(
       return snap.docs
         .map((d) => mapRawReport(d.id, d.data() as Record<string, unknown>))
         .filter((r) => r.deletedAt == null)
-        .filter((r) => {
-          const reportDate = resolveReportDate(r)
-          return reportDate >= range.startDate && reportDate <= range.endDate
-        })
+        .filter((r) =>
+          isDateOnlyInStatsRange(
+            resolveReportDate(r),
+            range.startDate,
+            range.endDate,
+          ),
+        )
         .sort((a, b) => resolveReportDate(a).localeCompare(resolveReportDate(b)))
     } catch (fallbackError) {
       throw new UserFacingError(

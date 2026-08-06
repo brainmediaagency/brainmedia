@@ -17,7 +17,7 @@ import type { JobDocument } from '@/features/jobs/types/job'
 import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
 import type { UserProfile } from '@/features/users/types/user'
 import { getDb } from '@/lib/firebase/firestore'
-import { todayDateOnlyIstanbul } from '@/lib/date'
+import { statsMonthDateBounds, todayDateOnlyIstanbul } from '@/lib/date'
 
 const MONTHLY_FETCH_LIMIT = 2000
 
@@ -58,21 +58,15 @@ export function currentYearMonthIstanbul(now: Date = new Date()): YearMonth {
   return todayDateOnlyIstanbul(now).slice(0, 7)
 }
 
-/** First and last `yyyy-MM-dd` for a calendar month. */
+/**
+ * Ops/stats window for a named month.
+ * Ayın son takvim günü sonraki aya sayılır (önceki ayın son günü dahil, seçilen ayın son günü hariç).
+ */
 export function monthDateBounds(yearMonth: YearMonth): {
   startDate: string
   endDate: string
 } {
-  const [yRaw, mRaw] = yearMonth.split('-')
-  const y = Number(yRaw)
-  const m = Number(mRaw)
-  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
-    throw new Error('Geçersiz ay')
-  }
-  const startDate = `${yRaw}-${mRaw}-01`
-  const lastDay = new Date(y, m, 0).getDate()
-  const endDate = `${yRaw}-${mRaw}-${String(lastDay).padStart(2, '0')}`
-  return { startDate, endDate }
+  return statsMonthDateBounds(yearMonth)
 }
 
 function dayStart(dateOnly: string): Timestamp {

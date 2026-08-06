@@ -21,6 +21,11 @@ import {
 import { getDb } from '@/lib/firebase/firestore'
 import type { ReporterZReport } from '@/features/reporter/types/reporter'
 import { UserFacingError, mapAppError } from '@/lib/errors'
+import {
+  dateToDateOnlyIstanbul,
+  expandStatsQueryDateRange,
+  isDateOnlyInStatsRange,
+} from '@/lib/date'
 import { uploadFileToDrive, type DriveUploadProgress } from '@/lib/driveUpload'
 import { DEFAULT_LIST_LIMIT } from '@/config/roles'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
@@ -204,16 +209,29 @@ export async function fetchZReportsInRange(range: {
   endDate: string
 }): Promise<ReporterZReport[]> {
   try {
+    const expanded = expandStatsQueryDateRange(range.startDate, range.endDate)
+    if (!expanded) return []
+
     const snap = await getDocs(
       query(
         reportsCollection(),
-        where('createdAt', '>=', dayStart(range.startDate)),
-        where('createdAt', '<=', dayEnd(range.endDate)),
+        where('createdAt', '>=', dayStart(expanded.startDate)),
+        where('createdAt', '<=', dayEnd(expanded.endDate)),
         orderBy('createdAt', 'desc'),
         limit(1000),
       ),
     )
-    return snap.docs.map((d) => d.data())
+    return snap.docs
+      .map((d) => d.data())
+      .filter((report) => {
+        const created = report.createdAt?.toDate?.()
+        if (!created) return false
+        return isDateOnlyInStatsRange(
+          dateToDateOnlyIstanbul(created),
+          range.startDate,
+          range.endDate,
+        )
+      })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Z raporları yüklenemedi.'))
   }

@@ -316,7 +316,7 @@ export async function upsertOdometerReading(input: {
       type: 'odometer_report',
       title: 'Kameraman kadran raporu',
       body: `${input.createdByNameSnapshot.trim()} — ${slotLabelTr(input.slot)} · ${km.toLocaleString('tr-TR')} km · ${formatDateOnlyShortTr(input.reportDate)}`,
-      link: '/coordinator?tab=field-ops',
+      link: '/kameraman?tab=field-ops',
       createdByUid: authUid,
       createdByNameSnapshot: input.createdByNameSnapshot.trim().slice(0, 120),
       pushRoles: ['management', 'coordinator'],

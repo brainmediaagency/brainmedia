@@ -6,6 +6,7 @@ export type AppRouteKey =
   | 'human-resources'
   | 'coordinator'
   | 'management'
+  | 'kameraman-field'
   | 'news-sites'
   | 'game'
 
@@ -23,6 +24,7 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
     'coordinator',
     'media-planning',
     'reporter',
+    'kameraman-field',
     'human-resources',
     'news-sites',
     'game',
@@ -32,6 +34,7 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
     'coordinator',
     'media-planning',
     'reporter',
+    'kameraman-field',
     'human-resources',
     'news-sites',
     'game',

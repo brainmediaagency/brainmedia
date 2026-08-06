@@ -26,8 +26,8 @@ import type {
 } from '@/features/game/types/game'
 
 export const MAX_DAILY_ATTEMPTS = 1
-/** Rules accept bestMs 100..3000; clamp attempt best-of-rounds into that range. */
-export const MIN_ATTEMPT_MS = 100
+/** Rules accept bestMs 1..3000; only reject non-positive / absurd timers. */
+export const MIN_ATTEMPT_MS = 1
 export const MAX_ATTEMPT_MS = 3000
 
 const WINNER_FINALIZE_THROTTLE_MS = 15 * 60 * 1000
