@@ -76,12 +76,23 @@ describe('QA · push allowlist (apps script contract)', () => {
     ).toEqual(['management', 'reporter'])
   })
 
-  it('Code.gs v23 uses Object.keys(ROLES_PUSH) for allowlist', () => {
+  it('Code.gs v26+ prefers Firebase UIDs over role tags for role lists', () => {
+    const gs = readFileSync(
+      resolve(process.cwd(), 'scripts/sheets-webhook/Code.gs'),
+      'utf8',
+    )
+    expect(gs).toMatch(/SCRIPT_VERSION = 'v2[6-9]'|SCRIPT_VERSION = 'v[3-9]\d'/)
+    expect(gs).toContain('fetchActiveUidsForRoles_')
+    expect(gs).toContain('targetingMode = \'role_uids\'')
+    expect(gs).toMatch(/Prefer uid resolution|include_aliases/)
+  })
+
+  it('Code.gs ROLES_PUSH / ALL_PUSH_ROLES include kameraman', () => {
     const gs = readFileSync(
       join(process.cwd(), 'scripts/sheets-webhook/Code.gs'),
       'utf8',
     )
-    expect(gs).toMatch(/SCRIPT_VERSION\s*=\s*'v23'/)
+    expect(gs).toMatch(/SCRIPT_VERSION\s*=\s*'v2[6-9]'|SCRIPT_VERSION\s*=\s*'v[3-9]\d'/)
     expect(gs).toMatch(/kameraman:\s*true/)
     expect(gs).toMatch(/ALL_PUSH_ROLES\s*=\s*Object\.keys\(ROLES_PUSH\)/)
     // Old hard-coded five-role list must not reappear as sole allowlist

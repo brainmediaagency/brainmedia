@@ -22,6 +22,10 @@
  *      (Apps Script single base64 body cannot hold 25+ min recordings).
  * v25: uploadFileChunk — do not set Content-Length on UrlFetchApp (throws
  *      "Attribute provided with invalid value: Header:Content-Length").
+ * v26: pushNotify role targeting resolves active Firestore user UIDs and
+ *      delivers via include_aliases.external_id (tag filters were still
+ *      hitting MPU when devices had stale/wrong role tags). Tag filters only
+ *      as fallback when SA lookup fails.
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -45,8 +49,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v21'
-var SCRIPT_VERSION = 'v25'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v26'
+var SCRIPT_VERSION = 'v26'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -1392,7 +1396,8 @@ function ensureJobIdHeader_(sheet) {
  *
  * Targeting (priority):
  * 1. body.externalIds: string[] → include_aliases.external_id (Firebase uid)
- * 2. body.roles: string[] → OR tag filters for those roles
+ * 2. body.roles: string[] → resolve active Firestore users per role →
+ *    include_aliases.external_id (preferred; tag filters only as SA fallback)
  * 3. body.audience === 'all' or omitted → all ROLES_PUSH tags (OR)
  * Optional: body.excludeExternalIds → exclude_aliases.external_id (skip actor)
  */
@@ -1434,6 +1439,9 @@ function handlePushNotify_(body) {
   var externalIds = normalizeExternalIds_(body.externalIds).filter(function (id) {
     return excludeIds.indexOf(id) === -1
   })
+  var targetingMode = 'external_ids'
+  var resolvedRoles = null
+
   if (externalIds.length > 0) {
     // Targeted push by Firebase uid (OneSignal login / external_id)
     payload.include_aliases = { external_id: externalIds }
@@ -1448,9 +1456,49 @@ function handlePushNotify_(body) {
     })
   } else {
     var roles = normalizePushRoles_(body.roles, body.audience, ALL_PUSH_ROLES)
-    payload.filters = buildRoleOrFilters_(roles)
-    if (excludeIds.length > 0) {
-      payload.exclude_aliases = { external_id: excludeIds }
+    resolvedRoles = roles
+
+    // Prefer uid resolution for explicit role lists (and for full-audience lists)
+    // so stale OneSignal role tags cannot leak İK/management-only pushes to MPU.
+    var useAudienceAll =
+      !(Array.isArray(body.roles) && body.roles.length > 0) &&
+      (body.audience === 'all' || body.roles == null)
+
+    if (!useAudienceAll && roles.length > 0) {
+      var resolvedUids = fetchActiveUidsForRoles_(roles)
+      if (resolvedUids === null) {
+        // SA / Firestore unavailable — last resort tag filter
+        targetingMode = 'role_tags_fallback'
+        payload.filters = buildRoleOrFilters_(roles)
+        if (excludeIds.length > 0) {
+          payload.exclude_aliases = { external_id: excludeIds }
+        }
+      } else {
+        var targetIds = resolvedUids.filter(function (id) {
+          return excludeIds.indexOf(id) === -1
+        })
+        if (targetIds.length === 0) {
+          return jsonResponse_({
+            ok: true,
+            skipped: true,
+            reason: 'no_active_users_for_roles',
+            roles: roles,
+            service: SCRIPT_SERVICE,
+            version: SCRIPT_VERSION,
+          })
+        }
+        targetingMode = 'role_uids'
+        // OneSignal include_aliases.external_id max practical batch
+        payload.include_aliases = {
+          external_id: targetIds.slice(0, 200),
+        }
+      }
+    } else {
+      targetingMode = 'role_tags_all'
+      payload.filters = buildRoleOrFilters_(roles)
+      if (excludeIds.length > 0) {
+        payload.exclude_aliases = { external_id: excludeIds }
+      }
     }
   }
 
@@ -1484,6 +1532,8 @@ function handlePushNotify_(body) {
           (parsed && (parsed.errors || parsed.error)) ||
           'OneSignal HTTP ' + code,
         onesignal: parsed,
+        targetingMode: targetingMode,
+        roles: resolvedRoles,
         service: SCRIPT_SERVICE,
         version: SCRIPT_VERSION,
       },
@@ -1494,6 +1544,8 @@ function handlePushNotify_(body) {
   return jsonResponse_({
     ok: true,
     onesignal: parsed,
+    targetingMode: targetingMode,
+    roles: resolvedRoles,
     service: SCRIPT_SERVICE,
     version: SCRIPT_VERSION,
   })
@@ -1642,6 +1694,94 @@ function buildRoleOrFilters_(roles) {
     })
   }
   return filters
+}
+
+/**
+ * Active Firestore users (`isActive == true`, not soft-deleted) whose `role`
+ * is one of `roles`. Returns string[] of Firebase uids, or null if Admin SA
+ * / Firestore is unavailable (caller may fall back to tag filters).
+ */
+function fetchActiveUidsForRoles_(roles) {
+  if (!roles || !roles.length) return []
+
+  var accessToken
+  try {
+    accessToken = getFirebaseAdminAccessToken_()
+  } catch (tokenErr) {
+    return null
+  }
+
+  var seen = {}
+  var out = []
+
+  for (var r = 0; r < roles.length; r++) {
+    var role = String(roles[r] || '').trim()
+    if (!role) continue
+
+    var queryBody = {
+      structuredQuery: {
+        from: [{ collectionId: 'users' }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath: 'role' },
+            op: 'EQUAL',
+            value: { stringValue: role },
+          },
+        },
+        limit: 200,
+      },
+    }
+
+    var url =
+      'https://firestore.googleapis.com/v1/projects/' +
+      encodeURIComponent(FIREBASE_PROJECT_ID) +
+      '/databases/(default)/documents:runQuery'
+
+    var resp
+    try {
+      resp = UrlFetchApp.fetch(url, {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + accessToken },
+        payload: JSON.stringify(queryBody),
+        muteHttpExceptions: true,
+      })
+    } catch (fetchErr) {
+      return null
+    }
+
+    var code = resp.getResponseCode()
+    if (code < 200 || code >= 300) {
+      return null
+    }
+
+    var rows
+    try {
+      rows = JSON.parse(resp.getContentText())
+    } catch (parseErr) {
+      return null
+    }
+    if (!(rows instanceof Array)) continue
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i] || {}
+      var doc = row.document
+      if (!doc || !doc.name) continue
+      var fields = doc.fields || {}
+      // Soft-deleted / inactive accounts must not receive staff pushes.
+      if (fields.deletedAt && fields.deletedAt.timestampValue) continue
+      if (fields.isActive && fields.isActive.booleanValue === false) continue
+      var name = String(doc.name)
+      var parts = name.split('/')
+      var uid = parts.length ? parts[parts.length - 1] : ''
+      if (!uid || seen[uid]) continue
+      seen[uid] = true
+      out.push(uid)
+      if (out.length >= 200) return out
+    }
+  }
+
+  return out
 }
 
 /**

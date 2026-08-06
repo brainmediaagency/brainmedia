@@ -10,6 +10,7 @@ export type OneSignalSdk = {
   logout: () => Promise<void>
   User: {
     addTag: (key: string, value: string) => void
+    addTags: (tags: Record<string, string>) => void
     PushSubscription: {
       optedIn: boolean
       optIn: () => Promise<void>
@@ -143,7 +144,9 @@ export async function loginOneSignalWithRole(
   if (!os) return false
   try {
     await os.login(uid)
-    os.User.addTag('role', role)
+    // Overwrite tag so a device that previously logged in under another role
+    // cannot keep a stale `role` value that broadens push targeting.
+    os.User.addTags({ role })
     return true
   } catch {
     return false
