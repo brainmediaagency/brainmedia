@@ -31,11 +31,18 @@ export type DriveUploadProgress = {
  */
 export const DRIVE_SINGLE_SHOT_MAX_BYTES = 1.5 * 1024 * 1024
 
-/** Raw binary per resumable chunk (~1 MB base64 after encode). */
-export const DRIVE_CHUNK_BYTES = 768 * 1024
+/**
+ * Raw binary per resumable chunk.
+ * Smaller chunks = more reliable Apps Script web-app responses for long voice takes
+ * (~15 min+). ~350 KB base64 after encode.
+ */
+export const DRIVE_CHUNK_BYTES = 256 * 1024
 
 /** Hard ceiling: protects tab memory + Apps Script / Drive sessions. */
 export const DRIVE_HARD_MAX_BYTES = 80 * 1024 * 1024
+
+const WEBHOOK_POST_ATTEMPTS = 4
+const WEBHOOK_CHUNK_ATTEMPTS = 4
 
 function fileToBase64(
   file: Blob,
@@ -108,16 +115,101 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
   }
   if (/session expired|chunk order|resumable|too large|Invalid size|payload/i.test(combined)) {
     return (
-      'Dosya çok büyük veya yükleme oturumu düştü. Kayıt hâlâ bu cihazda; İndir ile bilgisayara alın, sonra daha kısa parçalar halinde tekrar yükleyin. Apps Script v24+ (uploadFileInit) gerekir.'
+      'Dosya çok büyük veya yükleme oturumu düştü. Kayıt hâlâ bu cihazda; İndir ile bilgisayara alın, sonra tekrar yükleyin. Apps Script v24+ (uploadFileInit) gerekir.'
+    )
+  }
+  if (/Chunk failed HTTP|Drive resumable|No resumable/i.test(combined)) {
+    return (
+      'Drive parça yüklemesi başarısız. Kayıt bu cihazda; İndir ile yedekleyip tekrar deneyin. Ağ kararlı değilse daha kısa parçalar yükleyin.'
     )
   }
   return raw || detail || fallback
 }
 
+function looksLikeJson_(text: string): boolean {
+  const t = text.trim()
+  return t.startsWith('{') || t.startsWith('[')
+}
+
+function extractJsonObject_(text: string): string | null {
+  const t = text.trim()
+  if (looksLikeJson_(t)) return t
+  // Some error pages wrap JSON — try outermost object.
+  const start = t.indexOf('{')
+  const end = t.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    return t.slice(start, end + 1)
+  }
+  return null
+}
+
+function extractMovedLocation_(html: string): string | null {
+  const patterns = [
+    /href=["'](https:\/\/script\.googleusercontent\.com[^"']+)["']/i,
+    /HREF=["'](https:\/\/script\.googleusercontent\.com[^"']+)["']/i,
+    /"(https:\/\/script\.googleusercontent\.com\/macros\/echo[^"]+)"/i,
+  ]
+  for (const re of patterns) {
+    const match = html.match(re)
+    if (match?.[1]) return match[1]
+  }
+  return null
+}
+
+function unreadableWebhookMessage(text: string, httpStatus: number): string {
+  const t = text.trim()
+  if (!t) {
+    return (
+      'Drive webhook boş yanıt verdi (sık: zaman aşımı veya ağ koptu). ' +
+      'Ses kaydı bu cihazda; İndir ile yedekleyip tekrar kaydedin.'
+    )
+  }
+  if (/took too long|timed out|timeout|Exceeded maximum execution/i.test(t)) {
+    return (
+      'Apps Script zaman aşımı (uzun ses yüklemesi). Kayıt bu cihazda; İndir ile alın ve tekrar deneyin.'
+    )
+  }
+  if (
+    /<!DOCTYPE|<html|Moved Temporarily|Error|Exception|Script function not found/i.test(
+      t,
+    )
+  ) {
+    return (
+      'Drive webhook HTML hata sayfası döndü (uzun yüklemede sık). ' +
+      'Kayıt bu cihazda; İndir ile yedekleyip tekrar deneyin. Script v26+ ve ağ kararlı olmalı.'
+    )
+  }
+  if (httpStatus === 0 || httpStatus >= 500) {
+    return (
+      `Drive webhook yanıt veremedi (HTTP ${httpStatus || 'ağ'}). ` +
+      'Kayıt bu cihazda; kısa süre sonra tekrar deneyin.'
+    )
+  }
+  return (
+    'Webhook yanıtı okunamadı. Uzun ses kayıtlarında ağ/Apps Script kesintisi olabilir — ' +
+    'İndir ile yedekleyip tekrar kaydedin. Sürmezse Apps Script New version yayınlayın.'
+  )
+}
+
+/** doGet ping looks like ok:true without upload fields — POST was lost to a redirect GET. */
+function isWebhookVersionPing_(parsed: Record<string, unknown>): boolean {
+  return (
+    parsed.ok === true &&
+    Array.isArray(parsed.features) &&
+    typeof parsed.version === 'string' &&
+    parsed.fileId == null &&
+    parsed.resumed == null &&
+    parsed.pending == null &&
+    parsed.done == null &&
+    parsed.error == null
+  )
+}
+
 /**
  * Readable Apps Script calls via POST JSON body (idToken never in the URL).
  * text/plain avoids CORS preflight; Apps Script may 302 →
- * script.googleusercontent.com — follow once if the first body is HTML.
+ * script.googleusercontent.com — re-POST body to Location when needed.
+ * Retries cover empty/HTML blips on multi-minute voice uploads.
  */
 export async function postWebhookForm(
   params: Record<string, string>,
@@ -127,46 +219,84 @@ export async function postWebhookForm(
     throw new UserFacingError('Drive webhook yapılandırılmamış.')
   }
 
-  const idToken = await getWebhookIdToken()
-  const body = JSON.stringify({ ...params, idToken })
-  const init: RequestInit = {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body,
-    redirect: 'follow',
-  }
+  let lastUnreadable = ''
+  let lastStatus = 0
 
-  let response = await fetch(url, init)
-  let text = await response.text()
-
-  if (!looksLikeJson_(text)) {
-    const location =
-      response.headers.get('Location')
-      || response.headers.get('location')
-      || extractMovedLocation_(text)
-    if (location) {
-      response = await fetch(location, { ...init, redirect: 'follow' })
-      text = await response.text()
+  for (let attempt = 0; attempt < WEBHOOK_POST_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(400 * attempt + Math.floor(Math.random() * 200))
     }
+
+    let idToken: string
+    try {
+      idToken = await getWebhookIdToken()
+    } catch {
+      throw new UserFacingError(
+        'Oturum jetonu alınamadı. Tekrar giriş yapıp ses kaydını yeniden yükleyin (İndir ile yedekleyin).',
+      )
+    }
+
+    const body = JSON.stringify({ ...params, idToken })
+    const init: RequestInit = {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body,
+      redirect: 'follow',
+    }
+
+    let response: Response
+    try {
+      response = await fetch(url, init)
+    } catch {
+      lastUnreadable = ''
+      lastStatus = 0
+      continue
+    }
+
+    let text = await response.text()
+    lastStatus = response.status
+
+    if (!looksLikeJson_(text)) {
+      const location =
+        response.headers.get('Location') ||
+        response.headers.get('location') ||
+        extractMovedLocation_(text)
+      if (location) {
+        try {
+          response = await fetch(location, { ...init, redirect: 'follow' })
+          text = await response.text()
+          lastStatus = response.status
+        } catch {
+          lastUnreadable = text
+          continue
+        }
+      }
+    }
+
+    const jsonText = extractJsonObject_(text)
+    if (!jsonText) {
+      lastUnreadable = text
+      continue
+    }
+
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(jsonText) as Record<string, unknown>
+    } catch {
+      lastUnreadable = text
+      continue
+    }
+
+    // POST accidentally became GET after a 302 — retry so upload actions work.
+    if (isWebhookVersionPing_(parsed) && params.action && params.action !== '') {
+      lastUnreadable = jsonText
+      continue
+    }
+
+    return parsed
   }
 
-  try {
-    return JSON.parse(text) as Record<string, unknown>
-  } catch {
-    throw new UserFacingError(
-      'Webhook yanıtı okunamadı. Apps Script’e güncel Code.gs yapıştırıp New version yayınlayın.',
-    )
-  }
-}
-
-function looksLikeJson_(text: string): boolean {
-  const t = text.trim()
-  return t.startsWith('{') || t.startsWith('[')
-}
-
-function extractMovedLocation_(html: string): string | null {
-  const match = html.match(/href=["'](https:\/\/script\.googleusercontent\.com[^"']+)["']/i)
-  return match?.[1] ?? null
+  throw new UserFacingError(unreadableWebhookMessage(lastUnreadable, lastStatus))
 }
 
 /** @deprecated use postWebhookForm — kept for call sites */
@@ -322,11 +452,11 @@ async function uploadFileResumable(input: {
     totalBytes: String(totalBytes),
   })
 
-  if (!init.ok) {
+  if (!init.ok || init.resumed !== true) {
     throw new UserFacingError(
       webhookErrorMessage(
         init,
-        'Büyük dosya yükleme oturumu açılamadı. Apps Script v24 (uploadFileInit) yayınlayın.',
+        'Büyük dosya yükleme oturumu açılamadı. Apps Script v24+ (uploadFileInit) yayınlayın.',
       ),
     )
   }
@@ -348,17 +478,48 @@ async function uploadFileResumable(input: {
       fileName: input.fileName,
     })
 
-    const parsed = await postWebhookForm({
-      action: 'uploadFileChunk',
-      uploadToken,
-      base64,
-      byteStart: String(offset),
-      byteEnd: String(endInclusive),
-      totalBytes: String(totalBytes),
-      mimeType: input.mimeType,
-      chunkIndex: String(chunkIndex),
-      approxChunks: String(approxChunks),
-    })
+    let parsed: Record<string, unknown> | null = null
+    let lastChunkError: unknown = null
+    for (let attempt = 0; attempt < WEBHOOK_CHUNK_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) {
+        await sleep(500 * attempt)
+      }
+      try {
+        parsed = await postWebhookForm({
+          action: 'uploadFileChunk',
+          uploadToken,
+          base64,
+          byteStart: String(offset),
+          byteEnd: String(endInclusive),
+          totalBytes: String(totalBytes),
+          mimeType: input.mimeType,
+          chunkIndex: String(chunkIndex),
+          approxChunks: String(approxChunks),
+        })
+        // Order/session errors: rethrow without useless retries of same offset
+        if (
+          parsed.ok === false &&
+          /session expired|chunk order|Corrupt/i.test(
+            String(parsed.error ?? ''),
+          )
+        ) {
+          break
+        }
+        if (parsed.ok) break
+        lastChunkError = parsed
+      } catch (error) {
+        lastChunkError = error
+        parsed = null
+      }
+    }
+
+    if (!parsed) {
+      if (lastChunkError instanceof UserFacingError) throw lastChunkError
+      throw new UserFacingError(
+        mapUnknownChunkError_(lastChunkError) ||
+          'Dosya parçası yüklenemedi. Kayıt bu cihazda; İndir ile yedekleyip tekrar deneyin.',
+      )
+    }
 
     if (!parsed.ok) {
       throw new UserFacingError(
@@ -376,7 +537,10 @@ async function uploadFileResumable(input: {
     }
 
     if (parsed.pending) {
-      offset = endExclusive
+      // Prefer server-reported next byte when present (Drive Range end).
+      const next = Number(parsed.next)
+      offset =
+        Number.isFinite(next) && next > offset ? next : endExclusive
       chunkIndex += 1
       continue
     }
@@ -387,8 +551,21 @@ async function uploadFileResumable(input: {
   }
 
   throw new UserFacingError(
-    'Yükleme tamamlanamadı (son parça yanıtı yok). Apps Script v24 kontrol edin.',
+    'Yükleme tamamlanamadı (son parça yanıtı yok). Apps Script v24+ kontrol edin.',
   )
+}
+
+function mapUnknownChunkError_(error: unknown): string {
+  if (error instanceof UserFacingError) {
+    return error.message.replace(/^USER_/, '')
+  }
+  if (error && typeof error === 'object' && 'error' in error) {
+    return webhookErrorMessage(
+      error as Record<string, unknown>,
+      'Dosya Google Drive’a yüklenemedi.',
+    )
+  }
+  return ''
 }
 
 /**
@@ -396,7 +573,7 @@ async function uploadFileResumable(input: {
  * Does not use Firebase Storage.
  *
  * Small files: single base64 POST.
- * Large files (voice ~25 dk): Drive resumable chunks (webhook v24+).
+ * Large files (voice ~15–25 dk): Drive resumable chunks (webhook v24+).
  */
 export async function uploadFileToDrive(input: {
   file: Blob
