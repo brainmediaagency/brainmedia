@@ -34,7 +34,9 @@ import {
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { notifyManagement, notifyUser } from '@/features/notifications/services/notificationService'
 import {
+  expandStatsQueryDateRange,
   formatJobScheduleTr,
+  isInstantInStatsRange,
   isJobScheduleOnOrAfter,
   isJobSchedulePast,
   isValidDateOnly,
@@ -427,8 +429,11 @@ export async function fetchPlannerJobsInRange(params: {
   endDate: string
 }): Promise<JobDocument[]> {
   try {
-    const startMs = dayStart(params.startDate).toMillis()
-    const endMs = dayEnd(params.endDate).toMillis()
+    const expanded = expandStatsQueryDateRange(params.startDate, params.endDate)
+    if (!expanded) return []
+
+    const startMs = dayStart(expanded.startDate).toMillis()
+    const endMs = dayEnd(expanded.endDate).toMillis()
 
     const [pendingSnap, nonPendingSnap] = await Promise.all([
       getDocs(
@@ -459,9 +464,11 @@ export async function fetchPlannerJobsInRange(params: {
 
     return [...byId.values()]
       .filter((job) => {
-        const createdMs = job.createdAt?.toMillis?.()
-        if (createdMs == null) return false
-        return createdMs >= startMs && createdMs <= endMs
+        const created = job.createdAt?.toDate?.()
+        if (!created) return false
+        const createdMs = created.getTime()
+        if (createdMs < startMs || createdMs > endMs) return false
+        return isInstantInStatsRange(created, params.startDate, params.endDate)
       })
       .sort((a, b) => {
         const aMs = a.createdAt?.toMillis?.() ?? 0
@@ -473,6 +480,71 @@ export async function fetchPlannerJobsInRange(params: {
       mapAppError(error, 'Medya planlama işleri yüklenemedi.'),
     )
   }
+}
+
+const COMPANY_SEARCH_PREFIX_LIMIT = 80
+const COMPANY_SEARCH_SCAN_LIMIT = 500
+
+/**
+ * Yönetim/koordinatör firma araması: companyNameNormalized üzerinde önek +
+ * son güncellenen kayıtlarda alt dizge eşleşmesi.
+ */
+export async function searchJobsByCompanyName(
+  rawQuery: string,
+): Promise<JobDocument[]> {
+  const normalized = normalizeCompanyName(rawQuery)
+  if (normalized.length < 2) {
+    throw new UserFacingError('Arama için en az 2 karakter girin.')
+  }
+
+  const byId = new Map<string, JobDocument>()
+
+  function matches(job: JobDocument): boolean {
+    const nameNorm = job.companyNameNormalized || normalizeCompanyName(job.companyName)
+    return nameNorm.includes(normalized)
+  }
+
+  try {
+    const prefixSnap = await getDocs(
+      query(
+        jobsCollection(),
+        where('companyNameNormalized', '>=', normalized),
+        where('companyNameNormalized', '<=', `${normalized}\uf8ff`),
+        orderBy('companyNameNormalized'),
+        limit(COMPANY_SEARCH_PREFIX_LIMIT),
+      ),
+    )
+    for (const docSnap of prefixSnap.docs) {
+      const job = docSnap.data()
+      if (matches(job)) byId.set(job.id, job)
+    }
+  } catch {
+    // Composite/single-field index may be missing; recent scan is the fallback.
+  }
+
+  try {
+    const recentSnap = await getDocs(
+      query(
+        jobsCollection(),
+        orderBy('updatedAt', 'desc'),
+        limit(COMPANY_SEARCH_SCAN_LIMIT),
+      ),
+    )
+    for (const docSnap of recentSnap.docs) {
+      const job = docSnap.data()
+      if (matches(job)) byId.set(job.id, job)
+    }
+  } catch (error) {
+    if (byId.size === 0) {
+      throw new UserFacingError(mapAppError(error, 'Firma araması yapılamadı.'))
+    }
+  }
+
+  return [...byId.values()].sort((a, b) => {
+    const aMs = a.updatedAt?.toMillis?.() ?? a.createdAt?.toMillis?.() ?? 0
+    const bMs = b.updatedAt?.toMillis?.() ?? b.createdAt?.toMillis?.() ?? 0
+    return bMs - aMs
+  })
 }
 
 function buildOwnerStatsIncrement(delta: {

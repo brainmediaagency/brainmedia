@@ -15,6 +15,7 @@ import { ManagementPage } from '@/pages/ManagementPage'
 import { ReporterPage } from '@/pages/ReporterPage'
 import { NewsSitesPage } from '@/pages/NewsSitesPage'
 import { GamePage } from '@/pages/GamePage'
+import { KameramanFieldPage } from '@/pages/KameramanFieldPage'
 
 function RootRedirect() {
   const { user, claims, loading } = useAuth()
@@ -68,6 +69,17 @@ export function AppRouter() {
           <ProtectedRoute routeKey="reporter">
             <AuthenticatedLayout>
               <ReporterPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.kameramanField}
+        element={
+          <ProtectedRoute routeKey="kameraman-field">
+            <AuthenticatedLayout>
+              <KameramanFieldPage />
             </AuthenticatedLayout>
           </ProtectedRoute>
         }

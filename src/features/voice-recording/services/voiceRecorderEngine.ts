@@ -184,6 +184,12 @@ class VoiceRecorderEngine {
   private finalizeTimer: ReturnType<typeof setTimeout> | null = null
   private totalBytes = 0
 
+  /**
+   * Cached for `useSyncExternalStore`: getSnapshot must return a stable
+   * reference when nothing changed (new object every call → React #185).
+   */
+  private snapshot: VoiceEngineSnapshot = this.buildSnapshot()
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
     return () => {
@@ -192,6 +198,10 @@ class VoiceRecorderEngine {
   }
 
   getSnapshot(): VoiceEngineSnapshot {
+    return this.snapshot
+  }
+
+  private buildSnapshot(): VoiceEngineSnapshot {
     return {
       status: this.status,
       elapsedMs: this.elapsedMs,
@@ -207,6 +217,20 @@ class VoiceRecorderEngine {
   }
 
   private emit() {
+    const next = this.buildSnapshot()
+    const prev = this.snapshot
+    if (
+      prev.status === next.status &&
+      prev.elapsedMs === next.elapsedMs &&
+      prev.error === next.error &&
+      prev.recording === next.recording &&
+      prev.stoppedReason === next.stoppedReason &&
+      prev.supported === next.supported &&
+      prev.supportsPauseResume === next.supportsPauseResume
+    ) {
+      return
+    }
+    this.snapshot = next
     for (const listener of this.listeners) listener()
   }
 

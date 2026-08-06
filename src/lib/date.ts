@@ -77,22 +77,134 @@ export function formatYearMonthLongTr(yearMonth: string): string {
 }
 
 /**
- * Human range label for a calendar month: "1 – 31 Ağustos 2026"
+ * Human range label for the ops/stats month window (ayın son günü sonraki aya):
+ * "28 Şubat – 30 Mart 2026" for 2026-03.
  */
 export function formatYearMonthRangeTr(yearMonth: string): string {
   if (!isValidYearMonth(yearMonth)) return yearMonth
+  try {
+    const { startDate, endDate } = statsMonthDateBounds(yearMonth)
+    const start = fromZonedTime(`${startDate}T12:00:00`, COMPANY_TIMEZONE)
+    const end = fromZonedTime(`${endDate}T12:00:00`, COMPANY_TIMEZONE)
+    const endLabel = formatInTimeZone(end, COMPANY_TIMEZONE, 'd MMMM yyyy', {
+      locale: tr,
+    })
+    if (startDate.slice(0, 7) === endDate.slice(0, 7)) {
+      const startDay = formatInTimeZone(start, COMPANY_TIMEZONE, 'd', { locale: tr })
+      return `${startDay} – ${endLabel}`
+    }
+    const startLabel = formatInTimeZone(start, COMPANY_TIMEZONE, 'd MMMM', {
+      locale: tr,
+    })
+    return `${startLabel} – ${endLabel}`
+  } catch {
+    return yearMonth
+  }
+}
+
+/** Last calendar day of `yyyy-MM` as `yyyy-MM-dd`. */
+export function lastDayOfMonthDateOnly(yearMonth: string): string {
+  if (!isValidYearMonth(yearMonth)) return yearMonth
   const [y, m] = yearMonth.split('-').map(Number)
   const lastDay = new Date(Date.UTC(y!, m!, 0)).getUTCDate()
-  const start = fromZonedTime(`${yearMonth}-01T12:00:00`, COMPANY_TIMEZONE)
-  const end = fromZonedTime(
-    `${yearMonth}-${String(lastDay).padStart(2, '0')}T12:00:00`,
-    COMPANY_TIMEZONE,
-  )
-  const startDay = formatInTimeZone(start, COMPANY_TIMEZONE, 'd', { locale: tr })
-  const endLabel = formatInTimeZone(end, COMPANY_TIMEZONE, 'd MMMM yyyy', {
-    locale: tr,
-  })
-  return `${startDay} – ${endLabel}`
+  return `${yearMonth}-${String(lastDay).padStart(2, '0')}`
+}
+
+export function isLastCalendarDayOfMonth(dateOnly: string): boolean {
+  if (!isValidDateOnly(dateOnly)) return false
+  return dateOnly === lastDayOfMonthDateOnly(dateOnly.slice(0, 7))
+}
+
+/** Add whole days to a `yyyy-MM-dd` (UTC calendar arithmetic). */
+export function addDaysDateOnly(dateOnly: string, days: number): string {
+  if (!isValidDateOnly(dateOnly)) return dateOnly
+  const [y, m, d] = dateOnly.split('-').map(Number)
+  const date = new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1))
+  date.setUTCDate(date.getUTCDate() + days)
+  const yy = date.getUTCFullYear()
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(date.getUTCDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+/**
+ * List/stat attribution: ayın son takvim günü bir sonraki aya sayılır.
+ * Örn. 2026-03-31 → 2026-04-01, 2026-03-30 → 2026-03-30.
+ */
+export function statsAttributionDateOnly(dateOnly: string): string {
+  if (!isValidDateOnly(dateOnly)) return dateOnly
+  return isLastCalendarDayOfMonth(dateOnly)
+    ? addDaysDateOnly(dateOnly, 1)
+    : dateOnly
+}
+
+/**
+ * Inclusive raw calendar window for ops month `yyyy-MM`.
+ * Mart 2026 → 28 (veya 29) Şubat … 30 Mart; 31 Mart nisan ayına düşer.
+ */
+export function statsMonthDateBounds(yearMonth: string): {
+  startDate: string
+  endDate: string
+} {
+  if (!isValidYearMonth(yearMonth)) {
+    throw new Error('Geçersiz ay')
+  }
+  const startDate = lastDayOfMonthDateOnly(shiftYearMonth(yearMonth, -1))
+  const endDate = addDaysDateOnly(lastDayOfMonthDateOnly(yearMonth), -1)
+  return { startDate, endDate }
+}
+
+/**
+ * UI aralığını (attribution) Firestore sorgusu için ham takvim aralığına çevirir.
+ * Örn. 01.03–31.03 → önceki ayın son günü … 30.03.
+ * Boş sonuç (yalnızca ayın son günü seçildiyse) `null`.
+ */
+export function expandStatsQueryDateRange(
+  startDate: string,
+  endDate: string,
+): { startDate: string; endDate: string } | null {
+  if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate)) return null
+  if (startDate > endDate) return null
+
+  let queryStart = startDate
+  const dayBeforeStart = addDaysDateOnly(startDate, -1)
+  if (
+    isLastCalendarDayOfMonth(dayBeforeStart) &&
+    statsAttributionDateOnly(dayBeforeStart) >= startDate &&
+    statsAttributionDateOnly(dayBeforeStart) <= endDate
+  ) {
+    queryStart = dayBeforeStart
+  }
+
+  let queryEnd = endDate
+  if (isLastCalendarDayOfMonth(endDate)) {
+    queryEnd = addDaysDateOnly(endDate, -1)
+  }
+
+  if (queryStart > queryEnd) return null
+  return { startDate: queryStart, endDate: queryEnd }
+}
+
+/** `dateOnly` attribution'ı [startDate, endDate] içinde mi? */
+export function isDateOnlyInStatsRange(
+  dateOnly: string,
+  startDate: string,
+  endDate: string,
+): boolean {
+  if (!isValidDateOnly(dateOnly) || !isValidDateOnly(startDate) || !isValidDateOnly(endDate)) {
+    return false
+  }
+  const attr = statsAttributionDateOnly(dateOnly)
+  return attr >= startDate && attr <= endDate
+}
+
+/** Timestamp'in İstanbul gününün attribution'ı aralıkta mı? */
+export function isInstantInStatsRange(
+  instant: Date,
+  startDate: string,
+  endDate: string,
+): boolean {
+  return isDateOnlyInStatsRange(dateToDateOnlyIstanbul(instant), startDate, endDate)
 }
 
 /** Shift `yyyy-MM` by whole months (negative = past). */

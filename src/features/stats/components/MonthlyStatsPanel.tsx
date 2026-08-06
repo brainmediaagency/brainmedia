@@ -133,7 +133,7 @@ export function MonthlyStatsPanel({
     <AccordionSection
       number={sectionNumber}
       title="Aylık Özet"
-      description="Seçilen aydaki işler, çekim dakikası, kasa ve medya planlama performansı."
+      description="Seçilen aydaki işler, çekim dakikası, kasa ve medya planlama performansı. Ayın son günü bir sonraki aya sayılır."
       defaultOpen={defaultOpen}
     >
       <div className="space-y-5">

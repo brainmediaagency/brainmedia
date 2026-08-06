@@ -42,7 +42,6 @@ export const MANAGEMENT_SECTIONS = [
   { id: 'regions', label: 'Bölge Seçimi', icon: MapPin },
   { id: 'voice', label: 'Ses kayıtları', icon: Mic },
   { id: 'cash', label: 'Kasa', icon: Wallet },
-  { id: 'field-ops', label: 'Saha Özeti', icon: Car },
   { id: 'stats', label: 'Aylık Özet', icon: BarChart3 },
   { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
   { id: 'accounts', label: 'Hesaplar', icon: UserCog },
@@ -54,9 +53,16 @@ export const COORDINATOR_SECTIONS = [
   { id: 'regions', label: 'Bölge Seçimi', icon: MapPin },
   { id: 'voice', label: 'Ses kayıtları', icon: Mic },
   { id: 'cash', label: 'Kasa', icon: Wallet },
-  { id: 'field-ops', label: 'Saha Özeti', icon: Car },
   { id: 'stats', label: 'Aylık Özet', icon: BarChart3 },
   { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
+] as const satisfies readonly NavSectionItem[]
+
+/**
+ * Yönetim / koordinatör sol menü “Kameraman” — saha km / kadran özeti.
+ * Kameraman rolünün Raporlarım sekmesinden ayrı yüzey.
+ */
+export const KAMERAMAN_FIELD_SECTIONS = [
+  { id: 'field-ops', label: 'Saha Özeti', icon: Car },
 ] as const satisfies readonly NavSectionItem[]
 
 export const HR_OWN_SECTIONS = [
@@ -123,6 +129,8 @@ export function getNavSections(
       return MANAGEMENT_SECTIONS
     case 'coordinator':
       return COORDINATOR_SECTIONS
+    case 'kameraman-field':
+      return KAMERAMAN_FIELD_SECTIONS
     case 'human-resources':
       return role === 'human_resources'
         ? visibleNavSections(HR_OWN_SECTIONS)

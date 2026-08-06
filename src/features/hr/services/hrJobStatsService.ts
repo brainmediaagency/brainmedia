@@ -8,6 +8,10 @@ import {
 } from 'firebase/firestore'
 import { jobsCollection } from '@/features/jobs/services/jobService'
 import type { JobDocument } from '@/features/jobs/types/job'
+import {
+  expandStatsQueryDateRange,
+  isInstantInStatsRange,
+} from '@/lib/date'
 
 export type HrJobStatsRange = {
   startDate: string
@@ -34,8 +38,13 @@ function dayEnd(dateOnly: string): Timestamp {
 export async function fetchHrJobStats(
   range: HrJobStatsRange,
 ): Promise<HrJobStatsResult> {
-  const start = dayStart(range.startDate)
-  const end = dayEnd(range.endDate)
+  const expanded = expandStatsQueryDateRange(range.startDate, range.endDate)
+  if (!expanded) {
+    return { entered: [], received: [], shot: [], rejected: [] }
+  }
+
+  const start = dayStart(expanded.startDate)
+  const end = dayEnd(expanded.endDate)
 
   const [enteredSnap, receivedSnap, shotSnap, rejectedSnap] = await Promise.all([
     getDocs(
@@ -79,10 +88,24 @@ export async function fetchHrJobStats(
     ),
   ])
 
+  function keepBy(
+    job: JobDocument,
+    field: 'createdAt' | 'reviewedAt' | 'updatedAt',
+  ): boolean {
+    const ts = job[field]
+    const d = ts?.toDate?.()
+    if (!d) return false
+    return isInstantInStatsRange(d, range.startDate, range.endDate)
+  }
+
   return {
-    entered: enteredSnap.docs.map((d) => d.data()),
-    received: receivedSnap.docs.map((d) => d.data()),
-    shot: shotSnap.docs.map((d) => d.data()),
-    rejected: rejectedSnap.docs.map((d) => d.data()),
+    entered: enteredSnap.docs.map((d) => d.data()).filter((j) => keepBy(j, 'createdAt')),
+    received: receivedSnap.docs
+      .map((d) => d.data())
+      .filter((j) => keepBy(j, 'reviewedAt')),
+    shot: shotSnap.docs.map((d) => d.data()).filter((j) => keepBy(j, 'updatedAt')),
+    rejected: rejectedSnap.docs
+      .map((d) => d.data())
+      .filter((j) => keepBy(j, 'reviewedAt')),
   }
 }

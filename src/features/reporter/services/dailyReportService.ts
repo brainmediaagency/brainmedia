@@ -22,7 +22,12 @@ import type { ReporterDailyCompany, ReporterDailyReport } from '@/features/repor
 import { isVatRate, type VatRate } from '@/features/reporter/utils/feeCalc'
 import { COMPANY_TIMEZONE } from '@/config/roles'
 import { UserFacingError, mapAppError } from '@/lib/errors'
-import { isValidDateOnly, todayDateOnlyIstanbul } from '@/lib/date'
+import {
+  expandStatsQueryDateRange,
+  isDateOnlyInStatsRange,
+  isValidDateOnly,
+  todayDateOnlyIstanbul,
+} from '@/lib/date'
 import { formatInTimeZone } from 'date-fns-tz'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
 
@@ -536,16 +541,35 @@ export async function fetchDailyReportsInRange(range: {
   endDate: string
 }): Promise<ReporterDailyReport[]> {
   try {
+    const expanded = expandStatsQueryDateRange(range.startDate, range.endDate)
+    if (!expanded) return []
+
     const snap = await getDocs(
       query(
         reportsCollection(),
-        where('createdAt', '>=', dayStart(range.startDate)),
-        where('createdAt', '<=', dayEnd(range.endDate)),
+        where('createdAt', '>=', dayStart(expanded.startDate)),
+        where('createdAt', '<=', dayEnd(expanded.endDate)),
         orderBy('createdAt', 'desc'),
         limit(1000),
       ),
     )
-    return snap.docs.map((d) => d.data()).filter((report) => report.deletedAt == null)
+    return snap.docs
+      .map((d) => d.data())
+      .filter((report) => report.deletedAt == null)
+      .filter((report) => {
+        const reportDate =
+          typeof report.reportDate === 'string' && isValidDateOnly(report.reportDate)
+            ? report.reportDate
+            : report.createdAt?.toDate
+              ? formatInTimeZone(
+                  report.createdAt.toDate(),
+                  COMPANY_TIMEZONE,
+                  'yyyy-MM-dd',
+                )
+              : null
+        if (!reportDate) return false
+        return isDateOnlyInStatsRange(reportDate, range.startDate, range.endDate)
+      })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Günlük raporlar yüklenemedi.'))
   }

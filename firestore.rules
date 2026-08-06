@@ -1575,7 +1575,7 @@ service cloud.firestore {
         && request.resource.data.attempts is list
         && request.resource.data.attempts.size() == 1
         && request.resource.data.attempts[0] is int
-        && request.resource.data.attempts[0] >= 100
+        && request.resource.data.attempts[0] >= 1
         && request.resource.data.attempts[0] <= 3000
         && request.resource.data.bestMs is int
         && request.resource.data.bestMs == request.resource.data.attempts[0]
@@ -1594,7 +1594,7 @@ service cloud.firestore {
         && request.resource.data.attempts.size() == resource.data.attempts.size() + 1
         && request.resource.data.attempts.size() <= 1
         && request.resource.data.bestMs is int
-        && request.resource.data.bestMs >= 100
+        && request.resource.data.bestMs >= 1
         && request.resource.data.bestMs <= 3000
         && request.resource.data.updatedAt == request.time;
 
@@ -1621,7 +1621,7 @@ service cloud.firestore {
         && isValidString(request.resource.data.uid, 1, 128)
         && isValidString(request.resource.data.fullName, 1, 120)
         && request.resource.data.bestMs is int
-        && request.resource.data.bestMs >= 100
+        && request.resource.data.bestMs >= 1
         && request.resource.data.bestMs <= 3000
         && request.resource.data.finalizedAt == request.time
         && exists(

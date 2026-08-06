@@ -37,6 +37,7 @@ import {
   formatYearMonthLongTr,
   formatYearMonthRangeTr,
   isValidDateOnly,
+  statsMonthDateBounds,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
@@ -54,11 +55,8 @@ function shiftDateOnly(dateOnly: string, deltaDays: number): string {
 }
 
 function monthBounds(yearMonth: string): { start: string; end: string } {
-  const [y, m] = yearMonth.split('-').map(Number)
-  const start = `${y}-${String(m).padStart(2, '0')}-01`
-  const lastDay = new Date(Date.UTC(y!, m!, 0)).getUTCDate()
-  const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
-  return { start, end }
+  const { startDate, endDate } = statsMonthDateBounds(yearMonth)
+  return { start: startDate, end: endDate }
 }
 
 function currentYearMonth(): string {

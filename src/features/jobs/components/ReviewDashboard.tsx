@@ -5,6 +5,7 @@ import {
   JobApprovalQueue,
   ReviewedJobsQueue,
 } from '@/features/jobs/components/JobApprovalQueue'
+import { JobCompanySearchPanel } from '@/features/jobs/components/JobCompanySearchPanel'
 import { OverdueJobsConfirmationPanel } from '@/features/media-planning/components/OverdueJobsConfirmationPanel'
 
 export type ReviewDashboardProps = {
@@ -109,6 +110,15 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           onLoadMore={() => void loadMoreRejected()}
           onJobUpdated={syncJob}
         />
+      </AccordionSection>
+
+      <AccordionSection
+        number="05"
+        title="Firma Arama"
+        description="Firma adına göre tüm iş kayıtlarını arayın. Eşleşen işler kart olarak listelenir; karta tıklayınca detay açılır."
+        defaultOpen
+      >
+        <JobCompanySearchPanel onJobUpdated={syncJob} />
       </AccordionSection>
     </div>
   )
