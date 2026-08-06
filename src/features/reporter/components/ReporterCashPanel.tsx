@@ -72,24 +72,17 @@ export function ReporterCashPanel() {
     <AccordionSection
       number="01"
       title="Kasa"
-      description="Günlük raporlardan gelir, gider, sahaya ödenen ve kasa bakiyesi."
+      description="Günlük raporlardan gider, sahaya ödenen ve kasa bakiyesi."
       defaultOpen
     >
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Skeleton className="h-28 w-full" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-28 w-full" />
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            label="Toplam gelir"
-            valueKurus={totals.totalIncomeKurus}
-            hint={`${totals.reportCount} form · matrah + KDV`}
-            tone="income"
-          />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <SummaryCard
             label="Toplam gider"
             valueKurus={totals.totalExpenseKurus}
