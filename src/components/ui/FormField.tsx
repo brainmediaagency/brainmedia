@@ -1,4 +1,11 @@
-import { Children, cloneElement, isValidElement, type ReactElement, type ReactNode, useId } from 'react'
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+  useId,
+} from 'react'
 import { cn } from '@/lib/classNames'
 
 type FieldChildProps = {
@@ -32,15 +39,22 @@ export function FormField({
   const errorId = error ? `${fieldId}-error` : undefined
   const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined
 
-  const child = Children.only(children)
-  const enhancedChild =
-    isValidElement(child) && typeof child.type !== 'string'
-      ? cloneElement(child as ReactElement<FieldChildProps>, {
-          id: fieldId,
-          'aria-describedby': describedBy,
-          ...(error ? { 'aria-invalid': true } : {}),
-        })
-      : child
+  const childArray = Children.toArray(children)
+  let enhancedChild: ReactNode = children
+
+  if (childArray.length === 1 && isValidElement(childArray[0])) {
+    const child = childArray[0] as ReactElement<FieldChildProps>
+    // Only inject props into custom components (Input, Select, Controller…).
+    // DOM tags and fragments keep structure as authored.
+    enhancedChild =
+      typeof child.type !== 'string'
+        ? cloneElement(child, {
+            id: fieldId,
+            'aria-describedby': describedBy,
+            ...(error ? { 'aria-invalid': true as const } : {}),
+          })
+        : child
+  }
 
   return (
     <div className={cn('flex w-full flex-col gap-1.5', className)}>

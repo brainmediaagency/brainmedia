@@ -690,7 +690,11 @@ export function FieldOpsPanel() {
                 maxLength={500}
               />
             </FormField>
-            <FormField label="Kadran görseli (opsiyonel)" htmlFor="admin-odometer-photo">
+            <FormField
+              label="Kadran görseli (opsiyonel)"
+              htmlFor="admin-odometer-photo"
+              hint="Yeni görsel seçilmezse mevcut fotoğraf korunur."
+            >
               <input
                 ref={editFileRef}
                 id="admin-odometer-photo"
@@ -702,9 +706,6 @@ export function FieldOpsPanel() {
                   onEditFileChange(e.target.files?.[0] ?? null)
                 }
               />
-              <p className="mt-1 text-xs text-text-secondary">
-                Yeni görsel seçilmezse mevcut fotoğraf korunur.
-              </p>
             </FormField>
             {editPreview ? (
               <img

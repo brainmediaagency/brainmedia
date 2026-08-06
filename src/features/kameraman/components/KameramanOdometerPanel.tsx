@@ -332,6 +332,11 @@ export function KameramanOdometerPanel() {
             label="Kadran görseli"
             htmlFor="km-photo"
             required={!isEditMode}
+            hint={
+              isEditMode
+                ? 'Yeni görsel seçmezseniz mevcut kadran fotoğrafı korunur; yalnızca km/not güncellenir.'
+                : undefined
+            }
           >
             <input
               ref={inputRef}
@@ -342,12 +347,6 @@ export function KameramanOdometerPanel() {
               disabled={submitting}
               onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
             />
-            {isEditMode ? (
-              <p className="mt-1 text-xs text-text-secondary">
-                Yeni görsel seçmezseniz mevcut kadran fotoğrafı korunur; yalnızca
-                km/not güncellenir.
-              </p>
-            ) : null}
           </FormField>
 
           {preview ? (
