@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
@@ -23,6 +24,11 @@ import { subscribeUserProfile } from '@/features/users/services/userService'
 import { getFirebaseAuth } from '@/lib/firebase/auth'
 import { logoutOneSignal } from '@/lib/onesignal'
 import { UserFacingError } from '@/lib/errors'
+import {
+  isActiveVoiceCaptureStatus,
+  isVoiceRecorderSessionActive,
+  voiceRecorderEngine,
+} from '@/features/voice-recording/services/voiceRecorderEngine'
 
 interface AuthContextValue {
   user: AuthUser | null
@@ -177,9 +183,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await logout()
   }, [logout])
 
+  // Voice recording keeps the tab busy without pointer/keyboard activity;
+  // do not idle-logout mid capture (recording or paused).
+  const voiceCaptureActive = useSyncExternalStore(
+    (onStoreChange) => voiceRecorderEngine.subscribe(onStoreChange),
+    () => isActiveVoiceCaptureStatus(voiceRecorderEngine.getSnapshot().status),
+    () => false,
+  )
+
   useIdleSessionTimeout({
-    enabled: Boolean(user) && !loading,
+    enabled: Boolean(user) && !loading && !voiceCaptureActive,
     onIdle: handleIdleTimeout,
+    isSuppressed: isVoiceRecorderSessionActive,
   })
 
   const value = useMemo<AuthContextValue>(

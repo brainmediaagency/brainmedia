@@ -547,3 +547,14 @@ class VoiceRecorderEngine {
 
 /** Module singleton — one live capture session for the app. */
 export const voiceRecorderEngine = new VoiceRecorderEngine()
+
+/** True while MediaRecorder is recording or paused (idle timeout must not fire). */
+export function isActiveVoiceCaptureStatus(
+  status: VoiceRecorderStatus,
+): boolean {
+  return status === 'recording' || status === 'paused'
+}
+
+export function isVoiceRecorderSessionActive(): boolean {
+  return isActiveVoiceCaptureStatus(voiceRecorderEngine.getSnapshot().status)
+}

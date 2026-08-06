@@ -20,6 +20,11 @@ interface UseIdleSessionTimeoutOptions {
   enabled: boolean
   onIdle: () => void | Promise<void>
   idleMs?: number
+  /**
+   * When this returns true at fire time, idle logout is deferred and the
+   * timer is rescheduled (e.g. voice recording mid-session).
+   */
+  isSuppressed?: () => boolean
 }
 
 /**
@@ -30,9 +35,12 @@ export function useIdleSessionTimeout({
   enabled,
   onIdle,
   idleMs = IDLE_SESSION_TIMEOUT_MS,
+  isSuppressed,
 }: UseIdleSessionTimeoutOptions): void {
   const onIdleRef = useRef(onIdle)
   onIdleRef.current = onIdle
+  const isSuppressedRef = useRef(isSuppressed)
+  isSuppressedRef.current = isSuppressed
 
   useEffect(() => {
     if (!enabled) return
@@ -52,6 +60,10 @@ export function useIdleSessionTimeout({
       clearTimer()
       timeoutId = setTimeout(() => {
         if (idleFired) return
+        if (isSuppressedRef.current?.()) {
+          scheduleIdle()
+          return
+        }
         idleFired = true
         clearTimer()
         void onIdleRef.current()

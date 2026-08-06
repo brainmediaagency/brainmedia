@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   clampRecordingDurationMs,
+  isActiveVoiceCaptureStatus,
   MAX_RECORDING_MS,
   mediaRecorderStartArgs,
   VOICE_CHUNK_INTERVAL_MS,
@@ -32,5 +33,12 @@ describe('voice recorder limits (no push / Drive)', () => {
   it('does not label empty takes as “başlatılamadı” messaging for OS cut', () => {
     expect(voiceRecorderErrorMessage('stream_ended')).toMatch(/korundu/i)
     expect(voiceRecorderErrorMessage('start_failed')).toMatch(/başlatılamadı/i)
+  })
+
+  it('treats recording and paused as active capture for idle session skip', () => {
+    expect(isActiveVoiceCaptureStatus('recording')).toBe(true)
+    expect(isActiveVoiceCaptureStatus('paused')).toBe(true)
+    expect(isActiveVoiceCaptureStatus('idle')).toBe(false)
+    expect(isActiveVoiceCaptureStatus('stopped')).toBe(false)
   })
 })
