@@ -52,6 +52,11 @@ export type JobReviewDrawerProps = {
   mode: 'pending' | 'reviewed'
   /** Called after a successful pending-field edit (fresh job from Firestore). */
   onJobUpdated?: (job: JobDocument) => void
+  /**
+   * When false (firma araması detayı), ses kaydı ve “konfirme beklemeye geri al”
+   * gizlenir. Onay kuyruğunda varsayılan true.
+   */
+  showRecordingAndRevert?: boolean
 }
 
 /** Matches günlük takvim window: full + half hours 09:00–21:00. */
@@ -94,6 +99,7 @@ export function JobReviewDrawer({
   onClose,
   mode,
   onJobUpdated,
+  showRecordingAndRevert = true,
 }: JobReviewDrawerProps) {
   const { profile, claims, isOnline } = useAuth()
   const [note, setNote] = useState('')
@@ -521,7 +527,7 @@ export function JobReviewDrawer({
             </Select>
           </FormField>
 
-          {canReview && (
+          {canReview && showRecordingAndRevert && (
             <VoiceRecordingPanel
               key={job.id}
               compact
@@ -577,7 +583,10 @@ export function JobReviewDrawer({
         </div>
       )}
 
-      {mode === 'reviewed' && job.status === 'approved' && canReview && (
+      {mode === 'reviewed' &&
+        job.status === 'approved' &&
+        canReview &&
+        showRecordingAndRevert && (
         <div className="space-y-4 border-t border-border pt-4">
           <VoiceRecordingPanel
             key={`voice-${job.id}`}

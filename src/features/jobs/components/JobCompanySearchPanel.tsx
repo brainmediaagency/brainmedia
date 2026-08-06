@@ -157,6 +157,7 @@ export function JobCompanySearchPanel({ onJobUpdated }: JobCompanySearchPanelPro
         onClose={() => setSelectedJobId(null)}
         mode={selectedJob?.status === 'pending' ? 'pending' : 'reviewed'}
         onJobUpdated={handleJobUpdated}
+        showRecordingAndRevert={false}
       />
     </div>
   )
