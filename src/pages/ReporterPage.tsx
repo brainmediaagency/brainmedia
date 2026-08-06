@@ -15,6 +15,7 @@ import { ReporterMyReports } from '@/features/reporter/components/ReporterMyRepo
 import { ManagementReporterInbox } from '@/features/reporter/components/ManagementReporterInbox'
 import { ReporterSummaryPanel } from '@/features/reporter/components/ReporterSummaryPanel'
 import { ReporterCashPanel } from '@/features/reporter/components/ReporterCashPanel'
+import { ReporterNotebookPanel } from '@/features/reporter/components/ReporterNotebookPanel'
 import { KameramanOdometerPanel } from '@/features/kameraman/components/KameramanOdometerPanel'
 import { usePageTab } from '@/hooks/usePageTab'
 
@@ -89,6 +90,7 @@ export function ReporterPage() {
           )}
           {tab === 'z-report' && <ReporterZReportForm />}
           {tab === 'cash' && <ReporterCashPanel />}
+          {tab === 'notebook' && <ReporterNotebookPanel />}
         </div>
       </div>
     )
@@ -162,6 +164,7 @@ export function ReporterPage() {
         {tab === 'muhabir-ozet' && <ReporterSummaryPanel allowReporterPicker />}
         {tab === 'z-reports' && <ManagementReporterInbox view="z" />}
         {tab === 'cash' && <ReporterCashPanel />}
+        {tab === 'notebook' && <ReporterNotebookPanel />}
       </div>
     </div>
   )

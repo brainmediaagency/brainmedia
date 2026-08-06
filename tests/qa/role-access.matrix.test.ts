@@ -89,6 +89,18 @@ describe('QA · nav tab isolation (reporter / viewer cash)', () => {
     expect(MANAGEMENT_SECTIONS.some((s) => s.id === 'cash')).toBe(true)
   })
 
+  it('REPORTER_SECTIONS and VIEWER include notebook after cash; kameraman/HR do not', () => {
+    expect(REPORTER_SECTIONS.some((s) => s.id === 'notebook')).toBe(true)
+    expect(REPORTER_VIEWER_SECTIONS.some((s) => s.id === 'notebook')).toBe(true)
+    const reporterCashIdx = REPORTER_SECTIONS.findIndex((s) => s.id === 'cash')
+    const reporterNoteIdx = REPORTER_SECTIONS.findIndex((s) => s.id === 'notebook')
+    expect(reporterNoteIdx).toBe(reporterCashIdx + 1)
+    expect(KAMERAMAN_SECTIONS.some((s) => s.id === 'notebook')).toBe(false)
+    expect(CALENDAR_ONLY_REPORTER_SECTIONS.some((s) => s.id === 'notebook')).toBe(
+      false,
+    )
+  })
+
   it('getNavSections(reporter) returns cash for muhabir and mgmt/coord viewers', () => {
     const byRole: Record<UserRole, readonly { id: string }[]> = {
       reporter: getNavSections('reporter', 'reporter'),
@@ -104,6 +116,10 @@ describe('QA · nav tab isolation (reporter / viewer cash)', () => {
     expect(byRole.kameraman.some((s) => s.id === 'cash')).toBe(false)
     expect(byRole.human_resources.some((s) => s.id === 'cash')).toBe(false)
     expect(byRole.media_planning).toEqual([])
+    expect(byRole.reporter.some((s) => s.id === 'notebook')).toBe(true)
+    expect(byRole.management.some((s) => s.id === 'notebook')).toBe(true)
+    expect(byRole.coordinator.some((s) => s.id === 'notebook')).toBe(true)
+    expect(byRole.kameraman.some((s) => s.id === 'notebook')).toBe(false)
   })
 
   it('management left nav has Kasa under management route', () => {

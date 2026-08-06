@@ -1381,6 +1381,59 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ---------- reporterDayNotes (muhabir not defteri; gün başına bir not) ----------
+    match /reporterDayNotes/{noteId} {
+      // getDoc on missing id for upsert — allow reporter missing doc with own id pattern
+      allow get: if isAuthenticated()
+        && (
+          isCoordinatorOrManagement()
+          || (resource != null
+            && resource.data.createdByUid == request.auth.uid)
+          || (isReporter()
+            && resource == null
+            && noteId.matches('^' + request.auth.uid + '_.*'))
+        );
+
+      allow list: if isAuthenticated()
+        && (
+          isCoordinatorOrManagement()
+          || (isReporter()
+            && resource.data.createdByUid == request.auth.uid)
+        );
+
+      allow create: if isReporter()
+        && request.resource.data.keys().hasOnly([
+          'noteDate',
+          'body',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && noteId == request.auth.uid + '_' + request.resource.data.noteDate
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == callerProfile().fullName
+        && isDateOnly(request.resource.data.noteDate)
+        && isValidString(request.resource.data.body, 1, 8000)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isReporter()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot
+          == resource.data.createdByNameSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.noteDate == resource.data.noteDate
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['body', 'updatedAt'])
+        && isValidString(request.resource.data.body, 1, 8000)
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isReporter()
+        && resource.data.createdByUid == request.auth.uid;
+    }
+
     // ---------- reporterDailyReports ----------
     match /reporterDailyReports/{reportId} {
       allow read: if isAuthenticated()

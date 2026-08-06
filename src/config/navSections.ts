@@ -13,6 +13,7 @@ import {
   NotebookPen,
   PlusCircle,
   Star,
+  StickyNote,
   UserCog,
   UserRound,
   Users,
@@ -86,6 +87,7 @@ export const REPORTER_SECTIONS = [
   { id: 'muhabir-ozet', label: 'Muhabir Özet', icon: BarChart3 },
   { id: 'z-report', label: 'Z Raporu', icon: FileText },
   { id: 'cash', label: 'Kasa', icon: Wallet },
+  { id: 'notebook', label: 'Not defteri', icon: StickyNote },
 ] as const satisfies readonly NavSectionItem[]
 
 /** Yönetim / koordinatör: muhabir paneli (form girişi yok; kasa özeti var). */
@@ -95,6 +97,7 @@ export const REPORTER_VIEWER_SECTIONS = [
   { id: 'muhabir-ozet', label: 'Muhabir Özet', icon: BarChart3 },
   { id: 'z-reports', label: 'Z Raporları', icon: FileText },
   { id: 'cash', label: 'Kasa', icon: Wallet },
+  { id: 'notebook', label: 'Not defteri', icon: StickyNote },
 ] as const satisfies readonly NavSectionItem[]
 
 /** İK: yalnızca çekim takvimi. Kameraman: takvim + km raporları. */
