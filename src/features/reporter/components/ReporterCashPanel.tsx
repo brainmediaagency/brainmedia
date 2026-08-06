@@ -9,9 +9,40 @@ import {
 import { formatTryFromKurus } from '@/lib/currency'
 import { mapAppError } from '@/lib/errors'
 
+function SummaryCard({
+  label,
+  valueKurus,
+  hint,
+  tone,
+}: {
+  label: string
+  valueKurus: number
+  hint: string
+  tone: 'income' | 'expense' | 'field' | 'cash'
+}) {
+  const toneClass =
+    tone === 'income'
+      ? 'border-success/30 bg-success/5'
+      : tone === 'expense'
+        ? 'border-danger/30 bg-danger/5'
+        : tone === 'field'
+          ? 'border-warning/30 bg-warning/5'
+          : 'border-brand-blue/30 bg-brand-blue/5'
+
+  return (
+    <div className={`rounded-[var(--radius-md)] border p-4 ${toneClass}`}>
+      <p className="text-sm text-text-secondary">{label}</p>
+      <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-text-primary">
+        {formatTryFromKurus(valueKurus)}
+      </p>
+      <p className="mt-1 text-xs text-text-secondary">{hint}</p>
+    </div>
+  )
+}
+
 /**
- * Yalnızca muhabir: şirket devreden kasa bakiyesi (sahaya ödenen − toplam gider).
- * Detay / diğer raporlar gösterilmez.
+ * Yalnızca muhabir rolü: şirket kasa özeti (yönetim kasa kartlarıyla aynı 4 kalem).
+ * Rapor listesi / detay yok. Yönetim/koord muhabir paneline eklenmez.
  */
 export function ReporterCashPanel() {
   const [snapshot, setSnapshot] = useState<CompanyCashSnapshot | null | undefined>(
@@ -29,26 +60,54 @@ export function ReporterCashPanel() {
   }, [])
 
   const loading = snapshot === undefined
-  const balanceKurus = snapshot?.cashBalanceKurus ?? 0
+  const totals = snapshot ?? {
+    cashBalanceKurus: 0,
+    totalFieldPaidKurus: 0,
+    totalExpenseKurus: 0,
+    totalIncomeKurus: 0,
+    reportCount: 0,
+  }
 
   return (
     <AccordionSection
       number="01"
       title="Kasa"
-      description="Devreden kasa bakiyesi — sahaya ödenen eksi toplam gider."
+      description="Günlük raporlardan gelir, gider, sahaya ödenen ve kasa bakiyesi."
       defaultOpen
     >
       {loading ? (
-        <Skeleton className="h-28 w-full max-w-md" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+        </div>
       ) : (
-        <div className="max-w-md rounded-[var(--radius-md)] border border-brand-blue/30 bg-brand-blue/5 p-5">
-          <p className="text-sm text-text-secondary">Devreden kasa</p>
-          <p className="mt-1 font-display text-3xl font-semibold tabular-nums text-text-primary">
-            {formatTryFromKurus(balanceKurus)}
-          </p>
-          <p className="mt-2 text-xs text-text-secondary">
-            Sahaya ödenen − toplam gider (tüm muhabir raporları)
-          </p>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            label="Toplam gelir"
+            valueKurus={totals.totalIncomeKurus}
+            hint={`${totals.reportCount} form · matrah + KDV`}
+            tone="income"
+          />
+          <SummaryCard
+            label="Toplam gider"
+            valueKurus={totals.totalExpenseKurus}
+            hint="Saha giderleri + ücretler + KDV"
+            tone="expense"
+          />
+          <SummaryCard
+            label="Sahaya ödenen"
+            valueKurus={totals.totalFieldPaidKurus}
+            hint="Kasadan sahaya verilen tutar"
+            tone="field"
+          />
+          <SummaryCard
+            label="Kasa"
+            valueKurus={totals.cashBalanceKurus}
+            hint="Sahaya ödenen − toplam gider"
+            tone="cash"
+          />
         </div>
       )}
     </AccordionSection>

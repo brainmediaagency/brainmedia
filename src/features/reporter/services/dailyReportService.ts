@@ -32,7 +32,7 @@ import { formatInTimeZone } from 'date-fns-tz'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
 import {
   applyCompanyCashContributionDelta,
-  reportNetCashKurus,
+  reportCashParts,
 } from '@/features/cash/services/companyCashService'
 
 /** Firestore rules expect non-negative whole numbers (int or whole float). */
@@ -358,7 +358,7 @@ export async function createDailyReport(input: DailyReportWriteInput & {
       pushRoles: ['management', 'coordinator'],
     })
 
-    void applyCompanyCashContributionDelta(reportNetCashKurus(content)).catch(
+    void applyCompanyCashContributionDelta(reportCashParts(content), null).catch(
       () => {
         /* muhabir kasa snapshot best-effort */
       },
@@ -379,8 +379,8 @@ export async function updateDailyReport(
   const db = getDb()
   const ref = doc(db, 'reporterDailyReports', reportId)
   try {
-    let prevNetCash = 0
-    let nextNetCash = 0
+    let prevParts: ReturnType<typeof reportCashParts> | null = null
+    let nextParts: ReturnType<typeof reportCashParts> | null = null
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(ref)
       if (!snap.exists()) throw new UserFacingError('Rapor bulunamadı.')
@@ -390,8 +390,8 @@ export async function updateDailyReport(
       }
 
       const content = reportContent(input)
-      prevNetCash = reportNetCashKurus(current)
-      nextNetCash = reportNetCashKurus(content)
+      prevParts = reportCashParts(current)
+      nextParts = reportCashParts(content)
       const nextJobIds = uniqueCompanyJobIds(content.companies)
       const prevCompanies = Array.isArray(current.companies) ? current.companies : []
       const prevJobIds = uniqueCompanyJobIds(
@@ -450,7 +450,7 @@ export async function updateDailyReport(
         }
       }
     })
-    void applyCompanyCashContributionDelta(nextNetCash - prevNetCash).catch(
+    void applyCompanyCashContributionDelta(nextParts, prevParts).catch(
       () => {
         /* muhabir kasa snapshot best-effort */
       },
@@ -468,7 +468,7 @@ export async function softDeleteDailyReport(
   const db = getDb()
   const ref = doc(db, 'reporterDailyReports', reportId)
   try {
-    let removedNetCash = 0
+    let removedParts: ReturnType<typeof reportCashParts> | null = null
     let didDelete = false
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(ref)
@@ -477,7 +477,7 @@ export async function softDeleteDailyReport(
       if (current.deletedAt != null) return
 
       didDelete = true
-      removedNetCash = reportNetCashKurus(current)
+      removedParts = reportCashParts(current)
 
       const prevCompanies = Array.isArray(current.companies) ? current.companies : []
       const jobIds = uniqueCompanyJobIds(
@@ -517,8 +517,8 @@ export async function softDeleteDailyReport(
         }
       }
     })
-    if (didDelete) {
-      void applyCompanyCashContributionDelta(-removedNetCash).catch(() => {
+    if (didDelete && removedParts) {
+      void applyCompanyCashContributionDelta(null, removedParts).catch(() => {
         /* muhabir kasa snapshot best-effort */
       })
     }

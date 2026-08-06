@@ -20,6 +20,8 @@
  *      were allowlisted while ROLES_PUSH already included Kameraman).
  * v24: uploadFileInit + uploadFileChunk — Drive resumable for large voice files
  *      (Apps Script single base64 body cannot hold 25+ min recordings).
+ * v25: uploadFileChunk — do not set Content-Length on UrlFetchApp (throws
+ *      "Attribute provided with invalid value: Header:Content-Length").
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -44,7 +46,7 @@
  */
 
 var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v21'
-var SCRIPT_VERSION = 'v24'
+var SCRIPT_VERSION = 'v25'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -1035,6 +1037,9 @@ function handleUploadChunk_(body) {
         0,
         120,
       )
+    // UrlFetchApp forbids setting Content-Length (computes it from payload).
+    // Content-Range is required for Drive resumable; Authorization optional once
+    // the session Location was minted with ScriptApp token.
     var chunkBlob = Utilities.newBlob(bytes, mimeType)
     var oauth = ScriptApp.getOAuthToken()
     var resp = UrlFetchApp.fetch(String(session.location), {
@@ -1042,10 +1047,9 @@ function handleUploadChunk_(body) {
       contentType: mimeType,
       headers: {
         Authorization: 'Bearer ' + oauth,
-        'Content-Length': String(bytes.length),
         'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
       },
-      payload: chunkBlob,
+      payload: chunkBlob.getBytes(),
       muteHttpExceptions: true,
     })
     var code = resp.getResponseCode()
@@ -1054,6 +1058,21 @@ function handleUploadChunk_(body) {
     // Intermediate: 308 Resume Incomplete
     if (code === 308) {
       session.next = end + 1
+      // Prefer Drive's reported Range end if present
+      try {
+        var respHeaders = resp.getAllHeaders()
+        var rangeHdr =
+          respHeaders.Range ||
+          respHeaders.range ||
+          respHeaders['Range'] ||
+          respHeaders['range'] ||
+          ''
+        // e.g. "bytes=0-12345"
+        var m = String(rangeHdr).match(/bytes=\d+-(\d+)/)
+        if (m && m[1]) {
+          session.next = Number(m[1]) + 1
+        }
+      } catch (rangeErr) {}
       CacheService.getScriptCache().put(
         'uresume:' + uploadToken,
         JSON.stringify(session),

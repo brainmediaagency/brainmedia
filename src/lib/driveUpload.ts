@@ -101,6 +101,11 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
       'Drive webhook yetkisiz. Çıkış yapıp tekrar giriş edin; sürmezse Apps Script’te FIREBASE_WEB_API_KEY ve rol claim’lerini kontrol edin.'
     )
   }
+  if (/Content-Length|Header:Content-Length|invalid value: Header/i.test(combined)) {
+    return (
+      'Drive yükleme (webhook) Content-Length hatası. Apps Script Code.gs v25+ yayınlayın (Deploy → New version).'
+    )
+  }
   if (/session expired|chunk order|resumable|too large|Invalid size|payload/i.test(combined)) {
     return (
       'Dosya çok büyük veya yükleme oturumu düştü. Kayıt hâlâ bu cihazda; İndir ile bilgisayara alın, sonra daha kısa parçalar halinde tekrar yükleyin. Apps Script v24+ (uploadFileInit) gerekir.'
