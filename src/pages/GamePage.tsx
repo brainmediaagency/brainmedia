@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CircleDot } from 'lucide-react'
+import { CircleDot, Construction } from 'lucide-react'
 import { toast } from 'sonner'
-import { CategoryPanel, PageHeader } from '@/components/ui'
+import { CategoryPanel, EmptyState, PageHeader } from '@/components/ui'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { ChampionsTable } from '@/features/game/components/ChampionsTable'
 import { HoopGame } from '@/features/game/components/HoopGame'
 import { HoopLeaderboard } from '@/features/game/components/HoopLeaderboard'
 import {
-  MAX_DAILY_SHOTS,
+  HOOP_PUBLIC_TEST_MODE,
+  canPlayHoopGame,
   submitShot,
   subscribeTodayHoopScores,
 } from '@/features/game/services/hoopScoreService'
@@ -19,7 +20,13 @@ export function GamePage() {
   const [scores, setScores] = useState<HoopDailyScore[]>([])
   const [loadingScores, setLoadingScores] = useState(true)
 
+  const canPlay = canPlayHoopGame(profile?.role)
+
   useEffect(() => {
+    if (!canPlay) {
+      setLoadingScores(false)
+      return
+    }
     setLoadingScores(true)
     return subscribeTodayHoopScores(
       (next) => {
@@ -31,7 +38,7 @@ export function GamePage() {
         toast.error('Bugünün sıralaması yüklenemedi.')
       },
     )
-  }, [])
+  }, [canPlay])
 
   const myScore = useMemo(
     () => (profile ? scores.find((s) => s.uid === profile.uid) : undefined),
@@ -48,11 +55,12 @@ export function GamePage() {
           uid: profile.uid,
           fullName: profile.fullName,
           hit,
+          role: profile.role,
         })
         toast.success(
           hit
-            ? `İsabet! ${saved.makes}/${MAX_DAILY_SHOTS} · şut ${saved.attempts.length}/${MAX_DAILY_SHOTS}`
-            : `Kaçtı · ${saved.makes}/${MAX_DAILY_SHOTS} · şut ${saved.attempts.length}/${MAX_DAILY_SHOTS}`,
+            ? `İsabet! ${saved.makes} isabet · ${saved.attempts.length} şut`
+            : `Kaçtı · ${saved.makes} isabet · ${saved.attempts.length} şut`,
         )
       } catch (error) {
         toast.error(mapAppError(error, 'Şut kaydedilemedi.'))
@@ -62,41 +70,69 @@ export function GamePage() {
     [profile],
   )
 
+  if (!profile) {
+    return (
+      <div className="space-y-6 animate-fade-in-up">
+        <PageHeader title="3’lük Atış" subtitle="Oturum gerekli." />
+      </div>
+    )
+  }
+
+  if (!canPlay) {
+    return (
+      <div className="space-y-6 animate-fade-in-up">
+        <PageHeader
+          title="3’lük Atış"
+          subtitle="Oyun kısa bir test ve güncelleme sürecinde."
+        />
+        <div className="rounded-[var(--radius-md)] border border-border bg-surface px-4 py-10 shadow-sm sm:px-8">
+          <EmptyState
+            icon={Construction}
+            title="Oyun güncelleniyor"
+            description={
+              HOOP_PUBLIC_TEST_MODE
+                ? 'Yeni 3’lük oyun test aşamasında. Yakında tüm ekip için açılacak — şimdilik sabırlı ol.'
+                : 'Bu sayfa geçici olarak kapalı. Lütfen daha sonra tekrar dene.'
+            }
+          />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 animate-fade-in-up">
       <PageHeader
         title="3’lük Atış"
-        subtitle={`Günde ${MAX_DAILY_SHOTS} şut · en çok isabet kazanır. Her şut sunucuya yazılır.`}
+        subtitle="Test modu · yönetim & koordinatör · günlük şut limiti yok · her şut sunucuya yazılır"
       />
 
       <CategoryPanel
         title="Sahaya çık"
-        description="Nişan sallanır · basılı tut = güç · bırak = üçlük"
+        description="Test: sınırsız şut · nişan sallanır · basılı tut = güç · bırak = üçlük"
         tone="orange"
         icon={CircleDot}
       >
-        {profile ? (
-          <HoopGame
-            shotsUsed={shotsUsed}
-            makes={makes}
-            attempts={myScore?.attempts ?? []}
-            onShotComplete={handleShotComplete}
-          />
-        ) : (
-          <p className="text-sm text-text-secondary">Giriş gerekli.</p>
-        )}
+        <HoopGame
+          shotsUsed={shotsUsed}
+          makes={makes}
+          attempts={myScore?.attempts ?? []}
+          unlimited
+          onShotComplete={handleShotComplete}
+        />
       </CategoryPanel>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <CategoryPanel
           title="Bugünün sıralaması"
-          description={`En çok isabet (${MAX_DAILY_SHOTS} üzerinden)`}
+          description="Test sıralaması · en çok isabet"
           tone="navy"
         >
           <HoopLeaderboard
             scores={scores}
             loading={loadingScores}
-            currentUid={profile?.uid}
+            currentUid={profile.uid}
+            unlimited
           />
         </CategoryPanel>
 

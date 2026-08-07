@@ -17,6 +17,7 @@ export type HoopLeaderboardProps = {
   scores: HoopDailyScore[]
   loading: boolean
   currentUid?: string
+  unlimited?: boolean
 }
 
 function rankLabel(rank: number): string {
@@ -30,6 +31,7 @@ export function HoopLeaderboard({
   scores,
   loading,
   currentUid,
+  unlimited = false,
 }: HoopLeaderboardProps) {
   if (loading) {
     return (
@@ -87,10 +89,14 @@ export function HoopLeaderboard({
                   )}
                 </TableCell>
                 <TableCell className="text-right font-semibold tabular-nums">
-                  {score.makes}/{MAX_DAILY_SHOTS}
+                  {unlimited
+                    ? score.makes
+                    : `${score.makes}/${MAX_DAILY_SHOTS}`}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-text-secondary">
-                  {score.attempts.length}/{MAX_DAILY_SHOTS}
+                  {unlimited
+                    ? score.attempts.length
+                    : `${score.attempts.length}/${MAX_DAILY_SHOTS}`}
                 </TableCell>
               </TableRow>
             ))}
@@ -107,11 +113,15 @@ export function HoopLeaderboard({
             rows={[
               {
                 label: 'İsabet',
-                value: `${score.makes}/${MAX_DAILY_SHOTS}`,
+                value: unlimited
+                  ? String(score.makes)
+                  : `${score.makes}/${MAX_DAILY_SHOTS}`,
               },
               {
                 label: 'Şut',
-                value: `${score.attempts.length}/${MAX_DAILY_SHOTS}`,
+                value: unlimited
+                  ? String(score.attempts.length)
+                  : `${score.attempts.length}/${MAX_DAILY_SHOTS}`,
               },
             ]}
             className={cn(score.uid === currentUid && 'border-brand-cyan/40')}

@@ -24,9 +24,37 @@ import type {
   HoopDailyScore,
   HoopDailyWinner,
 } from '@/features/game/types/hoop'
+import type { UserRole } from '@/config/roles'
 
-/** Product: 6 shots per Istanbul calendar day; progress always from Firestore. */
+/**
+ * Public product cap after test (not enforced while {@link HOOP_PUBLIC_TEST_MODE}).
+ */
 export const MAX_DAILY_SHOTS = 6
+
+/**
+ * Soft-launch: only management + coordinator play; daily shot cap is off for them.
+ * Flip to false and reintroduce caps when opening to all roles.
+ */
+export const HOOP_PUBLIC_TEST_MODE = true
+
+/** Hard ceiling so client/spam cannot explode list size while testing. */
+export const HOOP_TEST_MAX_SHOTS = 200
+
+export function canPlayHoopGame(
+  role: UserRole | string | null | undefined,
+): boolean {
+  if (!role) return false
+  if (!HOOP_PUBLIC_TEST_MODE) return true
+  return role === 'management' || role === 'coordinator'
+}
+
+/** null = unlimited (within HOOP_TEST_MAX_SHOTS safety). */
+export function hoopShotLimitForRole(
+  role: UserRole | string | null | undefined,
+): number | null {
+  if (HOOP_PUBLIC_TEST_MODE && canPlayHoopGame(role)) return null
+  return MAX_DAILY_SHOTS
+}
 
 const WINNER_FINALIZE_THROTTLE_MS = 15 * 60 * 1000
 const WINNER_FINALIZE_STORAGE_KEY = 'brain.hoopWinnerFinalize.lastRunMs'
@@ -110,15 +138,24 @@ export async function submitShot(input: {
   uid: string
   fullName: string
   hit: boolean
+  /** Caller role; test mode players are uncapped (within safety max). */
+  role?: UserRole | string | null
 }): Promise<HoopDailyScore> {
   const uid = input.uid.trim()
   const fullName = input.fullName.trim().slice(0, 120)
   if (!uid || !fullName) {
     throw new UserFacingError('Oturum veya isim eksik.')
   }
+  if (!canPlayHoopGame(input.role)) {
+    throw new UserFacingError(
+      'Oyun şu an test aşamasında; yalnızca yönetim ve koordinatör oynayabilir.',
+    )
+  }
   const shot = input.hit ? 1 : 0
   const date = todayDateOnlyIstanbul()
   const ref = doc(getDb(), 'hoopDailyScores', scoreId(date, uid))
+  const dailyCap = hoopShotLimitForRole(input.role)
+  const hardCap = dailyCap ?? HOOP_TEST_MAX_SHOTS
 
   try {
     return await runTransaction(getDb(), async (tx) => {
@@ -151,9 +188,11 @@ export async function submitShot(input: {
       const prevAttempts: number[] = Array.isArray(data.attempts)
         ? data.attempts.filter((n): n is number => typeof n === 'number')
         : []
-      if (prevAttempts.length >= MAX_DAILY_SHOTS) {
+      if (prevAttempts.length >= hardCap) {
         throw new UserFacingError(
-          `Bugünkü ${MAX_DAILY_SHOTS} şut hakkın doldu. Yarın tekrar dene!`,
+          dailyCap == null
+            ? `Test tavanına ulaşıldı (${hardCap} şut).`
+            : `Bugünkü ${dailyCap} şut hakkın doldu. Yarın tekrar dene!`,
         )
       }
       if (String(data.uid ?? '') !== uid) {

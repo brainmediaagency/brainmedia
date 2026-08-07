@@ -31,13 +31,22 @@ export type HoopGameProps = {
   makes: number
   /** Server shot results (0|1) — remount-safe history HUD */
   attempts?: number[]
+  /** Test mode for yönetim/koordinatör: no 6-shot daily cap */
+  unlimited?: boolean
   onShotComplete: (hit: boolean) => Promise<void>
   disabled?: boolean
 }
 
-function phaseHint(phase: Phase, outOfShots: boolean, makes: number): string {
+function phaseHint(
+  phase: Phase,
+  outOfShots: boolean,
+  makes: number,
+  unlimited: boolean,
+): string {
   if (outOfShots) {
-    return `Gün bitti · ${makes}/${MAX_DAILY_SHOTS} isabet. Yarın tekrar.`
+    return unlimited
+      ? `Test tavanı · ${makes} isabet`
+      : `Gün bitti · ${makes}/${MAX_DAILY_SHOTS} isabet. Yarın tekrar.`
   }
   switch (phase) {
     case 'charging':
@@ -47,9 +56,13 @@ function phaseHint(phase: Phase, outOfShots: boolean, makes: number): string {
     case 'saving':
       return 'Skor kaydediliyor…'
     case 'done':
-      return `Gün bitti · ${makes}/${MAX_DAILY_SHOTS}`
+      return unlimited
+        ? `${makes} isabet (test)`
+        : `Gün bitti · ${makes}/${MAX_DAILY_SHOTS}`
     default:
-      return 'Nişan sallanıyor · basılı tut = güç · bırak = at'
+      return unlimited
+        ? 'Test: sınırsız şut · basılı tut = güç · bırak = at'
+        : 'Nişan sallanıyor · basılı tut = güç · bırak = at'
   }
 }
 
@@ -57,6 +70,7 @@ export function HoopGame({
   shotsUsed,
   makes,
   attempts = [],
+  unlimited = false,
   onShotComplete,
   disabled = false,
 }: HoopGameProps) {
@@ -72,6 +86,7 @@ export function HoopGame({
   const settleLockRef = useRef(false)
   const shotsUsedRef = useRef(shotsUsed)
   const onShotCompleteRef = useRef(onShotComplete)
+  const unlimitedRef = useRef(unlimited)
   const particlesRef = useRef<Particle[]>([])
   const flashRef = useRef(0)
   const netSwayRef = useRef(0)
@@ -83,8 +98,9 @@ export function HoopGame({
 
   shotsUsedRef.current = shotsUsed
   onShotCompleteRef.current = onShotComplete
+  unlimitedRef.current = unlimited
 
-  const outOfShots = shotsUsed >= MAX_DAILY_SHOTS
+  const outOfShots = unlimited ? false : shotsUsed >= MAX_DAILY_SHOTS
   const canPlay =
     !disabled
     && !busy
@@ -454,7 +470,10 @@ export function HoopGame({
               powerRef.current = 0
               setDisplayPower(0)
               settleLockRef.current = false
-              if (shotsUsedRef.current + 1 >= MAX_DAILY_SHOTS) {
+              if (
+                !unlimitedRef.current
+                && shotsUsedRef.current + 1 >= MAX_DAILY_SHOTS
+              ) {
                 setPhaseBoth('done')
               } else {
                 setPhaseBoth('aiming')
@@ -573,10 +592,16 @@ export function HoopGame({
             Şut
           </div>
           <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-text-primary">
-            {Math.min(shotsUsed, MAX_DAILY_SHOTS)}
-            <span className="text-base font-medium text-text-secondary">
-              /{MAX_DAILY_SHOTS}
-            </span>
+            {shotsUsed}
+            {!unlimited ? (
+              <span className="text-base font-medium text-text-secondary">
+                /{MAX_DAILY_SHOTS}
+              </span>
+            ) : (
+              <span className="ml-1 text-xs font-medium text-text-secondary">
+                (test ∞)
+              </span>
+            )}
           </p>
         </div>
         <div className="rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm">
@@ -586,9 +611,11 @@ export function HoopGame({
           </div>
           <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-brand-orange">
             {makes}
-            <span className="text-base font-medium text-text-secondary">
-              /{MAX_DAILY_SHOTS}
-            </span>
+            {!unlimited ? (
+              <span className="text-base font-medium text-text-secondary">
+                /{MAX_DAILY_SHOTS}
+              </span>
+            ) : null}
           </p>
         </div>
         <div className="col-span-2 rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm sm:col-span-1">
@@ -613,35 +640,57 @@ export function HoopGame({
         </div>
       </div>
 
-      {/* Shot history dots */}
+      {/* Shot history — last N slots; full log is on server */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-text-secondary">Geçmiş</span>
-        <div className="flex gap-1.5" aria-label="Şut sonuçları">
-          {Array.from({ length: MAX_DAILY_SHOTS }, (_, i) => {
-            const v = attempts[i]
-            return (
+        <span className="text-xs font-medium text-text-secondary">
+          {unlimited ? 'Son şutlar' : 'Geçmiş'}
+        </span>
+        <div className="flex flex-wrap justify-end gap-1.5" aria-label="Şut sonuçları">
+          {(() => {
+            const slots = unlimited
+              ? Math.min(12, Math.max(attempts.length + 1, 6))
+              : MAX_DAILY_SHOTS
+            const sliceStart = unlimited
+              ? Math.max(0, attempts.length - (slots - 1))
+              : 0
+            const visible = unlimited
+              ? attempts.slice(sliceStart)
+              : attempts
+            return Array.from({ length: slots }, (_, i) => {
+              const v = unlimited
+                ? i < visible.length
+                  ? visible[i]
+                  : i === visible.length
+                    ? undefined
+                    : undefined
+                : attempts[i]
+              const isNext =
+                unlimited
+                  ? i === visible.length
+                  : v === undefined && i === shotsUsed && !outOfShots
+              return (
               <span
-                key={i}
+                key={`${sliceStart}-${i}`}
                 className={cn(
                   'flex size-7 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums transition-colors',
                   v === 1 && 'border-success/40 bg-success/15 text-success',
                   v === 0 && 'border-warning/40 bg-warning/10 text-warning',
                   v === undefined &&
-                    i === shotsUsed &&
-                    !outOfShots &&
+                    isNext &&
                     'border-brand-cyan/50 bg-brand-cyan/10 text-brand-blue ring-2 ring-brand-cyan/25',
                   v === undefined &&
-                    i !== shotsUsed &&
+                    !isNext &&
                     'border-border bg-surface-muted text-text-secondary/50',
                 )}
                 title={
-                  v === 1 ? 'İsabet' : v === 0 ? 'Kaçtı' : `Şut ${i + 1}`
+                  v === 1 ? 'İsabet' : v === 0 ? 'Kaçtı' : `Şut`
                 }
               >
-                {v === 1 ? '●' : v === 0 ? '○' : i + 1}
+                {v === 1 ? '●' : v === 0 ? '○' : unlimited ? '·' : i + 1}
               </span>
-            )
-          })}
+              )
+            })
+          })()}
         </div>
       </div>
 
@@ -690,9 +739,11 @@ export function HoopGame({
             <div className="mx-4 rounded-[var(--radius-md)] border border-white/15 bg-black/50 px-5 py-4 text-center text-white shadow-lg backdrop-blur-md">
               <p className="font-display text-lg font-semibold">Günlük hak bitti</p>
               <p className="mt-1 text-2xl font-semibold tabular-nums text-brand-cyan">
-                {makes}/{MAX_DAILY_SHOTS}
+                {makes}{!unlimited ? `/${MAX_DAILY_SHOTS}` : ' isabet'}
               </p>
-              <p className="mt-1 text-xs text-white/70">Yarın yeni 6 şut</p>
+              <p className="mt-1 text-xs text-white/70">
+                {unlimited ? 'Test tavanı' : 'Yarın yeni 6 şut'}
+              </p>
             </div>
           </div>
         ) : null}
@@ -737,7 +788,7 @@ export function HoopGame({
           />
         </div>
         <p className="text-[11px] text-text-secondary">
-          {phaseHint(phase, outOfShots, makes)}
+          {phaseHint(phase, outOfShots, makes, unlimited)}
         </p>
       </div>
     </div>

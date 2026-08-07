@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: hoop-3pt-6shots-32
+// rules-rev: hoop-test-mgmt-coord-33
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1624,11 +1624,11 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ---------- hoopDailyScores (3’lük atış — günde 6 şut) ----------
+    // ---------- hoopDailyScores (test: sadece yönetim/koordinatör, limit yok) ----------
     match /hoopDailyScores/{scoreId} {
       allow read: if isAuthenticated();
 
-      allow create: if isAuthenticated()
+      allow create: if isCoordinatorOrManagement()
         && request.resource.data.keys().hasOnly([
           'date',
           'uid',
@@ -1651,7 +1651,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
-      allow update: if isAuthenticated()
+      allow update: if isCoordinatorOrManagement()
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.date == resource.data.date
@@ -1662,7 +1662,7 @@ service cloud.firestore {
         && request.resource.data.attempts is list
         && request.resource.data.attempts.size()
           == resource.data.attempts.size() + 1
-        && request.resource.data.attempts.size() <= 6
+        && request.resource.data.attempts.size() <= 200
         && request.resource.data.attempts[
              request.resource.data.attempts.size() - 1
            ] is int
@@ -1676,7 +1676,7 @@ service cloud.firestore {
         )
         && request.resource.data.makes is int
         && request.resource.data.makes >= 0
-        && request.resource.data.makes <= 6
+        && request.resource.data.makes <= 200
         && request.resource.data.makes
           == resource.data.makes
             + request.resource.data.attempts[
@@ -1705,7 +1705,7 @@ service cloud.firestore {
         && isValidString(request.resource.data.fullName, 1, 120)
         && request.resource.data.makes is int
         && request.resource.data.makes >= 0
-        && request.resource.data.makes <= 6
+        && request.resource.data.makes <= 200
         && request.resource.data.finalizedAt == request.time
         && exists(
           /databases/$(database)/documents/hoopDailyScores/$(

@@ -9,8 +9,18 @@ import { MAX_DAILY_SHOTS, sortHoopScores } from '@/features/game/services/hoopSc
 import type { HoopDailyScore } from '@/features/game/types/hoop'
 
 describe('hoop game product rules', () => {
-  it('allows 6 shots per day', () => {
+  it('keeps product max constant for later public launch', () => {
     expect(MAX_DAILY_SHOTS).toBe(6)
+  })
+
+  it('test mode: only management and coordinator can play', async () => {
+    const { canPlayHoopGame, HOOP_PUBLIC_TEST_MODE, hoopShotLimitForRole } =
+      await import('@/features/game/services/hoopScoreService')
+    expect(HOOP_PUBLIC_TEST_MODE).toBe(true)
+    expect(canPlayHoopGame('management')).toBe(true)
+    expect(canPlayHoopGame('coordinator')).toBe(true)
+    expect(canPlayHoopGame('reporter')).toBe(false)
+    expect(hoopShotLimitForRole('management')).toBeNull()
   })
 
   it('oscillates aim between configured min and max', () => {

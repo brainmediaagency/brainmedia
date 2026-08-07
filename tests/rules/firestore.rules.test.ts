@@ -2560,18 +2560,18 @@ describe('Reaction daily winners (legacy read-only)', () => {
   })
 })
 
-describe('Hoop daily scores', () => {
-  it('player can create first shot and append up to 6', async () => {
-    await seedUser('hooper1', 'media_planning')
+describe('Hoop daily scores (test: mgmt/coord only)', () => {
+  it('management can create first shot and append beyond 6', async () => {
+    await seedUser('mgmt1', 'management')
     const db = testEnv
-      .authenticatedContext('hooper1', authClaims('media_planning'))
+      .authenticatedContext('mgmt1', authClaims('management'))
       .firestore()
-    const ref = doc(db, 'hoopDailyScores', '2026-08-07_hooper1')
+    const ref = doc(db, 'hoopDailyScores', '2026-08-07_mgmt1')
     await assertSucceeds(
       setDoc(ref, {
         date: '2026-08-07',
-        uid: 'hooper1',
-        fullName: 'User hooper1',
+        uid: 'mgmt1',
+        fullName: 'User mgmt1',
         attempts: [1],
         makes: 1,
         createdAt: serverTimestamp(),
@@ -2587,13 +2587,31 @@ describe('Hoop daily scores', () => {
     )
   })
 
-  it('cannot exceed 6 shots in rules', async () => {
-    await seedUser('hooper2', 'media_planning')
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await setDoc(doc(ctx.firestore(), 'hoopDailyScores', '2026-08-07_hooper2'), {
+  it('reporter cannot create hoop scores during test gate', async () => {
+    await seedUser('rep1', 'reporter')
+    const db = testEnv
+      .authenticatedContext('rep1', authClaims('reporter'))
+      .firestore()
+    await assertFails(
+      setDoc(doc(db, 'hoopDailyScores', '2026-08-07_rep1'), {
         date: '2026-08-07',
-        uid: 'hooper2',
-        fullName: 'User hooper2',
+        uid: 'rep1',
+        fullName: 'User rep1',
+        attempts: [1],
+        makes: 1,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
+  it('management can exceed former 6-shot list cap', async () => {
+    await seedUser('mgmt2', 'management')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'hoopDailyScores', '2026-08-07_mgmt2'), {
+        date: '2026-08-07',
+        uid: 'mgmt2',
+        fullName: 'User mgmt2',
         attempts: [1, 1, 1, 1, 1, 1],
         makes: 6,
         createdAt: Timestamp.now(),
@@ -2601,10 +2619,10 @@ describe('Hoop daily scores', () => {
       })
     })
     const db = testEnv
-      .authenticatedContext('hooper2', authClaims('media_planning'))
+      .authenticatedContext('mgmt2', authClaims('management'))
       .firestore()
-    await assertFails(
-      updateDoc(doc(db, 'hoopDailyScores', '2026-08-07_hooper2'), {
+    await assertSucceeds(
+      updateDoc(doc(db, 'hoopDailyScores', '2026-08-07_mgmt2'), {
         attempts: [1, 1, 1, 1, 1, 1, 0],
         makes: 6,
         updatedAt: serverTimestamp(),
