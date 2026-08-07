@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { CircleDot, Flame, Target, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/classNames'
 import { mapAppError } from '@/lib/errors'
@@ -15,22 +16,47 @@ import {
 
 type Phase = 'idle' | 'aiming' | 'charging' | 'flying' | 'saving' | 'done'
 
+type Particle = {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  color: string
+  size: number
+}
+
 export type HoopGameProps = {
-  /**
-   * Shots already recorded on the server for today (attempts.length).
-   * Always prefer Firestore — never invent progress on remount.
-   */
   shotsUsed: number
-  /** Makes already on server. */
   makes: number
-  /** After each shot lands; must persist to Firestore before next shot. */
+  /** Server shot results (0|1) — remount-safe history HUD */
+  attempts?: number[]
   onShotComplete: (hit: boolean) => Promise<void>
   disabled?: boolean
+}
+
+function phaseHint(phase: Phase, outOfShots: boolean, makes: number): string {
+  if (outOfShots) {
+    return `Gün bitti · ${makes}/${MAX_DAILY_SHOTS} isabet. Yarın tekrar.`
+  }
+  switch (phase) {
+    case 'charging':
+      return 'Güç doluyor — istediğin anda bırak'
+    case 'flying':
+      return 'Top havada…'
+    case 'saving':
+      return 'Skor kaydediliyor…'
+    case 'done':
+      return `Gün bitti · ${makes}/${MAX_DAILY_SHOTS}`
+    default:
+      return 'Nişan sallanıyor · basılı tut = güç · bırak = at'
+  }
 }
 
 export function HoopGame({
   shotsUsed,
   makes,
+  attempts = [],
   onShotComplete,
   disabled = false,
 }: HoopGameProps) {
@@ -43,33 +69,60 @@ export function HoopGame({
   const ballRef = useRef<BallState>(createBall())
   const lastTsRef = useRef(0)
   const rafRef = useRef(0)
+  const settleLockRef = useRef(false)
+  const shotsUsedRef = useRef(shotsUsed)
+  const onShotCompleteRef = useRef(onShotComplete)
+  const particlesRef = useRef<Particle[]>([])
+  const flashRef = useRef(0)
+  const netSwayRef = useRef(0)
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [displayPower, setDisplayPower] = useState(0)
   const [lastResult, setLastResult] = useState<'make' | 'miss' | null>(null)
   const [busy, setBusy] = useState(false)
 
+  shotsUsedRef.current = shotsUsed
+  onShotCompleteRef.current = onShotComplete
+
   const outOfShots = shotsUsed >= MAX_DAILY_SHOTS
   const canPlay =
-    !disabled && !busy && !outOfShots && (phase === 'idle' || phase === 'aiming' || phase === 'charging')
+    !disabled
+    && !busy
+    && !outOfShots
+    && (phase === 'idle' || phase === 'aiming' || phase === 'charging')
 
   const setPhaseBoth = useCallback((next: Phase) => {
     phaseRef.current = next
     setPhase(next)
   }, [])
 
-  // Resume aiming when Firestore still has shots — remount safe.
+  const spawnBurst = useCallback((x: number, y: number, hit: boolean) => {
+    const colors = hit
+      ? ['#fbbf24', '#34d399', '#22d3ee', '#f97316', '#fff']
+      : ['#94a3b8', '#64748b', '#f87171']
+    for (let i = 0; i < (hit ? 28 : 12); i += 1) {
+      const a = Math.random() * Math.PI * 2
+      const sp = 40 + Math.random() * (hit ? 160 : 80)
+      particlesRef.current.push({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 40,
+        life: 0.45 + Math.random() * 0.45,
+        color: colors[i % colors.length]!,
+        size: 2 + Math.random() * 3,
+      })
+    }
+    flashRef.current = hit ? 0.55 : 0.28
+  }, [])
+
   useEffect(() => {
     if (outOfShots) {
       setPhaseBoth('done')
       return
     }
     if (phaseRef.current === 'flying' || phaseRef.current === 'saving') return
-    if (phaseRef.current === 'done' && !outOfShots) {
-      setPhaseBoth('aiming')
-      return
-    }
-    if (phaseRef.current === 'idle') {
+    if (phaseRef.current === 'done' || phaseRef.current === 'idle') {
       setPhaseBoth('aiming')
     }
   }, [outOfShots, shotsUsed, setPhaseBoth])
@@ -80,8 +133,285 @@ export function HoopGame({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     const world = DEFAULT_HOOP_WORLD
-    canvas.width = world.width
-    canvas.height = world.height
+    const dpr = Math.min(2, window.devicePixelRatio || 1)
+    canvas.width = world.width * dpr
+    canvas.height = world.height * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    const drawCourt = () => {
+      // Night arena sky
+      const sky = ctx.createLinearGradient(0, 0, 0, world.height)
+      sky.addColorStop(0, '#07111f')
+      sky.addColorStop(0.45, '#0c2340')
+      sky.addColorStop(1, '#123556')
+      ctx.fillStyle = sky
+      ctx.fillRect(0, 0, world.width, world.height)
+
+      // Soft glow orbs
+      const g1 = ctx.createRadialGradient(70, 80, 10, 70, 80, 120)
+      g1.addColorStop(0, 'rgba(34,211,238,0.18)')
+      g1.addColorStop(1, 'rgba(34,211,238,0)')
+      ctx.fillStyle = g1
+      ctx.fillRect(0, 0, world.width, world.height)
+
+      const g2 = ctx.createRadialGradient(300, 60, 8, 300, 60, 100)
+      g2.addColorStop(0, 'rgba(249,115,22,0.14)')
+      g2.addColorStop(1, 'rgba(249,115,22,0)')
+      ctx.fillStyle = g2
+      ctx.fillRect(0, 0, world.width, world.height)
+
+      // Subtle stars
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'
+      for (let i = 0; i < 18; i += 1) {
+        const sx = (i * 53 + 17) % world.width
+        const sy = (i * 31 + 11) % Math.floor(world.height * 0.4)
+        ctx.beginPath()
+        ctx.arc(sx, sy, i % 3 === 0 ? 1.2 : 0.7, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      // Court floor
+      const floorY = world.height - 36
+      const floor = ctx.createLinearGradient(0, floorY - 10, 0, world.height)
+      floor.addColorStop(0, '#1c4f6e')
+      floor.addColorStop(0.4, '#164057')
+      floor.addColorStop(1, '#0f2d3f')
+      ctx.fillStyle = floor
+      ctx.fillRect(0, floorY, world.width, world.height - floorY)
+
+      // Three-point arc (hint of court)
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(world.rim.x - 20, floorY, 95, Math.PI * 1.05, Math.PI * 1.95)
+      ctx.stroke()
+
+      // Key paint
+      ctx.fillStyle = 'rgba(249,115,22,0.12)'
+      ctx.fillRect(world.rim.x - 55, floorY - 2, 90, 28)
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+      ctx.strokeRect(world.rim.x - 55, floorY - 2, 90, 28)
+
+      // Floor line
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)'
+      ctx.beginPath()
+      ctx.moveTo(0, floorY)
+      ctx.lineTo(world.width, floorY)
+      ctx.stroke()
+    }
+
+    const drawHoop = (sway: number) => {
+      const boardX = world.rim.x + world.rimHalfWidth + 10
+      // Pole
+      ctx.fillStyle = '#64748b'
+      ctx.fillRect(boardX + 2, world.rim.y + 20, 6, world.height - world.rim.y - 56)
+      // Pole base
+      ctx.fillStyle = '#475569'
+      ctx.fillRect(boardX - 8, world.height - 40, 28, 8)
+
+      // Backboard with glass look
+      const bx = boardX - 6
+      const by = world.rim.y - 46
+      const bw = 14
+      const bh = 78
+      const glass = ctx.createLinearGradient(bx, by, bx + bw, by + bh)
+      glass.addColorStop(0, 'rgba(241,245,249,0.95)')
+      glass.addColorStop(0.5, 'rgba(226,232,240,0.75)')
+      glass.addColorStop(1, 'rgba(148,163,184,0.55)')
+      ctx.fillStyle = glass
+      ctx.fillRect(bx, by, bw, bh)
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'
+      ctx.lineWidth = 2
+      ctx.strokeRect(bx, by, bw, bh)
+      // Target square on board
+      ctx.strokeStyle = '#ea580c'
+      ctx.lineWidth = 2
+      ctx.strokeRect(bx + 3, by + 28, 8, 18)
+
+      // Rim
+      ctx.save()
+      ctx.translate(0, sway * 1.5)
+      const rimGrad = ctx.createLinearGradient(
+        world.rim.x - world.rimHalfWidth,
+        world.rim.y,
+        world.rim.x + world.rimHalfWidth,
+        world.rim.y,
+      )
+      rimGrad.addColorStop(0, '#fb923c')
+      rimGrad.addColorStop(0.5, '#f97316')
+      rimGrad.addColorStop(1, '#c2410c')
+      ctx.strokeStyle = rimGrad
+      ctx.lineWidth = 5
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.ellipse(
+        world.rim.x,
+        world.rim.y,
+        world.rimHalfWidth,
+        8,
+        0,
+        0,
+        Math.PI * 2,
+      )
+      ctx.stroke()
+
+      // Net
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'
+      ctx.lineWidth = 1.2
+      const netDepth = 32
+      for (let i = -3; i <= 3; i += 1) {
+        const topX = world.rim.x + i * (world.rimHalfWidth / 3.2)
+        const botX = world.rim.x + i * 6 + sway * 3
+        ctx.beginPath()
+        ctx.moveTo(topX, world.rim.y + 2)
+        ctx.quadraticCurveTo(
+          topX + sway * 2,
+          world.rim.y + netDepth * 0.55,
+          botX,
+          world.rim.y + netDepth,
+        )
+        ctx.stroke()
+      }
+      for (let r = 1; r <= 3; r += 1) {
+        const yy = world.rim.y + 6 + r * 7
+        const w = world.rimHalfWidth * (1 - r * 0.16)
+        ctx.beginPath()
+        ctx.ellipse(world.rim.x + sway * r * 0.4, yy, w, 3.5, 0, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    const drawPlayer = () => {
+      const px = world.ballStart.x - 10
+      const py = world.height - 48
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'
+      ctx.beginPath()
+      ctx.ellipse(px + 8, py + 14, 18, 5, 0, 0, Math.PI * 2)
+      ctx.fill()
+      // Body
+      ctx.fillStyle = '#1e3a5f'
+      ctx.fillRect(px + 2, py - 22, 14, 28)
+      // Head
+      ctx.beginPath()
+      ctx.arc(px + 9, py - 30, 8, 0, Math.PI * 2)
+      ctx.fillStyle = '#fcd9b0'
+      ctx.fill()
+      // Jersey accent
+      ctx.fillStyle = '#22d3ee'
+      ctx.fillRect(px + 2, py - 12, 14, 4)
+      // Arm
+      ctx.strokeStyle = '#fcd9b0'
+      ctx.lineWidth = 3
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(px + 14, py - 16)
+      ctx.lineTo(world.ballStart.x - 4, world.ballStart.y - 4)
+      ctx.stroke()
+    }
+
+    const drawAim = (angle: number, power: number, charging: boolean) => {
+      const len = 64 + power * 52
+      const ax = world.ballStart.x
+      const ay = world.ballStart.y
+      const ex = ax + Math.cos(angle) * len
+      const ey = ay - Math.sin(angle) * len
+
+      // Ghost arc dots
+      if (!charging) {
+        ctx.fillStyle = 'rgba(255,255,255,0.22)'
+        for (let i = 1; i <= 5; i += 1) {
+          const t = i / 6
+          const px = ax + Math.cos(angle) * len * t
+          const py = ay - Math.sin(angle) * len * t
+          ctx.beginPath()
+          ctx.arc(px, py, 2, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+
+      // Power beam
+      ctx.strokeStyle = charging
+        ? `rgba(34,211,238,${0.55 + power * 0.45})`
+        : 'rgba(255,255,255,0.5)'
+      ctx.lineWidth = charging ? 3 + power * 2 : 2
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(ax, ay)
+      ctx.lineTo(ex, ey)
+      ctx.stroke()
+
+      // Arrow head
+      const ah = 10
+      ctx.fillStyle = charging ? '#22d3ee' : 'rgba(255,255,255,0.75)'
+      ctx.beginPath()
+      ctx.moveTo(ex, ey)
+      ctx.lineTo(
+        ex - Math.cos(angle - 0.4) * ah,
+        ey + Math.sin(angle - 0.4) * ah,
+      )
+      ctx.lineTo(
+        ex - Math.cos(angle + 0.4) * ah,
+        ey + Math.sin(angle + 0.4) * ah,
+      )
+      ctx.closePath()
+      ctx.fill()
+    }
+
+    const drawBall = (b: BallState, spinning: boolean) => {
+      // Shadow on floor when near ground
+      const floorY = world.height - 36
+      if (b.y < floorY) {
+        const shadowScale = Math.max(0.25, 1 - (floorY - b.y) / 280)
+        ctx.fillStyle = `rgba(0,0,0,${0.22 * shadowScale})`
+        ctx.beginPath()
+        ctx.ellipse(
+          b.x,
+          floorY + 2,
+          12 * shadowScale,
+          4 * shadowScale,
+          0,
+          0,
+          Math.PI * 2,
+        )
+        ctx.fill()
+      }
+
+      const r = 12
+      const ballG = ctx.createRadialGradient(
+        b.x - 3,
+        b.y - 4,
+        2,
+        b.x,
+        b.y,
+        r,
+      )
+      ballG.addColorStop(0, '#fdba74')
+      ballG.addColorStop(0.45, '#f97316')
+      ballG.addColorStop(1, '#9a3412')
+      ctx.beginPath()
+      ctx.arc(b.x, b.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = ballG
+      ctx.fill()
+
+      // Seams
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+      ctx.lineWidth = 1.2
+      ctx.beginPath()
+      ctx.ellipse(b.x, b.y, r * 0.85, r * 0.35, spinning ? aimMsRef.current / 80 : 0.4, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(b.x, b.y - r + 1)
+      ctx.lineTo(b.x, b.y + r - 1)
+      ctx.stroke()
+
+      // Highlight
+      ctx.beginPath()
+      ctx.arc(b.x - 3, b.y - 4, 3, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(255,255,255,0.35)'
+      ctx.fill()
+    }
 
     const draw = (ts: number) => {
       if (!lastTsRef.current) lastTsRef.current = ts
@@ -99,16 +429,23 @@ export function HoopGame({
         )
         setDisplayPower(powerRef.current)
       }
-      if (p === 'flying') {
+      if (p === 'flying' && !settleLockRef.current) {
         ballRef.current = stepBall(ballRef.current, dt)
         if (ballRef.current.scored || ballRef.current.settled) {
+          settleLockRef.current = true
           const hit = ballRef.current.scored
           setLastResult(hit ? 'make' : 'miss')
+          if (hit) netSwayRef.current = 1
+          spawnBurst(
+            hit ? world.rim.x : ballRef.current.x,
+            hit ? world.rim.y : ballRef.current.y,
+            hit,
+          )
           setPhaseBoth('saving')
           setBusy(true)
           void (async () => {
             try {
-              await onShotComplete(hit)
+              await onShotCompleteRef.current(hit)
             } catch (error) {
               toast.error(mapAppError(error, 'Şut kaydedilemedi.'))
             } finally {
@@ -116,8 +453,8 @@ export function HoopGame({
               ballRef.current = createBall()
               powerRef.current = 0
               setDisplayPower(0)
-              // Next phase from shotsUsed via effect; optimistic local:
-              if (shotsUsed + 1 >= MAX_DAILY_SHOTS) {
+              settleLockRef.current = false
+              if (shotsUsedRef.current + 1 >= MAX_DAILY_SHOTS) {
                 setPhaseBoth('done')
               } else {
                 setPhaseBoth('aiming')
@@ -127,76 +464,53 @@ export function HoopGame({
         }
       }
 
-      // Background
-      const grd = ctx.createLinearGradient(0, 0, 0, world.height)
-      grd.addColorStop(0, '#0f2744')
-      grd.addColorStop(1, '#173a5e')
-      ctx.fillStyle = grd
-      ctx.fillRect(0, 0, world.width, world.height)
+      netSwayRef.current = Math.max(0, netSwayRef.current - dt * 1.8)
+      flashRef.current = Math.max(0, flashRef.current - dt)
 
-      // Floor
-      ctx.fillStyle = '#1a4d6d'
-      ctx.fillRect(0, world.height - 28, world.width, 28)
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)'
-      ctx.beginPath()
-      ctx.moveTo(0, world.height - 28)
-      ctx.lineTo(world.width, world.height - 28)
-      ctx.stroke()
+      // particles
+      particlesRef.current = particlesRef.current
+        .map((pt) => ({
+          ...pt,
+          x: pt.x + pt.vx * dt,
+          y: pt.y + pt.vy * dt,
+          vy: pt.vy + 220 * dt,
+          life: pt.life - dt,
+        }))
+        .filter((pt) => pt.life > 0)
 
-      // Backboard + rim
-      const boardX = world.rim.x + world.rimHalfWidth + 8
-      ctx.fillStyle = 'rgba(255,255,255,0.85)'
-      ctx.fillRect(boardX - 4, world.rim.y - 38, 8, 70)
-      ctx.strokeStyle = '#f97316'
-      ctx.lineWidth = 4
-      ctx.beginPath()
-      ctx.ellipse(
-        world.rim.x,
-        world.rim.y,
-        world.rimHalfWidth,
-        7,
-        0,
-        0,
-        Math.PI * 2,
-      )
-      ctx.stroke()
-      // Net hint
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)'
-      ctx.lineWidth = 1
-      for (let i = -2; i <= 2; i += 1) {
-        ctx.beginPath()
-        ctx.moveTo(world.rim.x + i * 8, world.rim.y)
-        ctx.lineTo(world.rim.x + i * 5, world.rim.y + 28)
-        ctx.stroke()
-      }
-
-      // Aim line (when aiming or charging)
+      drawCourt()
+      drawPlayer()
       const angle =
         p === 'charging' || p === 'flying' || p === 'saving'
           ? lockedAngleRef.current
           : aimAngleAt(aimMsRef.current)
       if (p === 'aiming' || p === 'charging') {
-        const len = 70 + powerRef.current * 40
-        ctx.strokeStyle =
-          p === 'charging' ? 'rgba(56,189,248,0.95)' : 'rgba(255,255,255,0.55)'
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(world.ballStart.x, world.ballStart.y)
-        ctx.lineTo(
-          world.ballStart.x + Math.cos(angle) * len,
-          world.ballStart.y - Math.sin(angle) * len,
-        )
-        ctx.stroke()
+        drawAim(angle, powerRef.current, p === 'charging')
+      }
+      drawHoop(Math.sin(aimMsRef.current / 90) * netSwayRef.current * 4)
+
+      const ball = ballRef.current
+      if (p === 'flying' || p === 'saving' || p === 'aiming' || p === 'charging') {
+        // Hide resting ball during flying if far — always draw
+        drawBall(ball, p === 'flying')
       }
 
-      // Ball
-      const b = ballRef.current
-      ctx.beginPath()
-      ctx.arc(b.x, b.y, 11, 0, Math.PI * 2)
-      ctx.fillStyle = '#ea580c'
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)'
-      ctx.stroke()
+      for (const pt of particlesRef.current) {
+        ctx.globalAlpha = Math.max(0, pt.life * 1.5)
+        ctx.fillStyle = pt.color
+        ctx.beginPath()
+        ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalAlpha = 1
+      }
+
+      if (flashRef.current > 0) {
+        ctx.fillStyle =
+          lastResult === 'make'
+            ? `rgba(52,211,153,${flashRef.current * 0.35})`
+            : `rgba(248,113,113,${flashRef.current * 0.25})`
+        ctx.fillRect(0, 0, world.width, world.height)
+      }
 
       rafRef.current = requestAnimationFrame(draw)
     }
@@ -206,7 +520,7 @@ export function HoopGame({
       cancelAnimationFrame(rafRef.current)
       lastTsRef.current = 0
     }
-  }, [onShotComplete, setPhaseBoth, shotsUsed])
+  }, [setPhaseBoth, spawnBurst, lastResult])
 
   const onPointerDown = (event: React.PointerEvent) => {
     if (!canPlay || phaseRef.current !== 'aiming') return
@@ -230,7 +544,6 @@ export function HoopGame({
     powerRef.current = power
     setDisplayPower(power)
     if (power < 0.08) {
-      // Tap without hold: discard charge, keep aiming (no shot consumed).
       setPhaseBoth('aiming')
       powerRef.current = 0
       setDisplayPower(0)
@@ -242,40 +555,128 @@ export function HoopGame({
       vx: v.x,
       vy: v.y,
     }
+    settleLockRef.current = false
     setPhaseBoth('flying')
   }
 
+  const powerPct = Math.round(displayPower * 100)
+  const powerTone =
+    powerPct < 35 ? 'low' : powerPct < 70 ? 'mid' : 'high'
+
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <p className="text-text-secondary">
-          Şut{' '}
-          <span className="font-semibold tabular-nums text-text-primary">
-            {Math.min(shotsUsed, MAX_DAILY_SHOTS)}/{MAX_DAILY_SHOTS}
-          </span>
-          {' · '}
-          İsabet{' '}
-          <span className="font-semibold tabular-nums text-text-primary">
+    <div className="space-y-4">
+      {/* HUD */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+            <Target className="size-3.5 text-brand-cyan" aria-hidden />
+            Şut
+          </div>
+          <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-text-primary">
+            {Math.min(shotsUsed, MAX_DAILY_SHOTS)}
+            <span className="text-base font-medium text-text-secondary">
+              /{MAX_DAILY_SHOTS}
+            </span>
+          </p>
+        </div>
+        <div className="rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+            <Flame className="size-3.5 text-brand-orange" aria-hidden />
+            İsabet
+          </div>
+          <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-brand-orange">
             {makes}
-          </span>
-        </p>
-        {lastResult ? (
+            <span className="text-base font-medium text-text-secondary">
+              /{MAX_DAILY_SHOTS}
+            </span>
+          </p>
+        </div>
+        <div className="col-span-2 rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm sm:col-span-1">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+            <Trophy className="size-3.5 text-warning" aria-hidden />
+            Son
+          </div>
           <p
             className={cn(
-              'text-sm font-semibold',
-              lastResult === 'make' ? 'text-success' : 'text-warning',
+              'mt-0.5 font-display text-lg font-semibold tracking-tight',
+              lastResult === 'make' && 'text-success',
+              lastResult === 'miss' && 'text-warning',
+              !lastResult && 'text-text-secondary',
             )}
           >
-            {lastResult === 'make' ? 'İsabet!' : 'Kaçtı'}
+            {lastResult === 'make'
+              ? 'İsabet!'
+              : lastResult === 'miss'
+                ? 'Kaçtı'
+                : '—'}
           </p>
-        ) : null}
+        </div>
       </div>
 
-      <div className="overflow-hidden rounded-[var(--radius-md)] border border-border bg-[#0f2744]">
+      {/* Shot history dots */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-text-secondary">Geçmiş</span>
+        <div className="flex gap-1.5" aria-label="Şut sonuçları">
+          {Array.from({ length: MAX_DAILY_SHOTS }, (_, i) => {
+            const v = attempts[i]
+            return (
+              <span
+                key={i}
+                className={cn(
+                  'flex size-7 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums transition-colors',
+                  v === 1 && 'border-success/40 bg-success/15 text-success',
+                  v === 0 && 'border-warning/40 bg-warning/10 text-warning',
+                  v === undefined &&
+                    i === shotsUsed &&
+                    !outOfShots &&
+                    'border-brand-cyan/50 bg-brand-cyan/10 text-brand-blue ring-2 ring-brand-cyan/25',
+                  v === undefined &&
+                    i !== shotsUsed &&
+                    'border-border bg-surface-muted text-text-secondary/50',
+                )}
+                title={
+                  v === 1 ? 'İsabet' : v === 0 ? 'Kaçtı' : `Şut ${i + 1}`
+                }
+              >
+                {v === 1 ? '●' : v === 0 ? '○' : i + 1}
+              </span>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Arena */}
+      <div
+        className={cn(
+          'relative overflow-hidden rounded-[var(--radius-md)] border border-border shadow-[0_12px_40px_rgba(12,35,64,0.18)]',
+          phase === 'charging' && 'ring-2 ring-brand-cyan/40',
+          lastResult === 'make' && phase === 'saving' && 'ring-2 ring-success/35',
+        )}
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/45 to-transparent px-3 py-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
+            <CircleDot className="size-3.5 text-brand-cyan" aria-hidden />
+            {phase === 'charging'
+              ? 'Güç'
+              : phase === 'flying'
+                ? 'Atış'
+                : phase === 'saving'
+                  ? 'Kayıt'
+                  : outOfShots
+                    ? 'Bitti'
+                    : 'Nişan'}
+          </span>
+          <span className="rounded-full bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/80 backdrop-blur-sm">
+            {busy ? 'Kaydediliyor…' : canPlay ? 'Basılı tut' : 'Bekle'}
+          </span>
+        </div>
+
         <canvas
           ref={canvasRef}
-          className="mx-auto block h-auto w-full max-w-md touch-none select-none"
-          style={{ aspectRatio: `${DEFAULT_HOOP_WORLD.width} / ${DEFAULT_HOOP_WORLD.height}` }}
+          className="mx-auto block h-auto w-full max-w-full touch-none select-none bg-[#0c2340]"
+          style={{
+            aspectRatio: `${DEFAULT_HOOP_WORLD.width} / ${DEFAULT_HOOP_WORLD.height}`,
+          }}
           onPointerDown={onPointerDown}
           onPointerUp={finishCharge}
           onPointerCancel={finishCharge}
@@ -283,28 +684,62 @@ export function HoopGame({
           role="img"
           aria-label="Basket atış alanı. Basılı tutarak güç ver, bırakarak at."
         />
+
+        {outOfShots ? (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0c2340]/50 backdrop-blur-[2px]">
+            <div className="mx-4 rounded-[var(--radius-md)] border border-white/15 bg-black/50 px-5 py-4 text-center text-white shadow-lg backdrop-blur-md">
+              <p className="font-display text-lg font-semibold">Günlük hak bitti</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-brand-cyan">
+                {makes}/{MAX_DAILY_SHOTS}
+              </p>
+              <p className="mt-1 text-xs text-white/70">Yarın yeni 6 şut</p>
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      <div className="space-y-1.5">
-        <div className="flex justify-between text-xs text-text-secondary">
-          <span>Güç (basılı tut)</span>
-          <span className="tabular-nums">{Math.round(displayPower * 100)}%</span>
+      {/* Power meter */}
+      <div className="space-y-2 rounded-[var(--radius-md)] border border-border bg-surface p-3 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+            Güç
+          </span>
+          <span
+            className={cn(
+              'font-display text-sm font-semibold tabular-nums',
+              powerTone === 'low' && 'text-text-secondary',
+              powerTone === 'mid' && 'text-brand-cyan',
+              powerTone === 'high' && 'text-brand-orange',
+            )}
+          >
+            {powerPct}%
+          </span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-surface-muted">
+        <div className="relative h-3 overflow-hidden rounded-full bg-surface-muted">
           <div
-            className="h-full rounded-full bg-brand-cyan transition-[width] duration-75"
-            style={{ width: `${Math.round(displayPower * 100)}%` }}
+            className={cn(
+              'h-full rounded-full transition-[width] duration-75',
+              powerTone === 'low' && 'bg-brand-blue/70',
+              powerTone === 'mid' && 'bg-gradient-to-r from-brand-cyan to-brand-blue',
+              powerTone === 'high' &&
+                'bg-gradient-to-r from-brand-cyan via-brand-orange to-brand-pink',
+            )}
+            style={{ width: `${powerPct}%` }}
+          />
+          {/* sweet spots marks */}
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/40"
+            style={{ left: '45%' }}
+          />
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/40"
+            style={{ left: '70%' }}
           />
         </div>
+        <p className="text-[11px] text-text-secondary">
+          {phaseHint(phase, outOfShots, makes)}
+        </p>
       </div>
-
-      <p className="text-xs text-text-secondary">
-        {outOfShots
-          ? `Bugünkü ${MAX_DAILY_SHOTS} şut bitti · skor: ${makes}/${MAX_DAILY_SHOTS}`
-          : phase === 'saving' || busy
-            ? 'Şut kaydediliyor… (çıkıp girsen bile sunucuda durur)'
-            : 'Nişan salınır · bas = kilit + güç · bırak = atış. Her şut anında kaydedilir.'}
-      </p>
     </div>
   )
 }

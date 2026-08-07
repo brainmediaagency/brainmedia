@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { CircleDot } from 'lucide-react'
 import { toast } from 'sonner'
 import { CategoryPanel, PageHeader } from '@/components/ui'
 import { useAuth } from '@/features/auth/hooks/useAuth'
@@ -65,18 +66,20 @@ export function GamePage() {
     <div className="space-y-6 animate-fade-in-up">
       <PageHeader
         title="3’lük Atış"
-        subtitle={`Günde ${MAX_DAILY_SHOTS} şut · isabet sayısı sıralar. Her şut anında kaydedilir; çık-gir sıfırlamaz.`}
+        subtitle={`Günde ${MAX_DAILY_SHOTS} şut · en çok isabet kazanır. Her şut sunucuya yazılır.`}
       />
 
       <CategoryPanel
-        title="Oyna"
-        description="Nişan sallanır · bas = kilit + güç · bırak = at"
-        tone="cyan"
+        title="Sahaya çık"
+        description="Nişan sallanır · basılı tut = güç · bırak = üçlük"
+        tone="orange"
+        icon={CircleDot}
       >
         {profile ? (
           <HoopGame
             shotsUsed={shotsUsed}
             makes={makes}
+            attempts={myScore?.attempts ?? []}
             onShotComplete={handleShotComplete}
           />
         ) : (
