@@ -101,17 +101,18 @@ export function GamePage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in-up">
+    <div className="space-y-4 animate-fade-in-up sm:space-y-6">
       <PageHeader
         title="3’lük Atış"
-        subtitle="Test modu · yönetim & koordinatör · günlük şut limiti yok · her şut sunucuya yazılır"
+        subtitle="Test · yönetim & koordinatör · limit yok"
       />
 
       <CategoryPanel
         title="Sahaya çık"
-        description="Test: sınırsız şut · nişan sallanır · basılı tut = güç · bırak = üçlük"
+        description="Basılı tut = güç · bırak = at"
         tone="orange"
         icon={CircleDot}
+        compact
       >
         <HoopGame
           shotsUsed={shotsUsed}
@@ -122,11 +123,12 @@ export function GamePage() {
         />
       </CategoryPanel>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
         <CategoryPanel
           title="Bugünün sıralaması"
-          description="Test sıralaması · en çok isabet"
+          description="En çok isabet"
           tone="navy"
+          compact
         >
           <HoopLeaderboard
             scores={scores}
@@ -138,8 +140,9 @@ export function GamePage() {
 
         <CategoryPanel
           title="Şampiyonluk tablosu"
-          description="Kaç kez günün şampiyonu oldun"
+          description="Günün şampiyonu sayısı"
           tone="success"
+          compact
         >
           <ChampionsTable />
         </CategoryPanel>

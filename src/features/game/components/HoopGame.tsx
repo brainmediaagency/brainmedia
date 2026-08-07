@@ -582,50 +582,59 @@ export function HoopGame({
   const powerTone =
     powerPct < 35 ? 'low' : powerPct < 70 ? 'mid' : 'high'
 
+  // Visual size: height capped (~42dvh / 300px); width follows aspect so image never stretches.
+  // Logical physics stay DEFAULT_HOOP_WORLD; canvas CSS scales the drawing.
+  const worldW = DEFAULT_HOOP_WORLD.width
+  const worldH = DEFAULT_HOOP_WORLD.height
+  const arenaMaxStyle = {
+    width: `min(100%, 280px, calc(min(42dvh, 300px) * ${worldW} / ${worldH}))`,
+    aspectRatio: `${worldW} / ${worldH}`,
+  } as const
+
   return (
-    <div className="space-y-4">
-      {/* HUD */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <div className="rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-            <Target className="size-3.5 text-brand-cyan" aria-hidden />
+    <div className="mx-auto w-full max-w-[320px] space-y-2.5 sm:max-w-[340px] sm:space-y-3">
+      {/* Compact HUD — one row, fits small phones */}
+      <div className="grid grid-cols-3 gap-1.5">
+        <div className="rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 shadow-sm sm:px-2.5 sm:py-2">
+          <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
+            <Target className="size-3 text-brand-cyan" aria-hidden />
             Şut
           </div>
-          <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-text-primary">
+          <p className="mt-0.5 font-display text-lg font-semibold tabular-nums tracking-tight text-text-primary sm:text-xl">
             {shotsUsed}
             {!unlimited ? (
-              <span className="text-base font-medium text-text-secondary">
+              <span className="text-sm font-medium text-text-secondary">
                 /{MAX_DAILY_SHOTS}
               </span>
             ) : (
-              <span className="ml-1 text-xs font-medium text-text-secondary">
-                (test ∞)
+              <span className="ml-0.5 text-[10px] font-medium text-text-secondary">
+                ∞
               </span>
             )}
           </p>
         </div>
-        <div className="rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-            <Flame className="size-3.5 text-brand-orange" aria-hidden />
+        <div className="rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 shadow-sm sm:px-2.5 sm:py-2">
+          <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
+            <Flame className="size-3 text-brand-orange" aria-hidden />
             İsabet
           </div>
-          <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums tracking-tight text-brand-orange">
+          <p className="mt-0.5 font-display text-lg font-semibold tabular-nums tracking-tight text-brand-orange sm:text-xl">
             {makes}
             {!unlimited ? (
-              <span className="text-base font-medium text-text-secondary">
+              <span className="text-sm font-medium text-text-secondary">
                 /{MAX_DAILY_SHOTS}
               </span>
             ) : null}
           </p>
         </div>
-        <div className="col-span-2 rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2.5 shadow-sm sm:col-span-1">
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
-            <Trophy className="size-3.5 text-warning" aria-hidden />
+        <div className="rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 shadow-sm sm:px-2.5 sm:py-2">
+          <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
+            <Trophy className="size-3 text-warning" aria-hidden />
             Son
           </div>
           <p
             className={cn(
-              'mt-0.5 font-display text-lg font-semibold tracking-tight',
+              'mt-0.5 font-display text-sm font-semibold tracking-tight sm:text-base',
               lastResult === 'make' && 'text-success',
               lastResult === 'miss' && 'text-warning',
               !lastResult && 'text-text-secondary',
@@ -642,13 +651,13 @@ export function HoopGame({
 
       {/* Shot history — last N slots; full log is on server */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-text-secondary">
-          {unlimited ? 'Son şutlar' : 'Geçmiş'}
+        <span className="shrink-0 text-[11px] font-medium text-text-secondary">
+          {unlimited ? 'Son' : 'Geçmiş'}
         </span>
-        <div className="flex flex-wrap justify-end gap-1.5" aria-label="Şut sonuçları">
+        <div className="flex flex-wrap justify-end gap-1" aria-label="Şut sonuçları">
           {(() => {
             const slots = unlimited
-              ? Math.min(12, Math.max(attempts.length + 1, 6))
+              ? Math.min(8, Math.max(attempts.length + 1, 6))
               : MAX_DAILY_SHOTS
             const sliceStart = unlimited
               ? Math.max(0, attempts.length - (slots - 1))
@@ -660,9 +669,7 @@ export function HoopGame({
               const v = unlimited
                 ? i < visible.length
                   ? visible[i]
-                  : i === visible.length
-                    ? undefined
-                    : undefined
+                  : undefined
                 : attempts[i]
               const isNext =
                 unlimited
@@ -672,7 +679,7 @@ export function HoopGame({
               <span
                 key={`${sliceStart}-${i}`}
                 className={cn(
-                  'flex size-7 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums transition-colors',
+                  'flex size-6 items-center justify-center rounded-full border text-[10px] font-semibold tabular-nums transition-colors sm:size-7 sm:text-[11px]',
                   v === 1 && 'border-success/40 bg-success/15 text-success',
                   v === 0 && 'border-warning/40 bg-warning/10 text-warning',
                   v === undefined &&
@@ -694,103 +701,103 @@ export function HoopGame({
         </div>
       </div>
 
-      {/* Arena */}
-      <div
-        className={cn(
-          'relative overflow-hidden rounded-[var(--radius-md)] border border-border shadow-[0_12px_40px_rgba(12,35,64,0.18)]',
-          phase === 'charging' && 'ring-2 ring-brand-cyan/40',
-          lastResult === 'make' && phase === 'saving' && 'ring-2 ring-success/35',
-        )}
-      >
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/45 to-transparent px-3 py-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
-            <CircleDot className="size-3.5 text-brand-cyan" aria-hidden />
-            {phase === 'charging'
-              ? 'Güç'
-              : phase === 'flying'
-                ? 'Atış'
-                : phase === 'saving'
-                  ? 'Kayıt'
-                  : outOfShots
-                    ? 'Bitti'
-                    : 'Nişan'}
-          </span>
-          <span className="rounded-full bg-black/35 px-2.5 py-1 text-[11px] font-medium text-white/80 backdrop-blur-sm">
-            {busy ? 'Kaydediliyor…' : canPlay ? 'Basılı tut' : 'Bekle'}
-          </span>
-        </div>
+      {/* Arena — centered, viewport-capped (never full content width) */}
+      <div className="flex justify-center">
+        <div
+          className={cn(
+            'relative w-full overflow-hidden rounded-[var(--radius-md)] border border-border shadow-[0_8px_28px_rgba(12,35,64,0.16)]',
+            phase === 'charging' && 'ring-2 ring-brand-cyan/40',
+            lastResult === 'make' && phase === 'saving' && 'ring-2 ring-success/35',
+          )}
+          style={arenaMaxStyle}
+        >
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-black/45 to-transparent px-2 py-1.5 sm:px-3 sm:py-2">
+            <span className="inline-flex items-center gap-1 rounded-full bg-black/35 px-2 py-0.5 text-[10px] font-medium text-white/90 backdrop-blur-sm sm:gap-1.5 sm:px-2.5 sm:py-1 sm:text-[11px]">
+              <CircleDot className="size-3 text-brand-cyan sm:size-3.5" aria-hidden />
+              {phase === 'charging'
+                ? 'Güç'
+                : phase === 'flying'
+                  ? 'Atış'
+                  : phase === 'saving'
+                    ? 'Kayıt'
+                    : outOfShots
+                      ? 'Bitti'
+                      : 'Nişan'}
+            </span>
+            <span className="rounded-full bg-black/35 px-2 py-0.5 text-[10px] font-medium text-white/80 backdrop-blur-sm sm:px-2.5 sm:py-1 sm:text-[11px]">
+              {busy ? 'Kayıt…' : canPlay ? 'Basılı tut' : 'Bekle'}
+            </span>
+          </div>
 
-        <canvas
-          ref={canvasRef}
-          className="mx-auto block h-auto w-full max-w-full touch-none select-none bg-[#0c2340]"
-          style={{
-            aspectRatio: `${DEFAULT_HOOP_WORLD.width} / ${DEFAULT_HOOP_WORLD.height}`,
-          }}
-          onPointerDown={onPointerDown}
-          onPointerUp={finishCharge}
-          onPointerCancel={finishCharge}
-          onContextMenu={(e) => e.preventDefault()}
-          role="img"
-          aria-label="Basket atış alanı. Basılı tutarak güç ver, bırakarak at."
-        />
+          <canvas
+            ref={canvasRef}
+            className="block h-full w-full touch-none select-none bg-[#0c2340]"
+            onPointerDown={onPointerDown}
+            onPointerUp={finishCharge}
+            onPointerCancel={finishCharge}
+            onContextMenu={(e) => e.preventDefault()}
+            role="img"
+            aria-label="Basket atış alanı. Basılı tutarak güç ver, bırakarak at."
+          />
 
-        {outOfShots ? (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0c2340]/50 backdrop-blur-[2px]">
-            <div className="mx-4 rounded-[var(--radius-md)] border border-white/15 bg-black/50 px-5 py-4 text-center text-white shadow-lg backdrop-blur-md">
-              <p className="font-display text-lg font-semibold">Günlük hak bitti</p>
-              <p className="mt-1 text-2xl font-semibold tabular-nums text-brand-cyan">
-                {makes}{!unlimited ? `/${MAX_DAILY_SHOTS}` : ' isabet'}
-              </p>
-              <p className="mt-1 text-xs text-white/70">
-                {unlimited ? 'Test tavanı' : 'Yarın yeni 6 şut'}
-              </p>
+          {/* In-arena power bar — saves vertical space under the court */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 space-y-1 bg-gradient-to-t from-black/55 to-transparent px-2.5 pb-2 pt-6 sm:px-3 sm:pb-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-white/75">
+                Güç
+              </span>
+              <span
+                className={cn(
+                  'font-display text-[11px] font-semibold tabular-nums',
+                  powerTone === 'low' && 'text-white/70',
+                  powerTone === 'mid' && 'text-brand-cyan',
+                  powerTone === 'high' && 'text-brand-orange',
+                )}
+              >
+                {powerPct}%
+              </span>
+            </div>
+            <div className="relative h-1.5 overflow-hidden rounded-full bg-white/15 sm:h-2">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-[width] duration-75',
+                  powerTone === 'low' && 'bg-brand-blue/80',
+                  powerTone === 'mid' && 'bg-gradient-to-r from-brand-cyan to-brand-blue',
+                  powerTone === 'high' &&
+                    'bg-gradient-to-r from-brand-cyan via-brand-orange to-brand-pink',
+                )}
+                style={{ width: `${powerPct}%` }}
+              />
+              <div
+                className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/40"
+                style={{ left: '45%' }}
+              />
+              <div
+                className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/40"
+                style={{ left: '70%' }}
+              />
             </div>
           </div>
-        ) : null}
+
+          {outOfShots ? (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[#0c2340]/50 backdrop-blur-[2px]">
+              <div className="mx-3 rounded-[var(--radius-md)] border border-white/15 bg-black/50 px-4 py-3 text-center text-white shadow-lg backdrop-blur-md">
+                <p className="font-display text-base font-semibold">Günlük hak bitti</p>
+                <p className="mt-0.5 text-xl font-semibold tabular-nums text-brand-cyan">
+                  {makes}{!unlimited ? `/${MAX_DAILY_SHOTS}` : ' isabet'}
+                </p>
+                <p className="mt-0.5 text-[11px] text-white/70">
+                  {unlimited ? 'Test tavanı' : 'Yarın yeni 6 şut'}
+                </p>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      {/* Power meter */}
-      <div className="space-y-2 rounded-[var(--radius-md)] border border-border bg-surface p-3 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Güç
-          </span>
-          <span
-            className={cn(
-              'font-display text-sm font-semibold tabular-nums',
-              powerTone === 'low' && 'text-text-secondary',
-              powerTone === 'mid' && 'text-brand-cyan',
-              powerTone === 'high' && 'text-brand-orange',
-            )}
-          >
-            {powerPct}%
-          </span>
-        </div>
-        <div className="relative h-3 overflow-hidden rounded-full bg-surface-muted">
-          <div
-            className={cn(
-              'h-full rounded-full transition-[width] duration-75',
-              powerTone === 'low' && 'bg-brand-blue/70',
-              powerTone === 'mid' && 'bg-gradient-to-r from-brand-cyan to-brand-blue',
-              powerTone === 'high' &&
-                'bg-gradient-to-r from-brand-cyan via-brand-orange to-brand-pink',
-            )}
-            style={{ width: `${powerPct}%` }}
-          />
-          {/* sweet spots marks */}
-          <div
-            className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/40"
-            style={{ left: '45%' }}
-          />
-          <div
-            className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/40"
-            style={{ left: '70%' }}
-          />
-        </div>
-        <p className="text-[11px] text-text-secondary">
-          {phaseHint(phase, outOfShots, makes, unlimited)}
-        </p>
-      </div>
+      <p className="text-center text-[11px] leading-snug text-text-secondary">
+        {phaseHint(phase, outOfShots, makes, unlimited)}
+      </p>
     </div>
   )
 }
