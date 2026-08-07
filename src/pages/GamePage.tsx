@@ -3,23 +3,24 @@ import { toast } from 'sonner'
 import { CategoryPanel, PageHeader } from '@/components/ui'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { ChampionsTable } from '@/features/game/components/ChampionsTable'
-import { ReactionGame } from '@/features/game/components/ReactionGame'
-import { ReactionLeaderboard } from '@/features/game/components/ReactionLeaderboard'
+import { HoopGame } from '@/features/game/components/HoopGame'
+import { HoopLeaderboard } from '@/features/game/components/HoopLeaderboard'
 import {
-  submitAttempt,
-  subscribeTodayScores,
-} from '@/features/game/services/reactionScoreService'
-import type { ReactionDailyScore } from '@/features/game/types/game'
+  MAX_DAILY_SHOTS,
+  submitShot,
+  subscribeTodayHoopScores,
+} from '@/features/game/services/hoopScoreService'
+import type { HoopDailyScore } from '@/features/game/types/hoop'
 import { mapAppError } from '@/lib/errors'
 
 export function GamePage() {
   const { profile } = useAuth()
-  const [scores, setScores] = useState<ReactionDailyScore[]>([])
+  const [scores, setScores] = useState<HoopDailyScore[]>([])
   const [loadingScores, setLoadingScores] = useState(true)
 
   useEffect(() => {
     setLoadingScores(true)
-    return subscribeTodayScores(
+    return subscribeTodayHoopScores(
       (next) => {
         setScores(next)
         setLoadingScores(false)
@@ -35,16 +36,25 @@ export function GamePage() {
     () => (profile ? scores.find((s) => s.uid === profile.uid) : undefined),
     [scores, profile],
   )
-  const attemptsUsed = myScore?.attempts.length ?? 0
+  const shotsUsed = myScore?.attempts.length ?? 0
+  const makes = myScore?.makes ?? 0
 
-  const handleAttemptComplete = useCallback(
-    async (bestMs: number) => {
+  const handleShotComplete = useCallback(
+    async (hit: boolean) => {
       if (!profile) return
       try {
-        await submitAttempt(profile.uid, profile.fullName, bestMs)
-        toast.success(`Skor kaydedildi: ${bestMs} ms`)
+        const saved = await submitShot({
+          uid: profile.uid,
+          fullName: profile.fullName,
+          hit,
+        })
+        toast.success(
+          hit
+            ? `İsabet! ${saved.makes}/${MAX_DAILY_SHOTS} · şut ${saved.attempts.length}/${MAX_DAILY_SHOTS}`
+            : `Kaçtı · ${saved.makes}/${MAX_DAILY_SHOTS} · şut ${saved.attempts.length}/${MAX_DAILY_SHOTS}`,
+        )
       } catch (error) {
-        toast.error(mapAppError(error, 'Skor kaydedilemedi.'))
+        toast.error(mapAppError(error, 'Şut kaydedilemedi.'))
         throw error
       }
     },
@@ -54,24 +64,33 @@ export function GamePage() {
   return (
     <div className="space-y-6 animate-fade-in-up">
       <PageHeader
-        title="Refleks Oyunu"
-        subtitle="Günde 1 deneme · 5 turun en iyisi. F1 start lambaları sönünce dokun; en düşük ms kazanır."
+        title="3’lük Atış"
+        subtitle={`Günde ${MAX_DAILY_SHOTS} şut · isabet sayısı sıralar. Her şut anında kaydedilir; çık-gir sıfırlamaz.`}
       />
 
-      <CategoryPanel title="Oyna" description="1 · 2 · 3 — sönünce dokun" tone="cyan">
-        <ReactionGame
-          attemptsUsed={attemptsUsed}
-          onAttemptComplete={handleAttemptComplete}
-        />
+      <CategoryPanel
+        title="Oyna"
+        description="Nişan sallanır · bas = kilit + güç · bırak = at"
+        tone="cyan"
+      >
+        {profile ? (
+          <HoopGame
+            shotsUsed={shotsUsed}
+            makes={makes}
+            onShotComplete={handleShotComplete}
+          />
+        ) : (
+          <p className="text-sm text-text-secondary">Giriş gerekli.</p>
+        )}
       </CategoryPanel>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <CategoryPanel
           title="Bugünün sıralaması"
-          description="En düşük ms kazanır"
+          description={`En çok isabet (${MAX_DAILY_SHOTS} üzerinden)`}
           tone="navy"
         >
-          <ReactionLeaderboard
+          <HoopLeaderboard
             scores={scores}
             loading={loadingScores}
             currentUid={profile?.uid}

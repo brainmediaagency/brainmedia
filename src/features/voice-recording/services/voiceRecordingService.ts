@@ -18,6 +18,7 @@ import {
 import { getDb } from '@/lib/firebase/firestore'
 import { getFirebaseAuth } from '@/lib/firebase/auth'
 import {
+  isDriveUploadConfigured,
   trashDriveFile,
   uploadFileToDrive,
   type DriveUploadProgress,
@@ -61,6 +62,10 @@ function recordingsCollection() {
   return collection(getDb(), 'voiceRecordings').withConverter(converter)
 }
 
+export function isVoiceUploadConfigured(): boolean {
+  return isDriveUploadConfigured()
+}
+
 export function subscribeVoiceRecordings(
   onData: (items: VoiceRecordingDoc[]) => void,
   onError?: (error: Error) => void,
@@ -92,6 +97,11 @@ export async function saveVoiceRecording(input: {
   }
   if (input.blob.size <= 0) {
     throw new UserFacingError('Kayıt dosyası boş.')
+  }
+  if (!isDriveUploadConfigured()) {
+    throw new UserFacingError(
+      'Dosya yükleme yapılandırılmamış. Apps Script webhook URL eksik.',
+    )
   }
 
   const authUid = getFirebaseAuth().currentUser?.uid
@@ -153,6 +163,7 @@ export async function saveVoiceRecording(input: {
           createdAt: serverTimestamp(),
         })
       } catch (firestoreError) {
+        void trashDriveFile(drive.fileId)
         throw new UserFacingError(
           mapAppError(
             firestoreError,
@@ -191,15 +202,15 @@ export async function deleteVoiceRecording(recordingId: string): Promise<void> {
     const id = recordingId.trim()
     if (!id) throw new UserFacingError('Kayıt bulunamadı.')
 
-    const ref = doc(getDb(), 'voiceRecordings', id)
-    const snap = await getDoc(ref)
+    const refDoc = doc(getDb(), 'voiceRecordings', id)
+    const snap = await getDoc(refDoc)
     if (!snap.exists()) {
       throw new UserFacingError('Ses kaydı bulunamadı.')
     }
     const data = snap.data() as { driveFileId?: string }
     const fileId = String(data.driveFileId ?? '').trim()
 
-    await deleteDoc(ref)
+    await deleteDoc(refDoc)
     if (fileId) void trashDriveFile(fileId)
   } catch (error) {
     if (error instanceof UserFacingError) throw error

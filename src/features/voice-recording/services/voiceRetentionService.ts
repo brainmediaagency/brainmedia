@@ -13,6 +13,7 @@ import { COMPANY_TIMEZONE } from '@/config/roles'
 import { getDb } from '@/lib/firebase/firestore'
 import { todayDateOnlyIstanbul } from '@/lib/date'
 import { addDaysDateOnly } from '@/features/hr/utils/hrRetentionSchedule'
+import { trashDriveFile } from '@/lib/driveUpload'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 
 /** Keep voice recordings for this many calendar days (Istanbul). */
@@ -76,7 +77,10 @@ export async function purgeExpiredVoiceRecordings(): Promise<{
 
       for (const item of snap.docs) {
         try {
+          const data = item.data() as { driveFileId?: string }
+          const driveFileId = String(data.driveFileId ?? '').trim()
           await deleteDoc(item.ref)
+          if (driveFileId) void trashDriveFile(driveFileId)
           deleted += 1
         } catch {
           // Concurrent delete / permission — continue with remaining.

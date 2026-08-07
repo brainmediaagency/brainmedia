@@ -2488,8 +2488,8 @@ describe('Financial and audit mutations', () => {
   })
 })
 
-describe('Reaction daily winners', () => {
-  it('authenticated user can create reactionDailyWinner when matching score exists', async () => {
+describe('Reaction daily winners (legacy read-only)', () => {
+  it('cannot create new reactionDailyWinner after hoop migration', async () => {
     await seedUser('player1', 'media_planning')
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'reactionDailyScores', '2026-07-23_player1'), {
@@ -2505,7 +2505,7 @@ describe('Reaction daily winners', () => {
     const db = testEnv
       .authenticatedContext('player1', authClaims('media_planning'))
       .firestore()
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, 'reactionDailyWinners', '2026-07-23'), {
         date: '2026-07-23',
         uid: 'player1',
@@ -2555,6 +2555,59 @@ describe('Reaction daily winners', () => {
         fullName: 'User player1',
         bestMs: 100,
         finalizedAt: serverTimestamp(),
+      }),
+    )
+  })
+})
+
+describe('Hoop daily scores', () => {
+  it('player can create first shot and append up to 6', async () => {
+    await seedUser('hooper1', 'media_planning')
+    const db = testEnv
+      .authenticatedContext('hooper1', authClaims('media_planning'))
+      .firestore()
+    const ref = doc(db, 'hoopDailyScores', '2026-08-07_hooper1')
+    await assertSucceeds(
+      setDoc(ref, {
+        date: '2026-08-07',
+        uid: 'hooper1',
+        fullName: 'User hooper1',
+        attempts: [1],
+        makes: 1,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+    await assertSucceeds(
+      updateDoc(ref, {
+        attempts: [1, 0],
+        makes: 1,
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
+  it('cannot exceed 6 shots in rules', async () => {
+    await seedUser('hooper2', 'media_planning')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'hoopDailyScores', '2026-08-07_hooper2'), {
+        date: '2026-08-07',
+        uid: 'hooper2',
+        fullName: 'User hooper2',
+        attempts: [1, 1, 1, 1, 1, 1],
+        makes: 6,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      })
+    })
+    const db = testEnv
+      .authenticatedContext('hooper2', authClaims('media_planning'))
+      .firestore()
+    await assertFails(
+      updateDoc(doc(db, 'hoopDailyScores', '2026-08-07_hooper2'), {
+        attempts: [1, 1, 1, 1, 1, 1, 0],
+        makes: 6,
+        updatedAt: serverTimestamp(),
       }),
     )
   })

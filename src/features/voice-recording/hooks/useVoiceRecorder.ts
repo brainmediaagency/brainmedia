@@ -2,9 +2,12 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import {
   clampRecordingDurationMs,
   downloadVoiceRecording,
+  hasReachedRecordingLimit,
+  isNearRecordingLimit,
   isVoiceRecordingSupported,
   MAX_RECORDING_MS,
   mediaRecorderStartArgs,
+  RECORDING_LIMIT_WARN_MS,
   voiceRecorderEngine,
   voiceRecorderErrorMessage,
   type VoiceEngineSnapshot,
@@ -24,9 +27,12 @@ export type {
 export {
   clampRecordingDurationMs,
   downloadVoiceRecording,
+  hasReachedRecordingLimit,
+  isNearRecordingLimit,
   isVoiceRecordingSupported,
   MAX_RECORDING_MS,
   mediaRecorderStartArgs,
+  RECORDING_LIMIT_WARN_MS,
   voiceRecorderErrorMessage,
 }
 

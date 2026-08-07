@@ -1,12 +1,10 @@
 import { useEffect } from 'react'
 import { useAuth } from '@/features/auth/hooks/useAuth'
-import { finalizeYesterdayWinner } from '@/features/game/services/reactionScoreService'
+import { finalizeYesterdayHoopWinner } from '@/features/game/services/hoopScoreService'
 
 /**
- * Uygulama açıkken dünün refleks oyunu şampiyonunu belirler
- * (reactionDailyWinners dokümanı yoksa oluşturur). Tüm giriş yapmış
- * kullanıcılar için çalışır; servis 15 dk localStorage throttle uygular
- * ve işlem tarih ID'li transaction ile idempotenttir.
+ * Uygulama açıkken dünün 3’lük şampiyonunu belirler
+ * (hoopDailyWinners dokümanı yoksa oluşturur).
  */
 export function ReactionWinnerGuard() {
   const { profile, loading } = useAuth()
@@ -18,8 +16,8 @@ export function ReactionWinnerGuard() {
 
     const tick = () => {
       if (cancelled || document.visibilityState === 'hidden') return
-      finalizeYesterdayWinner().catch(() => {
-        // Best-effort: başka bir istemci kazanabilir veya ağ hatası olabilir.
+      finalizeYesterdayHoopWinner().catch(() => {
+        // Best-effort
       })
     }
 

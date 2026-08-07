@@ -11,18 +11,19 @@ import {
   TableRow,
 } from '@/components/ui'
 import { formatDateOnlyLongTr } from '@/lib/date'
-import { fetchWinnerStats } from '@/features/game/services/reactionScoreService'
-import type { ReactionChampionStats } from '@/features/game/types/game'
+import { fetchHoopWinnerStats } from '@/features/game/services/hoopScoreService'
+import type { HoopChampionStats } from '@/features/game/types/hoop'
+import { MAX_DAILY_SHOTS } from '@/features/game/services/hoopScoreService'
 
 export function ChampionsTable() {
-  const [stats, setStats] = useState<ReactionChampionStats | null>(null)
+  const [stats, setStats] = useState<HoopChampionStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
-    fetchWinnerStats()
+    fetchHoopWinnerStats()
       .then((data) => {
         if (!cancelled) setStats(data)
       })
@@ -66,9 +67,13 @@ export function ChampionsTable() {
       <Table>
         <TableHead>
           <TableRow>
-            <TableCell header className="w-16">Sıra</TableCell>
+            <TableCell header className="w-16">
+              Sıra
+            </TableCell>
             <TableCell header>İsim</TableCell>
-            <TableCell header className="text-right">Şampiyonluk</TableCell>
+            <TableCell header className="text-right">
+              Şampiyonluk
+            </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -107,7 +112,7 @@ export function ChampionsTable() {
                 <span className="font-medium text-text-primary">
                   {winner.fullName}
                   <span className="ml-2 tabular-nums text-text-secondary">
-                    {winner.bestMs} ms
+                    {winner.makes}/{MAX_DAILY_SHOTS}
                   </span>
                 </span>
               </li>

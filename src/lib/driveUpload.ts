@@ -32,17 +32,19 @@ export type DriveUploadProgress = {
 export const DRIVE_SINGLE_SHOT_MAX_BYTES = 1.5 * 1024 * 1024
 
 /**
- * Raw binary per resumable chunk.
- * Smaller chunks = more reliable Apps Script web-app responses for long voice takes
- * (~15 min+). ~350 KB base64 after encode.
+ * Raw binary per resumable chunk (~128 KB).
+ * Smaller + Property-backed sessions (webhook v27) suit multi-minute voice (45 dk).
  */
-export const DRIVE_CHUNK_BYTES = 256 * 1024
+export const DRIVE_CHUNK_BYTES = 128 * 1024
 
 /** Hard ceiling: protects tab memory + Apps Script / Drive sessions. */
 export const DRIVE_HARD_MAX_BYTES = 80 * 1024 * 1024
 
-const WEBHOOK_POST_ATTEMPTS = 4
-const WEBHOOK_CHUNK_ATTEMPTS = 4
+/** Full re-init of resumable when session drops mid long voice. */
+const RESUMABLE_FULL_RESTARTS = 3
+
+const WEBHOOK_POST_ATTEMPTS = 5
+const WEBHOOK_CHUNK_ATTEMPTS = 5
 
 function fileToBase64(
   file: Blob,
@@ -422,9 +424,55 @@ async function uploadFileSingleShot(input: {
 
 /**
  * Drive resumable upload via Apps Script (one chunk at a time — no huge body).
- * Requires webhook v24+ (uploadFileInit / uploadFileChunk).
+ * Requires webhook v24+ (uploadFileInit / uploadFileChunk); v27+ session props.
+ * On session drop, restarts from byte 0 (new Drive session) up to RESUMABLE_FULL_RESTARTS.
  */
 async function uploadFileResumable(input: {
+  file: Blob
+  fileName: string
+  mimeType: string
+  folder: DriveUploadFolder
+  folderPath?: string
+  onProgress?: (progress: DriveUploadProgress) => void
+}): Promise<DriveUploadResult> {
+  let lastError: unknown = null
+  for (let round = 0; round < RESUMABLE_FULL_RESTARTS; round += 1) {
+    if (round > 0) {
+      await sleep(800 * round)
+      input.onProgress?.({
+        phase: 'uploading',
+        ratio: 0.02,
+        fileName: input.fileName,
+      })
+    }
+    try {
+      return await uploadFileResumableOnce(input)
+    } catch (error) {
+      lastError = error
+      if (!isResumableRestartableError_(error) || round === RESUMABLE_FULL_RESTARTS - 1) {
+        throw error
+      }
+    }
+  }
+  if (lastError instanceof UserFacingError) throw lastError
+  throw new UserFacingError(
+    'Uzun ses yüklemesi oturumu düştü. Kayıt bu cihazda; İndir ile yedekleyip tekrar deneyin.',
+  )
+}
+
+function isResumableRestartableError_(error: unknown): boolean {
+  const msg =
+    error instanceof UserFacingError
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : String(error ?? '')
+  return /session expired|chunk order|Corrupt|oturumu düştü|Retry|resumable/i.test(
+    msg,
+  )
+}
+
+async function uploadFileResumableOnce(input: {
   file: Blob
   fileName: string
   mimeType: string
@@ -456,7 +504,7 @@ async function uploadFileResumable(input: {
     throw new UserFacingError(
       webhookErrorMessage(
         init,
-        'Büyük dosya yükleme oturumu açılamadı. Apps Script v24+ (uploadFileInit) yayınlayın.',
+        'Büyük dosya yükleme oturumu açılamadı. Apps Script v27+ (uploadFileInit) yayınlayın.',
       ),
     )
   }
@@ -482,7 +530,7 @@ async function uploadFileResumable(input: {
     let lastChunkError: unknown = null
     for (let attempt = 0; attempt < WEBHOOK_CHUNK_ATTEMPTS; attempt += 1) {
       if (attempt > 0) {
-        await sleep(500 * attempt)
+        await sleep(600 * attempt)
       }
       try {
         parsed = await postWebhookForm({
@@ -496,18 +544,31 @@ async function uploadFileResumable(input: {
           chunkIndex: String(chunkIndex),
           approxChunks: String(approxChunks),
         })
-        // Order/session errors: rethrow without useless retries of same offset
+        // Order/session errors: force full re-init (outer restart)
         if (
           parsed.ok === false &&
           /session expired|chunk order|Corrupt/i.test(
             String(parsed.error ?? ''),
           )
         ) {
-          break
+          throw new UserFacingError(
+            webhookErrorMessage(
+              parsed,
+              'Yükleme oturumu düştü. Otomatik yeniden denenecek…',
+            ),
+          )
         }
         if (parsed.ok) break
         lastChunkError = parsed
       } catch (error) {
+        if (
+          error instanceof UserFacingError &&
+          /oturumu düştü|session expired|chunk order|Corrupt/i.test(
+            error.message,
+          )
+        ) {
+          throw error
+        }
         lastChunkError = error
         parsed = null
       }
@@ -551,7 +612,7 @@ async function uploadFileResumable(input: {
   }
 
   throw new UserFacingError(
-    'Yükleme tamamlanamadı (son parça yanıtı yok). Apps Script v24+ kontrol edin.',
+    'Yükleme tamamlanamadı (son parça yanıtı yok). Apps Script v27+ kontrol edin.',
   )
 }
 
@@ -573,7 +634,7 @@ function mapUnknownChunkError_(error: unknown): string {
  * Does not use Firebase Storage.
  *
  * Small files: single base64 POST.
- * Large files (voice ~15–25 dk): Drive resumable chunks (webhook v24+).
+ * Large files (voice ~45 dk at speech bitrate): Drive resumable chunks (webhook v27+).
  */
 export async function uploadFileToDrive(input: {
   file: Blob

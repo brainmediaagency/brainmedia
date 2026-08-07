@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: kameraman-odometer-get-create-28
+// rules-rev: hoop-3pt-6shots-32
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1624,8 +1624,8 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ---------- reactionDailyScores (refleks oyunu günlük skorlar) ----------
-    match /reactionDailyScores/{scoreId} {
+    // ---------- hoopDailyScores (3’lük atış — günde 6 şut) ----------
+    match /hoopDailyScores/{scoreId} {
       allow read: if isAuthenticated();
 
       allow create: if isAuthenticated()
@@ -1634,7 +1634,7 @@ service cloud.firestore {
           'uid',
           'fullName',
           'attempts',
-          'bestMs',
+          'makes',
           'createdAt',
           'updatedAt'
         ])
@@ -1644,10 +1644,10 @@ service cloud.firestore {
         && request.resource.data.attempts is list
         && request.resource.data.attempts.size() == 1
         && request.resource.data.attempts[0] is int
-        && request.resource.data.attempts[0] >= 1
-        && request.resource.data.attempts[0] <= 3000
-        && request.resource.data.bestMs is int
-        && request.resource.data.bestMs == request.resource.data.attempts[0]
+        && (request.resource.data.attempts[0] == 0
+          || request.resource.data.attempts[0] == 1)
+        && request.resource.data.makes is int
+        && request.resource.data.makes == request.resource.data.attempts[0]
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
@@ -1658,23 +1658,37 @@ service cloud.firestore {
         && request.resource.data.fullName == resource.data.fullName
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['attempts', 'bestMs', 'updatedAt'])
+          .hasOnly(['attempts', 'makes', 'updatedAt'])
         && request.resource.data.attempts is list
-        && request.resource.data.attempts.size() == resource.data.attempts.size() + 1
-        && request.resource.data.attempts.size() <= 1
-        && request.resource.data.bestMs is int
-        && request.resource.data.bestMs >= 1
-        && request.resource.data.bestMs <= 3000
+        && request.resource.data.attempts.size()
+          == resource.data.attempts.size() + 1
+        && request.resource.data.attempts.size() <= 6
+        && request.resource.data.attempts[
+             request.resource.data.attempts.size() - 1
+           ] is int
+        && (
+          request.resource.data.attempts[
+            request.resource.data.attempts.size() - 1
+          ] == 0
+          || request.resource.data.attempts[
+            request.resource.data.attempts.size() - 1
+          ] == 1
+        )
+        && request.resource.data.makes is int
+        && request.resource.data.makes >= 0
+        && request.resource.data.makes <= 6
+        && request.resource.data.makes
+          == resource.data.makes
+            + request.resource.data.attempts[
+              request.resource.data.attempts.size() - 1
+            ]
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if false;
     }
 
-    // ---------- reactionDailyWinners (günün şampiyonu) ----------
-    // Create only when a matching reactionDailyScores/{date}_{uid} exists with
-    // the same date/uid/fullName/bestMs — prevents forging arbitrary winners.
-    // Legitimate finalizeYesterdayWinner still works (writes the real top score).
-    match /reactionDailyWinners/{dateId} {
+    // ---------- hoopDailyWinners (günün 3’lük şampiyonu) ----------
+    match /hoopDailyWinners/{dateId} {
       allow read: if isAuthenticated();
 
       allow create: if isAuthenticated()
@@ -1682,44 +1696,56 @@ service cloud.firestore {
           'date',
           'uid',
           'fullName',
-          'bestMs',
+          'makes',
           'finalizedAt'
         ])
         && request.resource.data.date == dateId
         && isDateOnly(request.resource.data.date)
         && isValidString(request.resource.data.uid, 1, 128)
         && isValidString(request.resource.data.fullName, 1, 120)
-        && request.resource.data.bestMs is int
-        && request.resource.data.bestMs >= 1
-        && request.resource.data.bestMs <= 3000
+        && request.resource.data.makes is int
+        && request.resource.data.makes >= 0
+        && request.resource.data.makes <= 6
         && request.resource.data.finalizedAt == request.time
         && exists(
-          /databases/$(database)/documents/reactionDailyScores/$(
+          /databases/$(database)/documents/hoopDailyScores/$(
             request.resource.data.date + '_' + request.resource.data.uid
           )
         )
         && get(
-          /databases/$(database)/documents/reactionDailyScores/$(
+          /databases/$(database)/documents/hoopDailyScores/$(
             request.resource.data.date + '_' + request.resource.data.uid
           )
         ).data.date == request.resource.data.date
         && get(
-          /databases/$(database)/documents/reactionDailyScores/$(
+          /databases/$(database)/documents/hoopDailyScores/$(
             request.resource.data.date + '_' + request.resource.data.uid
           )
         ).data.uid == request.resource.data.uid
         && get(
-          /databases/$(database)/documents/reactionDailyScores/$(
+          /databases/$(database)/documents/hoopDailyScores/$(
             request.resource.data.date + '_' + request.resource.data.uid
           )
         ).data.fullName == request.resource.data.fullName
         && get(
-          /databases/$(database)/documents/reactionDailyScores/$(
+          /databases/$(database)/documents/hoopDailyScores/$(
             request.resource.data.date + '_' + request.resource.data.uid
           )
-        ).data.bestMs == request.resource.data.bestMs;
+        ).data.makes == request.resource.data.makes;
 
       allow update, delete: if false;
+    }
+
+    // ---------- reactionDailyScores (legacy refleks — read-only retained) ----------
+    match /reactionDailyScores/{scoreId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
+    }
+
+    // ---------- reactionDailyWinners (legacy) ----------
+    match /reactionDailyWinners/{dateId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if false;
     }
 
     // ---------- reporterZReports ----------
@@ -1917,7 +1943,7 @@ service cloud.firestore {
         || isCoordinatorOrManagement();
     }
 
-    // ---------- voiceRecordings (Drive-backed; no Firebase Storage) ----------
+    // ---------- voiceRecordings (Drive-backed via Apps Script; Spark) ----------
     match /voiceRecordings/{recordingId} {
       allow read: if isCoordinatorOrManagement();
 
@@ -1947,10 +1973,10 @@ service cloud.firestore {
         && request.resource.data.webViewLink.matches('https://.*')
         && request.resource.data.durationMs is number
         && request.resource.data.durationMs >= 0
-        && request.resource.data.durationMs <= 8 * 60 * 60 * 1000
+        && request.resource.data.durationMs <= 45 * 60 * 1000
         && request.resource.data.size is number
         && isPosWhole(request.resource.data.size)
-        && request.resource.data.size <= 200 * 1024 * 1024
+        && request.resource.data.size <= 50 * 1024 * 1024
         && (
           request.resource.data.jobId == null
           || isValidString(request.resource.data.jobId, 1, 120)

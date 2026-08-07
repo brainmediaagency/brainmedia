@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { FileUploadStatus } from '@/components/ui/FileUploadStatus'
 import { useAuth } from '@/features/auth/hooks/useAuth'
-import { saveVoiceRecording } from '@/features/voice-recording/services/voiceRecordingService'
+import {
+  isVoiceUploadConfigured,
+  saveVoiceRecording,
+} from '@/features/voice-recording/services/voiceRecordingService'
 import {
   endVoiceUpload,
   getVoiceUploadUiSnapshot,
@@ -17,11 +20,12 @@ import {
 } from '@/features/voice-recording/services/voiceUploadUiStore'
 import {
   downloadVoiceRecording,
+  isNearRecordingLimit,
+  MAX_RECORDING_MS,
   useVoiceRecorder,
   voiceRecorderErrorMessage,
   type VoiceRecorderStatus,
 } from '@/features/voice-recording/hooks/useVoiceRecorder'
-import { isDriveUploadConfigured } from '@/lib/driveUpload'
 import { cn } from '@/lib/classNames'
 import { formatTimer } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
@@ -42,6 +46,10 @@ export type VoiceRecordingPanelProps = {
 
 function formatRecordingClock(ms: number): string {
   return formatTimer(Math.floor(ms / 1000))
+}
+
+function formatElapsedAgainstLimit(ms: number): string {
+  return `${formatRecordingClock(ms)} / ${formatRecordingClock(MAX_RECORDING_MS)}`
 }
 
 function statusLabel(
@@ -98,7 +106,7 @@ export function VoiceRecordingPanel({
   const isActive = status === 'recording' || status === 'paused'
   const canSaveToSystem =
     Boolean(recording && profile && companyName.trim()) &&
-    isDriveUploadConfigured()
+    isVoiceUploadConfigured()
 
   const handleSave = useCallback(
     async (fromAuto = false) => {
@@ -107,8 +115,10 @@ export function VoiceRecordingPanel({
         if (!fromAuto) toast.error('Firma adı olmadan kaydedilemez.')
         return
       }
-      if (!isDriveUploadConfigured()) {
-        if (!fromAuto) toast.error('Dosya yükleme yapılandırılmamış (webhook).')
+      if (!isVoiceUploadConfigured()) {
+        if (!fromAuto) {
+          toast.error('Dosya yükleme yapılandırılmamış (Drive webhook).')
+        }
         return
       }
 
@@ -170,6 +180,25 @@ export function VoiceRecordingPanel({
     void handleSave(true)
   }, [status, recording, autoSaveOnStop, canSaveToSystem, handleSave])
 
+  const maxDurationToastKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (stoppedReason !== 'max_duration' || !recording) return
+    const key = recordingDedupeKey(recording)
+    if (maxDurationToastKeyRef.current === key) return
+    maxDurationToastKeyRef.current = key
+    toast.message('45 dakika doldu — kayıt otomatik durduruldu.', {
+      description: autoSaveOnStop
+        ? 'Ses sisteme yazılıyor; pencereyi kapatmayın.'
+        : 'Kaydet ile sisteme yazabilirsiniz.',
+    })
+  }, [stoppedReason, recording, autoSaveOnStop])
+
+  const displayElapsedMs =
+    isActive || status === 'stopped' || (saving && recording)
+      ? elapsedMs || recording?.durationMs || 0
+      : 0
+  const nearLimit = isActive && isNearRecordingLimit(displayElapsedMs)
+
   const alerts = (
     <>
       {!supported ? (
@@ -205,6 +234,20 @@ export function VoiceRecordingPanel({
         >
           Mikrofon cihaz tarafından kesildi; o ana kadar alınan ses korundu
           {autoSaveOnStop ? ' ve kaydediliyor.' : '.'}
+        </p>
+      ) : null}
+
+      {stoppedReason === 'max_duration' && recording ? (
+        <p
+          role="status"
+          className={cn(
+            'rounded-[var(--radius-md)] border border-brand-cyan/30 bg-brand-cyan/10 text-text-primary',
+            compact ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm',
+          )}
+        >
+          En fazla 45 dakika kayıt alınabilir; süre dolduğu için kayıt
+          otomatik durduruldu
+          {autoSaveOnStop ? ' ve sisteme yazılıyor.' : '.'}
         </p>
       ) : null}
     </>
@@ -282,7 +325,7 @@ export function VoiceRecordingPanel({
             {saving ? 'Sisteme yazılıyor…' : 'Kayıt hazır'}
           </p>
           <p className="text-xs text-text-secondary">
-            Süre {formatRecordingClock(recording.durationMs)}
+            Süre {formatElapsedAgainstLimit(recording.durationMs)}
             {saving
               ? ' · pencereyi kapatmayın, yükleme devam ediyor'
               : ''}
@@ -290,7 +333,7 @@ export function VoiceRecordingPanel({
         </div>
       ) : (
         <p className="text-xs text-text-secondary">
-          Süre {formatRecordingClock(recording.durationMs)}
+          Süre {formatElapsedAgainstLimit(recording.durationMs)}
           {saving
             ? ' · yükleniyor, lütfen bekleyin'
             : autoSaveOnStop && status === 'stopped'
@@ -323,7 +366,7 @@ export function VoiceRecordingPanel({
             title={
               !companyName.trim()
                 ? 'Firma adı gerekli'
-                : !isDriveUploadConfigured()
+                : !isVoiceUploadConfigured()
                   ? 'Webhook yapılandırılmamış'
                   : undefined
             }
@@ -362,8 +405,8 @@ export function VoiceRecordingPanel({
             <p className="text-sm font-medium text-text-primary">Ses kaydı</p>
             <p className="text-xs text-text-secondary">
               {autoSaveOnStop
-                ? 'Durdurana kadar devam eder · Durdur = sisteme yaz (uzun kayıtlar parça parça yüklenir)'
-                : 'Durdurana kadar devam eder'}
+                ? 'En fazla 45 dk · Durdur = sisteme yaz (uzun kayıtlar parça parça)'
+                : 'En fazla 45 dakika'}
             </p>
           </div>
           <div
@@ -395,16 +438,16 @@ export function VoiceRecordingPanel({
             <p
               className={cn(
                 'font-display text-xl font-semibold tabular-nums tracking-tight',
-                status === 'recording' ? 'text-danger' : 'text-text-primary',
+                nearLimit
+                  ? 'text-warning'
+                  : status === 'recording'
+                    ? 'text-danger'
+                    : 'text-text-primary',
               )}
               aria-live="polite"
               aria-atomic="true"
             >
-              {formatRecordingClock(
-                isActive || status === 'stopped' || (saving && recording)
-                  ? elapsedMs || recording?.durationMs || 0
-                  : 0,
-              )}
+              {formatElapsedAgainstLimit(displayElapsedMs)}
             </p>
           </div>
           {controls}
@@ -421,8 +464,8 @@ export function VoiceRecordingPanel({
       title="Ses kaydı"
       description={
         autoSaveOnStop
-          ? 'Başlat → konuş → Durdur. Kayıt otomatik Drive’a ve listeye yazılır.'
-          : 'Durdurana kadar kayıt devam eder. Kaydet ile sisteme yazılır.'
+          ? 'Başlat → konuş → Durdur (en fazla 45 dk). Kayıt otomatik Drive’a yazılır; süre dolunca kayıt otomatik biter.'
+          : 'En fazla 45 dakika. Durdur sonrası Kaydet ile sisteme yazılır.'
       }
       defaultOpen
     >
@@ -438,20 +481,21 @@ export function VoiceRecordingPanel({
               <p
                 className={cn(
                   'font-display text-3xl font-semibold tabular-nums tracking-tight sm:text-4xl',
-                  status === 'recording' ? 'text-danger' : 'text-text-primary',
+                  nearLimit
+                    ? 'text-warning'
+                    : status === 'recording'
+                      ? 'text-danger'
+                      : 'text-text-primary',
                 )}
                 aria-live="polite"
                 aria-atomic="true"
               >
-                {formatRecordingClock(
-                  isActive || status === 'stopped' || (saving && recording)
-                    ? elapsedMs || recording?.durationMs || 0
-                    : 0,
-                )}
+                {formatElapsedAgainstLimit(displayElapsedMs)}
               </p>
               <p className="text-xs text-text-secondary">
-                Durdurana kadar kayıt devam eder
+                En fazla 45 dakika
                 {autoSaveOnStop ? ' · Durdur = sisteme yaz' : ''}
+                {nearLimit ? ' · süre dolmak üzere' : ''}
               </p>
             </div>
 

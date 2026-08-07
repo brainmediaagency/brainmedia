@@ -26,6 +26,10 @@
  *      delivers via include_aliases.external_id (tag filters were still
  *      hitting MPU when devices had stale/wrong role tags). Tag filters only
  *      as fallback when SA lookup fails.
+ * v27: uploadFileInit/Chunk sessions in ScriptProperties (stable across
+ *      multi-minute voice uploads; CacheService alone was dropping mid-way).
+ *      Soft-cleanup of stale resume keys on init. Spark/Drive only — no
+ *      Firebase Storage / Blaze.
  *
  * SON DURUM values (only):
  *   Konfirme | Reddedildi | Çekildi | İptal edildi
@@ -49,8 +53,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v26'
-var SCRIPT_VERSION = 'v26'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v27'
+var SCRIPT_VERSION = 'v27'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -880,7 +884,7 @@ function handleUpload_(body) {
 
 /**
  * Start a Drive v3 resumable upload session (large voice / files).
- * Stores Location URL in ScriptCache keyed by uploadToken.
+ * Session stored in ScriptProperties (stable for multi-minute uploads).
  */
 function handleUploadInit_(body) {
   var uploadToken = String(body.uploadToken || '').trim()
@@ -896,6 +900,7 @@ function handleUploadInit_(body) {
   }
 
   try {
+    cleanupStaleResumeSessions_()
     var folderKey = body.folder || 'misc'
     var subName = FOLDER_NAMES[folderKey] || 'Diğer'
     var folder = getOrCreateUploadFolder_(subName, folderKey)
@@ -955,16 +960,13 @@ function handleUploadInit_(body) {
       return jsonResponse_({ ok: false, error: 'No resumable location' }, 502)
     }
 
-    CacheService.getScriptCache().put(
-      'uresume:' + uploadToken,
-      JSON.stringify({
-        location: String(location),
-        total: totalBytes,
-        next: 0,
-        mimeType: mimeType,
-      }),
-      3600,
-    )
+    putResumeSession_(uploadToken, {
+      location: String(location),
+      total: totalBytes,
+      next: 0,
+      mimeType: mimeType,
+      createdAt: Date.now(),
+    })
     return jsonResponse_({ ok: true, resumed: true, totalBytes: totalBytes })
   } catch (err) {
     var message = err && err.message ? String(err.message) : 'Upload init failed'
@@ -984,19 +986,12 @@ function handleUploadChunk_(body) {
     return jsonResponse_({ ok: false, error: 'Missing chunk' }, 400)
   }
 
-  var rawSession = CacheService.getScriptCache().get('uresume:' + uploadToken)
-  if (!rawSession) {
+  var session = getResumeSession_(uploadToken)
+  if (!session) {
     return jsonResponse_(
       { ok: false, error: 'Upload session expired. Retry.' },
       400,
     )
-  }
-
-  var session
-  try {
-    session = JSON.parse(rawSession)
-  } catch (parseErr) {
-    return jsonResponse_({ ok: false, error: 'Corrupt upload session' }, 500)
   }
 
   var start = Number(body.byteStart)
@@ -1077,11 +1072,7 @@ function handleUploadChunk_(body) {
           session.next = Number(m[1]) + 1
         }
       } catch (rangeErr) {}
-      CacheService.getScriptCache().put(
-        'uresume:' + uploadToken,
-        JSON.stringify(session),
-        3600,
-      )
+      putResumeSession_(uploadToken, session)
       return jsonResponse_({
         ok: true,
         pending: true,
@@ -1129,9 +1120,7 @@ function handleUploadChunk_(body) {
         webViewLink: webView,
       }
       cacheUploadResult_(uploadToken, result)
-      try {
-        CacheService.getScriptCache().remove('uresume:' + uploadToken)
-      } catch (rmErr) {}
+      removeResumeSession_(uploadToken)
       return jsonResponse_(result)
     }
 
@@ -1147,6 +1136,79 @@ function handleUploadChunk_(body) {
     var message = err && err.message ? String(err.message) : 'Chunk upload failed'
     return jsonResponse_({ ok: false, error: message }, 500)
   }
+}
+
+var RESUME_PROP_PREFIX_ = 'uresume:'
+var RESUME_MAX_AGE_MS_ = 6 * 60 * 60 * 1000
+
+function putResumeSession_(uploadToken, session) {
+  if (!session.createdAt) session.createdAt = Date.now()
+  var payload = JSON.stringify(session)
+  PropertiesService.getScriptProperties().setProperty(
+    RESUME_PROP_PREFIX_ + uploadToken,
+    payload,
+  )
+  try {
+    // Cache mirror for lower-latency hits when eviction is not an issue.
+    CacheService.getScriptCache().put(
+      RESUME_PROP_PREFIX_ + uploadToken,
+      payload,
+      21600,
+    )
+  } catch (cacheErr) {}
+}
+
+function getResumeSession_(uploadToken) {
+  var key = RESUME_PROP_PREFIX_ + uploadToken
+  var raw = null
+  try {
+    raw = PropertiesService.getScriptProperties().getProperty(key)
+  } catch (propErr) {}
+  if (!raw) {
+    try {
+      raw = CacheService.getScriptCache().get(key)
+    } catch (cacheErr) {}
+  }
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch (parseErr) {
+    removeResumeSession_(uploadToken)
+    return null
+  }
+}
+
+function removeResumeSession_(uploadToken) {
+  var key = RESUME_PROP_PREFIX_ + uploadToken
+  try {
+    PropertiesService.getScriptProperties().deleteProperty(key)
+  } catch (e1) {}
+  try {
+    CacheService.getScriptCache().remove(key)
+  } catch (e2) {}
+}
+
+/** Drop abandoned multi-chunk sessions so Properties quota stays healthy. */
+function cleanupStaleResumeSessions_() {
+  try {
+    var props = PropertiesService.getScriptProperties()
+    var all = props.getProperties()
+    var now = Date.now()
+    var keys = Object.keys(all)
+    for (var i = 0; i < keys.length; i += 1) {
+      var k = keys[i]
+      if (k.indexOf(RESUME_PROP_PREFIX_) !== 0) continue
+      try {
+        var s = JSON.parse(all[k])
+        var created = Number(s.createdAt || 0)
+        if (!created || now - created > RESUME_MAX_AGE_MS_) {
+          props.deleteProperty(k)
+        }
+      } catch (e) {
+        props.deleteProperty(k)
+      }
+    }
+  } catch (cleanupErr) {}
 }
 
 /**

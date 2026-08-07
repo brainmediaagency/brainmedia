@@ -9,7 +9,17 @@ import {
   type ScreenWakeLock,
 } from '@/lib/screenWakeLock'
 
-export const MAX_RECORDING_MS: number | null = null
+/** Hard product cap: Spark + Drive path targets ~8–12 MB speech at 24 kbps. */
+export const MAX_RECORDING_MS = 45 * 60 * 1000
+
+/** Last N ms of the cap: warn in UI (color). */
+export const RECORDING_LIMIT_WARN_MS = 2 * 60 * 1000
+
+/**
+ * Target speech bitrate for long takes (45 min → roughly 8–12 MB at 24 kbps).
+ * Browsers may clamp; still far smaller than unconstrained MediaRecorder defaults.
+ */
+export const VOICE_AUDIO_BITS_PER_SECOND = 24_000
 
 /** Chunk interval: continuous flush so stop never depends on a single empty blob. */
 export const VOICE_CHUNK_INTERVAL_MS = 1000
@@ -36,7 +46,7 @@ export type VoiceRecording = {
   createdAt: number
 }
 
-export type VoiceStopReason = 'manual' | 'stream_ended'
+export type VoiceStopReason = 'manual' | 'stream_ended' | 'max_duration'
 
 export type VoiceEngineSnapshot = {
   status: VoiceRecorderStatus
@@ -144,6 +154,25 @@ export function clampRecordingDurationMs(
   const safe = Math.max(0, elapsedMs)
   if (maxMs === null || !Number.isFinite(maxMs)) return safe
   return Math.min(safe, maxMs)
+}
+
+/** True when elapsed is within the final warning window of the hard cap. */
+export function isNearRecordingLimit(
+  elapsedMs: number,
+  maxMs: number = MAX_RECORDING_MS,
+  warnMs: number = RECORDING_LIMIT_WARN_MS,
+): boolean {
+  if (!(maxMs > 0) || !(warnMs > 0)) return false
+  const safe = Math.max(0, elapsedMs)
+  return safe >= Math.max(0, maxMs - warnMs) && safe < maxMs
+}
+
+export function hasReachedRecordingLimit(
+  elapsedMs: number,
+  maxMs: number = MAX_RECORDING_MS,
+): boolean {
+  if (!(maxMs > 0)) return false
+  return Math.max(0, elapsedMs) >= maxMs
 }
 
 export function downloadVoiceRecording(recording: VoiceRecording): void {
@@ -255,8 +284,14 @@ class VoiceRecorderEngine {
   private startTick() {
     this.stopTick()
     this.tickTimer = setInterval(() => {
-      this.elapsedMs = this.readElapsedMs()
+      this.elapsedMs = clampRecordingDurationMs(this.readElapsedMs())
       this.emit()
+      if (
+        this.status === 'recording' &&
+        hasReachedRecordingLimit(this.elapsedMs)
+      ) {
+        this.stopWithReason('max_duration')
+      }
     }, 250)
   }
 
@@ -438,9 +473,20 @@ class VoiceRecorderEngine {
       this.clearRecordingUrl()
       this.recording = null
 
-      const recorder = mimeType
-        ? new MediaRecorder(stream, { mimeType })
-        : new MediaRecorder(stream)
+      const recorderOptions: MediaRecorderOptions = {
+        audioBitsPerSecond: VOICE_AUDIO_BITS_PER_SECOND,
+      }
+      if (mimeType) recorderOptions.mimeType = mimeType
+
+      let recorder: MediaRecorder
+      try {
+        recorder = new MediaRecorder(stream, recorderOptions)
+      } catch {
+        // Some engines reject mimeType + bitrate combinations; fall back.
+        recorder = mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream)
+      }
 
       this.mediaRecorder = recorder
       this.wireRecorder(recorder, sessionId)
@@ -489,7 +535,7 @@ class VoiceRecorderEngine {
     if (!recorder || recorder.state !== 'recording') return
     if (typeof recorder.pause !== 'function') return
     recorder.pause()
-    this.elapsedBase = this.readElapsedMs()
+    this.elapsedBase = clampRecordingDurationMs(this.readElapsedMs())
     this.segmentStartedAt = null
     this.stopTick()
     this.releaseWakeLock()
@@ -501,6 +547,10 @@ class VoiceRecorderEngine {
     const recorder = this.mediaRecorder
     if (!recorder || recorder.state !== 'paused') return
     if (typeof recorder.resume !== 'function') return
+    if (hasReachedRecordingLimit(this.elapsedBase)) {
+      this.stopWithReason('max_duration')
+      return
+    }
     this.segmentStartedAt = Date.now()
     recorder.resume()
     this.setStatus('recording')
@@ -509,11 +559,15 @@ class VoiceRecorderEngine {
   }
 
   stop(): void {
+    this.stopWithReason('manual')
+  }
+
+  private stopWithReason(reason: VoiceStopReason): void {
     const recorder = this.mediaRecorder
     if (!recorder || recorder.state === 'inactive') return
-    this.stopReason = 'manual'
+    this.stopReason = reason
     if (this.segmentStartedAt !== null) {
-      this.elapsedBase = this.readElapsedMs()
+      this.elapsedBase = clampRecordingDurationMs(this.readElapsedMs())
       this.segmentStartedAt = null
     }
     this.stopTick()
@@ -524,7 +578,7 @@ class VoiceRecorderEngine {
       // Never requestData() — races with stop on some mobiles.
       recorder.stop()
     } catch {
-      this.finishSession('manual')
+      this.finishSession(reason)
     }
   }
 

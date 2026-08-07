@@ -5,7 +5,8 @@
  *   jobs (+ history), reporterDailyReports (+ history), voiceRecordings,
  *   reporterZReports, hrReports, hiringNotes, dailyRegions,
  *   managementNotifications, broadcastNotifications, userNotifications,
- *   reactionDailyScores, reactionDailyWinners, activeShifts, timeSync,
+ *   reactionDailyScores, reactionDailyWinners, hoopDailyScores, hoopDailyWinners,
+ *   activeShifts, timeSync,
  *   users/{uid}/attendanceLogs (+ history)
  * Also zeros user job stats.
  *
@@ -31,6 +32,8 @@ const FLAT_COLLECTIONS = [
   'broadcastNotifications',
   'reactionDailyScores',
   'reactionDailyWinners',
+  'hoopDailyScores',
+  'hoopDailyWinners',
   'activeShifts',
   'timeSync',
 ] as const

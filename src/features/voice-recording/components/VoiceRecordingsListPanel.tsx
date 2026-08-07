@@ -66,7 +66,7 @@ export function VoiceRecordingsListPanel({
       <AccordionSection
         number={sectionNumber}
         title="Ses kayıtları"
-        description="Konfirme sırasında kaydedilen sesler (tarih · firma). Sadece sisteme başarıyla yazılan kayıtlar listelenir; 3 günden eski olanlar otomatik silinir. Yönetim ve koordinatör kayıt silebilir."
+        description="Konfirme sırasında kaydedilen sesler (tarih · firma), Google Drive üzerinde. En fazla 45 dk; 3 günden eski kayıtlar otomatik silinir. Yönetim ve koordinatör kayıt silebilir."
         defaultOpen
       >
         {loading ? (

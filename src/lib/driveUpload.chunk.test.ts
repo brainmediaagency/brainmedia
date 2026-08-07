@@ -17,11 +17,11 @@ describe('driveUpload chunk helpers', () => {
   })
 
   it('keeps single-shot modest and hard max above long voice files', () => {
-    // One shot still smaller than multi-chunk voice (e.g. 15–25 min)
+    // One shot still smaller than multi-chunk voice (e.g. 45 min speech)
     expect(DRIVE_SINGLE_SHOT_MAX_BYTES).toBeLessThan(3 * 1024 * 1024)
     expect(DRIVE_CHUNK_BYTES).toBeGreaterThan(100_000)
     expect(DRIVE_CHUNK_BYTES).toBeLessThanOrEqual(512 * 1024)
-    // 25 min @ ~128 kbps ≈ 24 MB — must fit under hard max
+    // 45 min @ ~32 kbps speech ≈ 10 MB; 128 kbps worst-case still under hard max
     expect(DRIVE_HARD_MAX_BYTES).toBeGreaterThan(30 * 1024 * 1024)
   })
 })
