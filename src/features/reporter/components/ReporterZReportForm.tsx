@@ -237,7 +237,8 @@ export function ReporterZReportForm() {
                 {editingId ? 'Fotoğrafı değiştir' : 'Fotoğraf ekle (opsiyonel)'}
               </span>
               <span className="text-xs text-text-secondary">
-                JPG, PNG — en fazla 5 MB · Google Drive’a kaydedilir
+                JPG, PNG — en fazla 5 MB · büyük fotoğraflar otomatik küçültülür · Google
+                Drive’a kaydedilir
               </span>
             </label>
           </div>

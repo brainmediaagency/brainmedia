@@ -1,5 +1,9 @@
 import { UserFacingError } from '@/lib/errors'
 import {
+  compressImageForDrive,
+  jpegDriveFileName,
+} from '@/lib/compressImageForDrive'
+import {
   getSheetsWebhookUrl,
   getWebhookIdToken,
   isSheetsWebhookConfigured,
@@ -122,7 +126,8 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
   }
   if (/Chunk failed HTTP|Drive resumable|No resumable/i.test(combined)) {
     return (
-      'Drive parça yüklemesi başarısız. Kayıt bu cihazda; İndir ile yedekleyip tekrar deneyin. Ağ kararlı değilse daha kısa parçalar yükleyin.'
+      'Drive’a yükleme başarısız (ağ/parça). Fotoğrafı biraz küçültüp tekrar deneyin; ' +
+      'kararsız LTE’de Wi‑Fi daha güvenilir. Sürmezse Yönetime bildirin.'
     )
   }
   return raw || detail || fallback
@@ -467,7 +472,7 @@ function isResumableRestartableError_(error: unknown): boolean {
       : error instanceof Error
         ? error.message
         : String(error ?? '')
-  return /session expired|chunk order|Corrupt|oturumu düştü|Retry|resumable/i.test(
+  return /session expired|chunk order|Corrupt|oturumu düştü|Retry|resumable|parça|Chunk failed|Drive’a yükleme/i.test(
     msg,
   )
 }
@@ -633,6 +638,7 @@ function mapUnknownChunkError_(error: unknown): string {
  * Upload a file to Google Drive via the free Apps Script webhook.
  * Does not use Firebase Storage.
  *
+ * Images: compressed client-side toward single-shot size (mobile-friendly).
  * Small files: single base64 POST.
  * Large files (voice ~45 dk at speech bitrate): Drive resumable chunks (webhook v27+).
  */
@@ -666,11 +672,57 @@ export async function uploadFileToDrive(input: {
     )
   }
 
-  if (input.file.size <= DRIVE_SINGLE_SHOT_MAX_BYTES) {
-    return uploadFileSingleShot(input)
+  let file = input.file
+  let fileName = input.fileName
+  let mimeType = input.mimeType || file.type || 'application/octet-stream'
+  const looksImage =
+    mimeType.startsWith('image/')
+    || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(fileName)
+
+  // Phone camera originals (2–5 MB) often fail multi-chunk on LTE. Shrink first.
+  if (looksImage && file.size > Math.floor(DRIVE_SINGLE_SHOT_MAX_BYTES * 0.75)) {
+    input.onProgress?.({
+      phase: 'encoding',
+      ratio: 0.04,
+      fileName,
+    })
+    try {
+      const compressed = await compressImageForDrive(file, {
+        maxBytes: Math.floor(DRIVE_SINGLE_SHOT_MAX_BYTES * 0.92),
+        maxEdge: 1920,
+        onProgress: (ratio) => {
+          input.onProgress?.({
+            phase: 'encoding',
+            ratio: 0.04 + ratio * 0.28,
+            fileName,
+          })
+        },
+      })
+      if (compressed && compressed.blob.size > 0) {
+        file = compressed.blob
+        mimeType = compressed.mimeType
+        fileName = jpegDriveFileName(fileName)
+      }
+    } catch {
+      // Keep original; resumable path may still work
+    }
   }
 
-  return uploadFileResumable(input)
+  if (file.size <= DRIVE_SINGLE_SHOT_MAX_BYTES) {
+    return uploadFileSingleShot({
+      ...input,
+      file,
+      fileName,
+      mimeType,
+    })
+  }
+
+  return uploadFileResumable({
+    ...input,
+    file,
+    fileName,
+    mimeType,
+  })
 }
 
 /**
