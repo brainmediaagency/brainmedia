@@ -584,17 +584,17 @@ export function HoopGame({
   const powerTone =
     powerPct < 35 ? 'low' : powerPct < 70 ? 'mid' : 'high'
 
-  // Visual size: height capped (~42dvh / 300px); width follows aspect so image never stretches.
+  // Visual size: height capped (~50.4dvh / 360px); width follows aspect so image never stretches.
   // Logical physics stay DEFAULT_HOOP_WORLD; canvas CSS scales the drawing.
   const worldW = DEFAULT_HOOP_WORLD.width
   const worldH = DEFAULT_HOOP_WORLD.height
   const arenaMaxStyle = {
-    width: `min(100%, 280px, calc(min(42dvh, 300px) * ${worldW} / ${worldH}))`,
+    width: `min(100%, 336px, calc(min(50.4dvh, 360px) * ${worldW} / ${worldH}))`,
     aspectRatio: `${worldW} / ${worldH}`,
   } as const
 
   return (
-    <div className="mx-auto w-full max-w-[320px] space-y-2.5 sm:max-w-[340px] sm:space-y-3">
+    <div className="mx-auto w-full max-w-[384px] space-y-2.5 sm:max-w-[408px] sm:space-y-3">
       {/* Compact HUD — one row, fits small phones */}
       <div className="grid grid-cols-3 gap-1.5">
         <div className="rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 shadow-sm sm:px-2.5 sm:py-2">
