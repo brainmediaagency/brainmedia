@@ -80,13 +80,14 @@ export function readingDocId(
   return `${uid}_${reportDate}_${slot}`
 }
 
-function assertEditableToday(reportDate: string): void {
+function assertValidReportDate(reportDate: string): void {
   if (!isValidDateOnly(reportDate)) {
     throw new UserFacingError('Geçerli bir rapor tarihi girin.')
   }
-  if (reportDate !== todayDateOnlyIstanbul()) {
+  // Kameraman may backfill past days (e.g. enter the 6th on the 8th); block future only.
+  if (reportDate > todayDateOnlyIstanbul()) {
     throw new UserFacingError(
-      'Yalnızca bugünün kadran raporları düzenlenebilir.',
+      'Gelecek tarih için kadran girilemez. Rapor gününü bugün veya geçmiş bir güne alın.',
     )
   }
 }
@@ -192,12 +193,12 @@ export async function upsertOdometerReading(input: {
   createdByUid: string
   createdByNameSnapshot: string
   createdByEmailSnapshot: string
-  /** When updating, existing doc id (must be today). */
+  /** When updating, existing doc id (uid_date_slot). */
   existingId?: string | null
   onUploadProgress?: (progress: DriveUploadProgress) => void
 }): Promise<string> {
   try {
-    assertEditableToday(input.reportDate)
+    assertValidReportDate(input.reportDate)
 
     const authUid = getFirebaseAuth().currentUser?.uid
     if (!authUid) {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ImagePlus, Pencil, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, ImagePlus, Pencil, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import type {
@@ -14,8 +14,15 @@ import {
   pairReadingsIntoDays,
   slotLabelTr,
 } from '@/features/kameraman/utils/odometerKm'
+import {
+  mondayOfWeekIstanbul,
+  shiftDateOnlyDays,
+  weekDatesFromMonday,
+  weekRangeLabelTr,
+} from '@/features/media-planning/services/dailyRegionService'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
+import { DateInput } from '@/components/ui/DateInput'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { FileUploadStatus } from '@/components/ui/FileUploadStatus'
 import { FormField } from '@/components/ui/FormField'
@@ -23,19 +30,193 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { cn } from '@/lib/classNames'
 import { driveUploadPhaseLabel } from '@/lib/driveUpload'
 import {
   formatDateOnlyLongTr,
   formatDateTimeTr,
+  isValidDateOnly,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
 
 const MAX_BYTES = 8 * 1024 * 1024
 
+const WEEKDAY_SHORT_TR = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'] as const
+
+function dayOfMonth(dateOnly: string): string {
+  return isValidDateOnly(dateOnly) ? String(Number(dateOnly.slice(8, 10))) : '—'
+}
+
+type WeeklyOdometerTrackerProps = {
+  weekMonday: string
+  today: string
+  filled: ReadonlySet<string>
+  selectedDate: string
+  selectedSlot: OdometerSlot
+  onWeekChange: (monday: string) => void
+  onPick: (date: string, slot: OdometerSlot) => void
+}
+
+/** Compact Mon–Sun × Sabah/Gece grid; ✓ when a kadran exists for that slot. */
+function WeeklyOdometerTracker({
+  weekMonday,
+  today,
+  filled,
+  selectedDate,
+  selectedSlot,
+  onWeekChange,
+  onPick,
+}: WeeklyOdometerTrackerProps) {
+  const days = weekDatesFromMonday(weekMonday)
+
+  return (
+    <section
+      className="rounded-[var(--radius-md)] border border-border bg-surface p-3 shadow-sm"
+      aria-label="Haftalık kadran durumu"
+    >
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="shrink-0 px-2"
+          onClick={() => onWeekChange(shiftDateOnlyDays(weekMonday, -7))}
+          aria-label="Önceki hafta"
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+        </Button>
+        <div className="min-w-0 text-center">
+          <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+            Bu hafta
+          </p>
+          <p className="truncate text-sm font-medium text-text-primary">
+            {weekRangeLabelTr(weekMonday)}
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="shrink-0 px-2"
+          onClick={() => onWeekChange(shiftDateOnlyDays(weekMonday, 7))}
+          aria-label="Sonraki hafta"
+        >
+          <ChevronRight className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[280px] border-collapse text-center text-xs">
+          <thead>
+            <tr>
+              <th className="w-12 p-1 font-medium text-text-secondary" scope="col">
+                <span className="sr-only">Slot</span>
+              </th>
+              {days.map((d, i) => {
+                const isToday = d === today
+                return (
+                  <th
+                    key={d}
+                    scope="col"
+                    className={cn(
+                      'p-1 font-medium',
+                      isToday ? 'text-brand-blue' : 'text-text-secondary',
+                    )}
+                  >
+                    <div className="leading-tight">{WEEKDAY_SHORT_TR[i]}</div>
+                    <div
+                      className={cn(
+                        'mx-auto mt-0.5 flex size-6 items-center justify-center rounded-full text-[11px] font-semibold tabular-nums',
+                        isToday
+                          ? 'bg-brand-cyan/20 text-brand-blue'
+                          : 'text-text-primary',
+                      )}
+                    >
+                      {dayOfMonth(d)}
+                    </div>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {(
+              [
+                { slot: 'morning' as const, label: 'Sabah' },
+                { slot: 'evening' as const, label: 'Gece' },
+              ] as const
+            ).map((row) => (
+              <tr key={row.slot} className="border-t border-border/70">
+                <th
+                  scope="row"
+                  className="p-1 pr-1.5 text-left text-[11px] font-semibold text-text-secondary"
+                >
+                  {row.label}
+                </th>
+                {days.map((d) => {
+                  const key = `${d}|${row.slot}`
+                  const isFilled = filled.has(key)
+                  const isSelected =
+                    selectedDate === d && selectedSlot === row.slot
+                  const isFuture = d > today
+                  return (
+                    <td key={key} className="p-0.5">
+                      <button
+                        type="button"
+                        disabled={isFuture}
+                        title={
+                          isFuture
+                            ? 'Gelecek'
+                            : `${dayOfMonth(d)} · ${row.label}${isFilled ? ' — girildi' : ' — girilmedi'}`
+                        }
+                        onClick={() => onPick(d, row.slot)}
+                        className={cn(
+                          'mx-auto flex size-8 items-center justify-center rounded-md border transition-colors',
+                          isFuture &&
+                            'cursor-not-allowed border-transparent bg-surface-muted/40 opacity-40',
+                          !isFuture &&
+                            isFilled &&
+                            'border-success/40 bg-success/15 text-success',
+                          !isFuture &&
+                            !isFilled &&
+                            'border-border bg-surface-muted/50 text-text-secondary/40 hover:border-brand-cyan/40 hover:bg-brand-cyan/10',
+                          isSelected &&
+                            !isFuture &&
+                            'ring-2 ring-brand-cyan/45 ring-offset-1 ring-offset-surface',
+                        )}
+                      >
+                        {isFilled ? (
+                          <Check className="size-3.5" strokeWidth={2.5} aria-hidden="true" />
+                        ) : (
+                          <span className="text-[10px]" aria-hidden="true">
+                            ·
+                          </span>
+                        )}
+                        <span className="sr-only">
+                          {dayOfMonth(d)} {row.label}
+                          {isFilled ? ' girildi' : ' boş'}
+                        </span>
+                      </button>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[11px] leading-snug text-text-secondary">
+        ✓ = kadran yollandı · hücreye dokunarak o günün sabah/gece formunu aç
+      </p>
+    </section>
+  )
+}
+
 export function KameramanOdometerPanel() {
   const { profile } = useAuth()
   const inputRef = useRef<HTMLInputElement>(null)
+  const [reportDate, setReportDate] = useState(() => todayDateOnlyIstanbul())
   const [slot, setSlot] = useState<OdometerSlot>('morning')
   const [odometerKm, setOdometerKm] = useState('')
   const [note, setNote] = useState('')
@@ -50,6 +231,9 @@ export function KameramanOdometerPanel() {
     detail: string
     percent: number
   } | null>(null)
+  const [weekMonday, setWeekMonday] = useState(() =>
+    mondayOfWeekIstanbul(todayDateOnlyIstanbul()),
+  )
 
   const today = todayDateOnlyIstanbul()
 
@@ -71,20 +255,31 @@ export function KameramanOdometerPanel() {
 
   const dayPairs = useMemo(() => pairReadingsIntoDays(readings), [readings])
 
-  const todayBySlot = useMemo(() => {
+  /** Keys: `yyyy-MM-dd|morning` / `…|evening` for weekly ✓ cells. */
+  const filledSlotKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const item of readings) {
+      set.add(`${item.reportDate}|${item.slot}`)
+    }
+    return set
+  }, [readings])
+
+  const selectedDayBySlot = useMemo(() => {
     const map: Record<OdometerSlot, KameramanOdometerReading | null> = {
       morning: null,
       evening: null,
     }
     for (const item of readings) {
-      if (item.reportDate !== today) continue
+      if (item.reportDate !== reportDate) continue
       map[item.slot] = item
     }
     return map
-  }, [readings, today])
+  }, [readings, reportDate])
 
-  const existingForSlot = todayBySlot[slot]
-  const bothSlotsFilled = Boolean(todayBySlot.morning && todayBySlot.evening)
+  const existingForSlot = selectedDayBySlot[slot]
+  const bothSlotsFilled = Boolean(
+    selectedDayBySlot.morning && selectedDayBySlot.evening,
+  )
   const isEditMode = Boolean(editingId) || Boolean(existingForSlot)
 
   const clearFile = () => {
@@ -94,17 +289,21 @@ export function KameramanOdometerPanel() {
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  const resetForm = () => {
+  const fillEmptyForm = (nextSlot: OdometerSlot) => {
     clearFile()
     setEditingId(null)
     setOdometerKm('')
     setNote('')
-    const preferred: OdometerSlot = !todayBySlot.morning
+    setSlot(nextSlot)
+  }
+
+  const resetForm = () => {
+    const preferred: OdometerSlot = !selectedDayBySlot.morning
       ? 'morning'
-      : !todayBySlot.evening
+      : !selectedDayBySlot.evening
         ? 'evening'
         : 'morning'
-    setSlot(preferred)
+    fillEmptyForm(preferred)
   }
 
   /** Load an existing reading into the form (update, never second create). */
@@ -112,11 +311,9 @@ export function KameramanOdometerPanel() {
     item: KameramanOdometerReading,
     options?: { silent?: boolean },
   ) => {
-    if (item.reportDate !== today) {
-      toast.error('Yalnızca bugünün raporları düzenlenebilir.')
-      return
-    }
     clearFile()
+    setReportDate(item.reportDate)
+    setWeekMonday(mondayOfWeekIstanbul(item.reportDate))
     setEditingId(item.id)
     setSlot(item.slot)
     setOdometerKm(String(item.odometerKm))
@@ -127,37 +324,77 @@ export function KameramanOdometerPanel() {
     }
   }
 
-  // Prefer first empty slot; if selected slot already has a row, open update mode.
+  // When selected day/slot inventory changes, open empty slot or update mode.
   useEffect(() => {
     if (editingId || loadingList) return
     if (existingForSlot) {
       startEdit(existingForSlot, { silent: true })
       return
     }
-    if (!todayBySlot.morning && slot !== 'morning') {
+    if (!selectedDayBySlot.morning && slot !== 'morning') {
       setSlot('morning')
       return
     }
-    if (todayBySlot.morning && !todayBySlot.evening && slot !== 'evening') {
+    if (
+      selectedDayBySlot.morning
+      && !selectedDayBySlot.evening
+      && slot !== 'evening'
+    ) {
       setSlot('evening')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- react only to today slot inventory
-  }, [todayBySlot.morning?.id, todayBySlot.evening?.id, loadingList])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to selected-day slot inventory
+  }, [
+    reportDate,
+    selectedDayBySlot.morning?.id,
+    selectedDayBySlot.evening?.id,
+    loadingList,
+  ])
 
-  const onSlotChange = (next: OdometerSlot) => {
-    setSlot(next)
-    const existing = todayBySlot[next]
-    if (existing) {
-      startEdit(existing, { silent: true })
-      toast.message(
-        `${slotLabelTr(next)} kadranı bugün zaten girilmiş. Güncelleme modu açıldı.`,
-      )
+  const onReportDateChange = (next: string) => {
+    if (!isValidDateOnly(next)) {
+      toast.error('Geçerli bir tarih seçin.')
       return
     }
+    if (next > today) {
+      toast.error('Gelecek tarih seçilemez.')
+      return
+    }
+    setReportDate(next)
     clearFile()
     setEditingId(null)
     setOdometerKm('')
     setNote('')
+    // Slot inventory effect will pick preferred slot / edit mode for the new day
+  }
+
+  const onSlotChange = (next: OdometerSlot) => {
+    setSlot(next)
+    const existing = selectedDayBySlot[next]
+    if (existing) {
+      startEdit(existing, { silent: true })
+      toast.message(
+        `${slotLabelTr(next)} kadranı bu gün için zaten girilmiş. Güncelleme modu açıldı.`,
+      )
+      return
+    }
+    fillEmptyForm(next)
+  }
+
+  const pickFromWeekGrid = (date: string, nextSlot: OdometerSlot) => {
+    if (date > today) {
+      toast.error('Gelecek tarih seçilemez.')
+      return
+    }
+    setReportDate(date)
+    setWeekMonday(mondayOfWeekIstanbul(date))
+    const existing = readings.find(
+      (r) => r.reportDate === date && r.slot === nextSlot,
+    )
+    if (existing) {
+      startEdit(existing, { silent: true })
+      return
+    }
+    fillEmptyForm(nextSlot)
   }
 
   const onFileChange = (next: File | null) => {
@@ -185,6 +422,14 @@ export function KameramanOdometerPanel() {
 
   const onSubmit = async () => {
     if (!profile) return
+    if (!isValidDateOnly(reportDate)) {
+      toast.error('Geçerli bir rapor tarihi seçin.')
+      return
+    }
+    if (reportDate > today) {
+      toast.error('Gelecek tarih için kadran girilemez.')
+      return
+    }
     const km = Number(odometerKm.replace(',', '.'))
     if (!Number.isFinite(km) || km < 0) {
       toast.error('Geçerli bir kadran km sayısı girin.')
@@ -192,7 +437,7 @@ export function KameramanOdometerPanel() {
     }
 
     // Block a second create for the same day + slot; force update path.
-    const already = todayBySlot[slot]
+    const already = selectedDayBySlot[slot]
     if (already && !editingId) {
       startEdit(already)
       toast.message(
@@ -212,13 +457,13 @@ export function KameramanOdometerPanel() {
     if (file) {
       setUploadUi({
         label: 'Kadran görseli yükleniyor…',
-        detail: slotLabelTr(slot),
+        detail: `${formatDateOnlyLongTr(reportDate)} · ${slotLabelTr(slot)}`,
         percent: 0,
       })
     }
     try {
       await upsertOdometerReading({
-        reportDate: today,
+        reportDate,
         slot,
         odometerKm: Math.floor(km),
         note,
@@ -239,8 +484,8 @@ export function KameramanOdometerPanel() {
       })
       toast.success(
         isEditMode || already
-          ? `${slotLabelTr(slot)} kadranı güncellendi.`
-          : `${slotLabelTr(slot)} kadranı kaydedildi.`,
+          ? `${formatDateOnlyLongTr(reportDate)} · ${slotLabelTr(slot)} kadranı güncellendi.`
+          : `${formatDateOnlyLongTr(reportDate)} · ${slotLabelTr(slot)} kadranı kaydedildi.`,
       )
       resetForm()
     } catch (error) {
@@ -251,25 +496,33 @@ export function KameramanOdometerPanel() {
     }
   }
 
+  const reportDateLabel = formatDateOnlyLongTr(reportDate)
+
   return (
     <div className="space-y-6">
+      <WeeklyOdometerTracker
+        weekMonday={weekMonday}
+        today={today}
+        filled={filledSlotKeys}
+        selectedDate={reportDate}
+        selectedSlot={slot}
+        onWeekChange={setWeekMonday}
+        onPick={pickFromWeekGrid}
+      />
+
       <AccordionSection
         number="01"
         title="Km kadranı"
-        description="Her gün sabah ve akşam için tek kadran kaydı. Aynı slot tekrar açılamaz; mevcut olan güncellenir."
+        description="Hangi günün sabah (giriş) veya akşam (çıkış) kadranı olduğunu seçin. Aynı gün zorunlu değil — örneğin 8’inde 6’sının kaydını girebilirsiniz."
         defaultOpen
       >
         <div className="space-y-4">
-          <p className="text-sm text-text-secondary">
-            Rapor günü:{' '}
-            <span className="font-medium text-text-primary">
-              {formatDateOnlyLongTr(today)}
-            </span>
-          </p>
-
           {bothSlotsFilled ? (
             <p className="rounded-[var(--radius-md)] border border-border bg-surface-muted/50 px-3 py-2 text-sm text-text-secondary">
-              Bugün sabah ve akşam kadranları girilmiş. Değiştirmek için slot
+              <span className="font-medium text-text-primary">
+                {reportDateLabel}
+              </span>{' '}
+              için sabah ve akşam kadranları girilmiş. Değiştirmek için slot
               seçin veya alttan{' '}
               <span className="font-medium text-text-primary">Düzenle</span>.
             </p>
@@ -278,14 +531,33 @@ export function KameramanOdometerPanel() {
           {existingForSlot && editingId === existingForSlot.id ? (
             <p className="rounded-[var(--radius-md)] border border-brand-cyan/30 bg-brand-cyan/10 px-3 py-2 text-sm text-text-secondary">
               <span className="font-medium text-text-primary">
-                {slotLabelTr(slot)}
+                {reportDateLabel} · {slotLabelTr(slot)}
               </span>{' '}
               kaydı güncelleniyor — yeni kayıt açılamaz.
             </p>
           ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Slot" htmlFor="km-slot" required>
+            <FormField
+              label="Rapor günü"
+              htmlFor="km-report-date"
+              required
+              hint="Kadranın ait olduğu gün (bugün veya geçmiş)"
+            >
+              <DateInput
+                id="km-report-date"
+                value={reportDate}
+                max={today}
+                disabled={submitting}
+                onChange={(e) => onReportDateChange(e.target.value)}
+              />
+            </FormField>
+            <FormField
+              label="Giriş / çıkış"
+              htmlFor="km-slot"
+              required
+              hint="Sabah = giriş · Akşam = çıkış"
+            >
               <Select
                 id="km-slot"
                 value={slot}
@@ -293,28 +565,29 @@ export function KameramanOdometerPanel() {
                 disabled={submitting}
               >
                 <option value="morning">
-                  Sabah (otel çıkışı)
-                  {todayBySlot.morning ? ' — kayıtlı, güncelle' : ''}
+                  Sabah — gün girişi (otel çıkışı)
+                  {selectedDayBySlot.morning ? ' — kayıtlı, güncelle' : ''}
                 </option>
                 <option value="evening">
-                  Akşam (gün sonu)
-                  {todayBySlot.evening ? ' — kayıtlı, güncelle' : ''}
+                  Akşam — gün çıkışı (gün sonu)
+                  {selectedDayBySlot.evening ? ' — kayıtlı, güncelle' : ''}
                 </option>
               </Select>
             </FormField>
-            <FormField label="Kadran km" htmlFor="km-value" required>
-              <Input
-                id="km-value"
-                inputMode="numeric"
-                value={odometerKm}
-                onChange={(e) =>
-                  setOdometerKm(e.target.value.replace(/[^\d]/g, ''))
-                }
-                disabled={submitting}
-                placeholder="örn. 125430"
-              />
-            </FormField>
           </div>
+
+          <FormField label="Kadran km" htmlFor="km-value" required>
+            <Input
+              id="km-value"
+              inputMode="numeric"
+              value={odometerKm}
+              onChange={(e) =>
+                setOdometerKm(e.target.value.replace(/[^\d]/g, ''))
+              }
+              disabled={submitting}
+              placeholder="örn. 125430"
+            />
+          </FormField>
 
           <FormField label="Not (opsiyonel)" htmlFor="km-note">
             <Textarea
@@ -411,7 +684,7 @@ export function KameramanOdometerPanel() {
       <AccordionSection
         number="02"
         title="Raporlarım"
-        description="Geçmiş kadran girişleriniz. Düzenleme yalnızca bugün için açıktır."
+        description="Geçmiş kadran girişleriniz. Her günün sabah/akşam kaydını düzenleyebilirsiniz."
         defaultOpen
       >
         {loadingList ? (
@@ -422,7 +695,7 @@ export function KameramanOdometerPanel() {
         ) : dayPairs.length === 0 ? (
           <EmptyState
             title="Henüz km raporu yok"
-            description="Sabah ve akşam kadran kayıtlarını buradan oluşturun."
+            description="Tarih ve giriş/çıkış seçerek kadran kaydı oluşturun."
           />
         ) : (
           <ul className="space-y-3">
@@ -435,6 +708,11 @@ export function KameramanOdometerPanel() {
                   <div>
                     <p className="font-medium text-text-primary">
                       {formatDateOnlyLongTr(day.reportDate)}
+                      {day.reportDate === today ? (
+                        <span className="ml-2 text-xs font-normal text-text-secondary">
+                          (bugün)
+                        </span>
+                      ) : null}
                     </p>
                     <p className="mt-0.5 text-sm text-text-secondary">
                       {day.dayKm != null
@@ -452,7 +730,7 @@ export function KameramanOdometerPanel() {
                         className="rounded-[var(--radius-sm)] border border-border/80 bg-surface-muted/40 p-3"
                       >
                         <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-                          {slotLabelTr(s)}
+                          {s === 'morning' ? 'Sabah · giriş' : 'Akşam · çıkış'}
                         </p>
                         {item ? (
                           <>
@@ -483,23 +761,36 @@ export function KameramanOdometerPanel() {
                                 ? formatDateTimeTr(item.createdAt.toDate())
                                 : '—'}
                             </p>
-                            {item.reportDate === today ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                className="mt-2"
-                                onClick={() => startEdit(item)}
-                              >
-                                <Pencil className="size-3.5" aria-hidden="true" />
-                                Düzenle
-                              </Button>
-                            ) : null}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="mt-2"
+                              onClick={() => startEdit(item)}
+                            >
+                              <Pencil className="size-3.5" aria-hidden="true" />
+                              Düzenle
+                            </Button>
                           </>
                         ) : (
-                          <p className="mt-2 text-sm text-text-secondary">
-                            Girilmedi
-                          </p>
+                          <div className="mt-2 space-y-2">
+                            <p className="text-sm text-text-secondary">
+                              Girilmedi
+                            </p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setReportDate(day.reportDate)
+                                setWeekMonday(mondayOfWeekIstanbul(day.reportDate))
+                                fillEmptyForm(s)
+                                window.scrollTo({ top: 0, behavior: 'smooth' })
+                              }}
+                            >
+                              Bu günü gir
+                            </Button>
+                          </div>
                         )}
                       </div>
                     )
