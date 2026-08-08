@@ -8,6 +8,7 @@ import {
   DEFAULT_HOOP_WORLD,
   aimAngleAt,
   createBall,
+  getBackboard,
   launchVelocity,
   powerFromHoldMs,
   stepBall,
@@ -217,7 +218,8 @@ export function HoopGame({
     }
 
     const drawHoop = (sway: number) => {
-      const boardX = world.rim.x + world.rimHalfWidth + 10
+      const board = getBackboard(world)
+      const boardX = board.faceX
       // Pole
       ctx.fillStyle = '#64748b'
       ctx.fillRect(boardX + 2, world.rim.y + 20, 6, world.height - world.rim.y - 56)
@@ -227,9 +229,9 @@ export function HoopGame({
 
       // Backboard with glass look
       const bx = boardX - 6
-      const by = world.rim.y - 46
-      const bw = 14
-      const bh = 78
+      const by = board.top
+      const bw = board.thickness
+      const bh = board.bottom - board.top
       const glass = ctx.createLinearGradient(bx, by, bx + bw, by + bh)
       glass.addColorStop(0, 'rgba(241,245,249,0.95)')
       glass.addColorStop(0.5, 'rgba(226,232,240,0.75)')
