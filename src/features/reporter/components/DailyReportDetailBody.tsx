@@ -89,6 +89,7 @@ export function DailyReportDetailBody({
     report.hotelExpenseKurus +
       report.stationeryExpenseKurus +
       report.fuelExpenseKurus +
+      (report.mealExpenseKurus ?? 0) +
       report.extraExpenseKurus
   const employee =
     report.employeeExpenseKurus ||
@@ -227,6 +228,7 @@ export function DailyReportDetailBody({
           <MoneyLine label="Otel" valueKurus={report.hotelExpenseKurus} />
           <MoneyLine label="Kırtasiye" valueKurus={report.stationeryExpenseKurus} />
           <MoneyLine label="Benzin" valueKurus={report.fuelExpenseKurus} />
+          <MoneyLine label="Yemek" valueKurus={report.mealExpenseKurus ?? 0} />
           <MoneyLine label="Ekstra" valueKurus={report.extraExpenseKurus} />
           <MoneyLine label="Saha giderleri ara toplam" valueKurus={operating} emphasize />
         </dl>

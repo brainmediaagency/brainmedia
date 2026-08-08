@@ -29,8 +29,10 @@ export type ReporterDailyReport = {
   hotelExpenseKurus: number
   stationeryExpenseKurus: number
   fuelExpenseKurus: number
+  /** Yemek gideri (saha) */
+  mealExpenseKurus: number
   extraExpenseKurus: number
-  /** Otel + kırtasiye + yakıt + ekstra */
+  /** Otel + kırtasiye + yakıt + yemek + ekstra */
   operatingExpenseKurus: number
   /** Muhabir + kameraman ücretleri toplamı */
   employeeExpenseKurus: number

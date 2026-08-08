@@ -117,15 +117,15 @@ Row identity for updates: **JOB ID** when present; else **FİRMA ADI + TARİH** 
 - On first upsert / status / DK patch, `ensureJobIdHeader_` writes **`JOB ID` into M1 only if M1 is empty**.
 - One-time optional: type `JOB ID` in M1 yourself; new rows get col 13 from the client automatically.
 
-## SON DURUM (only these four)
+## SON DURUM (only these three — written from app)
 
 | App event | SON DURUM |
 |-----------|-----------|
 | Konfirme | `Konfirme` |
-| Reddet | `Reddedildi` |
 | İptal | `İptal edildi` |
 | Çekildi | `Çekildi` |
 
+**Reddet** Excel’e yazılmaz (yalnızca app / Firestore).
 **Muhabire ilet** Excel’e yazmaz (SON DURUM değişmez).
 
 ## Fresh install (new Google account / Drive)

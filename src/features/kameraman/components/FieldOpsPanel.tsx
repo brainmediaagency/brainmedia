@@ -114,6 +114,7 @@ export function FieldOpsPanel() {
     hotelExpenseKurus: number
     stationeryExpenseKurus: number
     fuelExpenseKurus: number
+    mealExpenseKurus: number
     extraExpenseKurus: number
     reporterEarningsKurus: number
     cameramanEarningsKurus: number
@@ -197,6 +198,7 @@ export function FieldOpsPanel() {
           hotelExpenseKurus: summary.totals.hotelExpenseKurus,
           stationeryExpenseKurus: summary.totals.stationeryExpenseKurus,
           fuelExpenseKurus: summary.totals.fuelExpenseKurus,
+          mealExpenseKurus: summary.totals.mealExpenseKurus,
           extraExpenseKurus: summary.totals.extraExpenseKurus,
           reporterEarningsKurus: summary.totals.reporterEarningsKurus,
           cameramanEarningsKurus: summary.totals.cameramanEarningsKurus,
@@ -427,6 +429,10 @@ export function FieldOpsPanel() {
               <StatBox
                 label="Benzin (ay)"
                 value={formatTryFromKurus(expenseTotals.fuelExpenseKurus)}
+              />
+              <StatBox
+                label="Yemek (ay)"
+                value={formatTryFromKurus(expenseTotals.mealExpenseKurus)}
               />
               <StatBox
                 label="Kırtasiye (ay)"

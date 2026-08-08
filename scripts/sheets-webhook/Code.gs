@@ -32,7 +32,8 @@
  *      Firebase Storage / Blaze.
  *
  * SON DURUM values (only):
- *   Konfirme | Reddedildi | Çekildi | İptal edildi
+ *   Konfirme | Çekildi | İptal edildi
+ *   (Reddet → Excel yazılmaz)
  * (Muhabire ilet does not write SON DURUM.)
  *
  * Deploy as Web App:

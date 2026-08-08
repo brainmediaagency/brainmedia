@@ -41,6 +41,7 @@ export type ReporterSummaryTotals = {
   hotelExpenseKurus: number
   stationeryExpenseKurus: number
   fuelExpenseKurus: number
+  mealExpenseKurus: number
   extraExpenseKurus: number
   employeeExpenseKurus: number
   totalExpenseKurus: number
@@ -95,6 +96,7 @@ function emptyTotals(): ReporterSummaryTotals {
     hotelExpenseKurus: 0,
     stationeryExpenseKurus: 0,
     fuelExpenseKurus: 0,
+    mealExpenseKurus: 0,
     extraExpenseKurus: 0,
     employeeExpenseKurus: 0,
     totalExpenseKurus: 0,
@@ -272,6 +274,7 @@ export function aggregateReporterSummary(
       Number(report.stationeryExpenseKurus ?? 0),
     )
     totals.fuelExpenseKurus += Math.max(0, Number(report.fuelExpenseKurus ?? 0))
+    totals.mealExpenseKurus += Math.max(0, Number(report.mealExpenseKurus ?? 0))
     totals.extraExpenseKurus += Math.max(0, Number(report.extraExpenseKurus ?? 0))
     totals.operatingExpenseKurus += Math.max(
       0,

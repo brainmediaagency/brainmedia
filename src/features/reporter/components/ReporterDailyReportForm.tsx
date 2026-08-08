@@ -103,6 +103,7 @@ function reportToFormValues(report: ReporterDailyReport): DailyReportFormValues 
     hotelExpenseTry: formatTryInput(kurusToTry(report.hotelExpenseKurus)),
     stationeryExpenseTry: formatTryInput(kurusToTry(report.stationeryExpenseKurus)),
     fuelExpenseTry: formatTryInput(kurusToTry(report.fuelExpenseKurus)),
+    mealExpenseTry: formatTryInput(kurusToTry(report.mealExpenseKurus ?? 0)),
     extraExpenseTry: formatTryInput(kurusToTry(report.extraExpenseKurus)),
     fieldPaidTry:
       report.fieldPaidKurus > 0 ? formatTryInput(kurusToTry(report.fieldPaidKurus)) : '',
@@ -209,6 +210,7 @@ export function ReporterDailyReportForm({
       hotelExpenseTry: '',
       stationeryExpenseTry: '',
       fuelExpenseTry: '',
+      mealExpenseTry: '',
       extraExpenseTry: '',
       fieldPaidTry: '',
     },
@@ -220,6 +222,7 @@ export function ReporterDailyReportForm({
   const hotelExpenseTry = useWatch({ control, name: 'hotelExpenseTry' }) ?? ''
   const stationeryExpenseTry = useWatch({ control, name: 'stationeryExpenseTry' }) ?? ''
   const fuelExpenseTry = useWatch({ control, name: 'fuelExpenseTry' }) ?? ''
+  const mealExpenseTry = useWatch({ control, name: 'mealExpenseTry' }) ?? ''
   const extraExpenseTry = useWatch({ control, name: 'extraExpenseTry' }) ?? ''
   const fieldPaidTry = useWatch({ control, name: 'fieldPaidTry' }) ?? ''
 
@@ -244,6 +247,7 @@ export function ReporterDailyReportForm({
     parseTryToKurus(hotelExpenseTry) +
     parseTryToKurus(stationeryExpenseTry) +
     parseTryToKurus(fuelExpenseTry) +
+    parseTryToKurus(mealExpenseTry) +
     parseTryToKurus(extraExpenseTry)
   const employeeExpenseKurus =
     liveFees.totalReporterEarningsKurus + liveFees.totalCameramanEarningsKurus
@@ -318,6 +322,7 @@ export function ReporterDailyReportForm({
         hotelExpenseKurus: parseTryToKurus(values.hotelExpenseTry),
         stationeryExpenseKurus: parseTryToKurus(values.stationeryExpenseTry),
         fuelExpenseKurus: parseTryToKurus(values.fuelExpenseTry),
+        mealExpenseKurus: parseTryToKurus(values.mealExpenseTry),
         extraExpenseKurus: parseTryToKurus(values.extraExpenseTry),
         fieldPaidKurus: parseTryToKurus(values.fieldPaidTry),
         totalReporterEarningsKurus: feeSummary.totalReporterEarningsKurus,
@@ -371,6 +376,7 @@ export function ReporterDailyReportForm({
           hotelExpenseTry: '',
           stationeryExpenseTry: '',
           fuelExpenseTry: '',
+          mealExpenseTry: '',
           extraExpenseTry: '',
           fieldPaidTry: '',
         })
@@ -677,7 +683,7 @@ export function ReporterDailyReportForm({
 
       <CategoryPanel
         title="Saha giderleri"
-        description="Otel, kırtasiye, benzin ve ekstra"
+        description="Otel, kırtasiye, benzin, yemek ve ekstra"
         icon={Receipt}
         tone="orange"
         compact
@@ -720,6 +726,18 @@ export function ReporterDailyReportForm({
             />
           </FormField>
           <FormField
+            label="Yemek gideri (₺)"
+            htmlFor="meal-expense"
+            error={errors.mealExpenseTry?.message}
+          >
+            <Input
+              id="meal-expense"
+              inputMode="decimal"
+              placeholder="0"
+              {...register('mealExpenseTry')}
+            />
+          </FormField>
+          <FormField
             label="Ekstra giderler (₺)"
             htmlFor="extra-expense"
             error={errors.extraExpenseTry?.message}
@@ -736,7 +754,7 @@ export function ReporterDailyReportForm({
 
       <CategoryPanel title="Gider özeti" icon={Receipt} tone="pink" compact>
         <MoneyRow
-          label="Saha giderleri (otel + kırtasiye + benzin + ekstra)"
+          label="Saha giderleri (otel + kırtasiye + benzin + yemek + ekstra)"
           valueKurus={operatingExpenseKurus}
         />
         <MoneyRow

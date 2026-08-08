@@ -50,11 +50,12 @@ function computeTotalExpense(data: Record<string, unknown>): {
   const hotel = toNonNegInt(data.hotelExpenseKurus)
   const stationery = toNonNegInt(data.stationeryExpenseKurus)
   const fuel = toNonNegInt(data.fuelExpenseKurus)
+  const meal = toNonNegInt(data.mealExpenseKurus)
   const extra = toNonNegInt(data.extraExpenseKurus)
   const operatingRaw = data.operatingExpenseKurus
   const operating =
     operatingRaw === undefined || operatingRaw === null
-      ? hotel + stationery + fuel + extra
+      ? hotel + stationery + fuel + meal + extra
       : toNonNegInt(operatingRaw)
   const reporter = toNonNegInt(data.totalReporterEarningsKurus)
   const cameraman = toNonNegInt(data.totalCameramanEarningsKurus)

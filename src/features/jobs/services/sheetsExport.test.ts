@@ -3,6 +3,7 @@ import {
   buildUpsertPayload,
   formatSheetKazanc,
   formatSheetSonDurum,
+  isSheetExportableSonDurum,
   SHEET_SON_DURUM,
 } from '@/features/jobs/services/sheetsExport'
 import type { JobDocument } from '@/features/jobs/types/job'
@@ -55,16 +56,21 @@ describe('buildUpsertPayload', () => {
     expect(payload).not.toHaveProperty('idToken')
   })
 
-  it('sets islem only for approved / cancelled (not rejected / shot)', () => {
-    expect(
-      buildUpsertPayload(minimalJob(), SHEET_SON_DURUM.rejected),
-    ).not.toHaveProperty('islem')
+  it('sets islem only for approved / cancelled (not shot)', () => {
     expect(
       buildUpsertPayload(minimalJob(), SHEET_SON_DURUM.shot),
     ).not.toHaveProperty('islem')
     expect(
       buildUpsertPayload(minimalJob(), SHEET_SON_DURUM.cancelled).islem,
     ).toBe('cancelled')
+  })
+
+  it('maps formatSheetSonDurum; rejected is not exportable to Excel', () => {
+    expect(formatSheetSonDurum('rejected')).toBe(SHEET_SON_DURUM.rejected)
+    expect(isSheetExportableSonDurum(SHEET_SON_DURUM.rejected)).toBe(false)
+    expect(isSheetExportableSonDurum(SHEET_SON_DURUM.approved)).toBe(true)
+    expect(isSheetExportableSonDurum(SHEET_SON_DURUM.cancelled)).toBe(true)
+    expect(isSheetExportableSonDurum(SHEET_SON_DURUM.shot)).toBe(true)
   })
 
   it('normalizes phone for Excel display', () => {

@@ -36,11 +36,12 @@ export function reportExpenseKurus(report: ReporterDailyReport): number {
   const hotel = Math.max(0, Number(report.hotelExpenseKurus ?? 0))
   const stationery = Math.max(0, Number(report.stationeryExpenseKurus ?? 0))
   const fuel = Math.max(0, Number(report.fuelExpenseKurus ?? 0))
+  const meal = Math.max(0, Number(report.mealExpenseKurus ?? 0))
   const extra = Math.max(0, Number(report.extraExpenseKurus ?? 0))
   const operatingStored = Number(report.operatingExpenseKurus ?? NaN)
   const operating = Number.isFinite(operatingStored) && operatingStored >= 0
     ? operatingStored
-    : hotel + stationery + fuel + extra
+    : hotel + stationery + fuel + meal + extra
   const reporter = Math.max(0, Number(report.totalReporterEarningsKurus ?? 0))
   const cameraman = Math.max(0, Number(report.totalCameramanEarningsKurus ?? 0))
   const employeeStored = Number(report.employeeExpenseKurus ?? NaN)

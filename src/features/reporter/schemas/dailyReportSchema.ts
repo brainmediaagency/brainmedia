@@ -104,6 +104,7 @@ export const dailyReportSchema = z.object({
   hotelExpenseTry: optionalMoneyTryField(),
   stationeryExpenseTry: optionalMoneyTryField(),
   fuelExpenseTry: optionalMoneyTryField(),
+  mealExpenseTry: optionalMoneyTryField(),
   extraExpenseTry: optionalMoneyTryField(),
   /** Boş bırakılırsa 0 kabul edilir. */
   fieldPaidTry: optionalMoneyTryField(),

@@ -289,6 +289,7 @@ async function main() {
         hotelExpenseKurus: 0,
         stationeryExpenseKurus: 0,
         fuelExpenseKurus: 0,
+        mealExpenseKurus: 0,
         extraExpenseKurus: 0,
         operatingExpenseKurus: 0,
         employeeExpenseKurus: 0,

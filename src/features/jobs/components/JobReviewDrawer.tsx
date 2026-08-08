@@ -9,8 +9,6 @@ import {
 } from '@/features/jobs/services/jobService'
 import {
   exportJobReviewToSheet,
-  SHEET_SON_DURUM,
-  upsertJobRowToSheet,
 } from '@/features/jobs/services/sheetsExport'
 import {
   useJobReviewFieldEdit,
@@ -221,17 +219,7 @@ export function JobReviewDrawer({
       const updated = await rejectJob(job.id, actor, reviewNote)
       onJobUpdated?.(updated)
       toast.success('İş reddedildi.')
-      void upsertJobRowToSheet(job, SHEET_SON_DURUM.rejected, {
-        reviewedByName: actor.fullName,
-        reviewNote: reviewNote ?? null,
-      }).catch((error) => {
-        toast.warning(
-          mapAppError(
-            error,
-            'Firestore kaydı tamam. Excel (Sheets) yazılamadı — Excel sekmesinden kontrol edin veya işlemi tekrar deneyin.',
-          ),
-        )
-      })
+      // Reddedilen işler Excel/Sheets’e yazılmaz (kayıt yalnızca Firestore’da).
       resetLocalState()
       onClose()
     } catch (error) {

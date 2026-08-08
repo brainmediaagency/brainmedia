@@ -23,15 +23,26 @@ export {
  * SON DURUM values written to the ops Excel (fixed template).
  * Do not invent extra labels without product approval.
  * Note: muhabire ilet does NOT write to the sheet.
+ * Rejected jobs are never exported (Firestore-only).
  */
 export const SHEET_SON_DURUM = {
   approved: 'Konfirme',
+  /** @deprecated Not written — kept only so callers cannot typo into a new label. */
   rejected: 'Reddedildi',
   cancelled: 'İptal edildi',
   shot: 'Çekildi',
 } as const
 
 export type SheetSonDurum = (typeof SHEET_SON_DURUM)[keyof typeof SHEET_SON_DURUM]
+
+/** Statuses that get an Excel row / SON DURUM update. */
+export function isSheetExportableSonDurum(sonDurum: string): boolean {
+  return (
+    sonDurum === SHEET_SON_DURUM.approved
+    || sonDurum === SHEET_SON_DURUM.cancelled
+    || sonDurum === SHEET_SON_DURUM.shot
+  )
+}
 
 /** @deprecated Prefer SheetSonDurum helpers. */
 export type SheetReviewAction = 'approved' | 'cancelled'
@@ -256,6 +267,8 @@ export async function upsertJobRowToSheet(
   overrides?: SheetExportOverrides,
 ): Promise<void> {
   if (!isSheetsWebhookConfigured()) return
+  // Product: rejected jobs stay in the app only — no Excel row / "Reddedildi" status.
+  if (!isSheetExportableSonDurum(sonDurum)) return
   await assertSheetsWebhookFresh()
   await postSheetsWebhook(buildUpsertPayload(job, sonDurum, overrides))
 }
@@ -274,6 +287,7 @@ export async function patchJobSonDurumInSheet(
   match?: { firmaAdi: string; tarih: string },
 ): Promise<void> {
   if (!isSheetsWebhookConfigured()) return
+  if (!isSheetExportableSonDurum(sonDurum)) return
   if (!match?.firmaAdi || !match?.tarih) return
 
   await assertSheetsWebhookFresh()

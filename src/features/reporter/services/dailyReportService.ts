@@ -96,13 +96,18 @@ const converter: FirestoreDataConverter<ReporterDailyReport> = {
     const hotelExpenseKurus = Number(data.hotelExpenseKurus ?? 0)
     const stationeryExpenseKurus = Number(data.stationeryExpenseKurus ?? 0)
     const fuelExpenseKurus = Number(data.fuelExpenseKurus ?? 0)
+    const mealExpenseKurus = Number(data.mealExpenseKurus ?? 0)
     const extraExpenseKurus = Number(data.extraExpenseKurus ?? 0)
     const totalReporterEarningsKurus = Number(data.totalReporterEarningsKurus ?? 0)
     const totalCameramanEarningsKurus = Number(data.totalCameramanEarningsKurus ?? 0)
     const totalVatKurus = Number(data.totalVatKurus ?? 0)
     const operatingExpenseKurus = Number(
       data.operatingExpenseKurus ??
-        hotelExpenseKurus + stationeryExpenseKurus + fuelExpenseKurus + extraExpenseKurus,
+        hotelExpenseKurus +
+          stationeryExpenseKurus +
+          fuelExpenseKurus +
+          mealExpenseKurus +
+          extraExpenseKurus,
     )
     const employeeExpenseKurus = Number(
       data.employeeExpenseKurus ?? totalReporterEarningsKurus + totalCameramanEarningsKurus,
@@ -142,6 +147,7 @@ const converter: FirestoreDataConverter<ReporterDailyReport> = {
       hotelExpenseKurus,
       stationeryExpenseKurus,
       fuelExpenseKurus,
+      mealExpenseKurus,
       extraExpenseKurus,
       operatingExpenseKurus,
       employeeExpenseKurus,
@@ -200,6 +206,7 @@ export type DailyReportWriteInput = {
   hotelExpenseKurus: number
   stationeryExpenseKurus: number
   fuelExpenseKurus: number
+  mealExpenseKurus: number
   extraExpenseKurus: number
   fieldPaidKurus: number
   totalReporterEarningsKurus: number
@@ -224,6 +231,7 @@ function reportContent(input: DailyReportWriteInput) {
   const hotelExpenseKurus = toKurusInt(input.hotelExpenseKurus)
   const stationeryExpenseKurus = toKurusInt(input.stationeryExpenseKurus)
   const fuelExpenseKurus = toKurusInt(input.fuelExpenseKurus)
+  const mealExpenseKurus = toKurusInt(input.mealExpenseKurus)
   const extraExpenseKurus = toKurusInt(input.extraExpenseKurus)
   const fieldPaidKurus = toKurusInt(input.fieldPaidKurus)
   const totalReporterEarningsKurus = toKurusInt(input.totalReporterEarningsKurus)
@@ -235,7 +243,11 @@ function reportContent(input: DailyReportWriteInput) {
     companies.reduce((sum, company) => sum + company.vatBaseKurus, 0),
   )
   const operatingExpenseKurus =
-    hotelExpenseKurus + stationeryExpenseKurus + fuelExpenseKurus + extraExpenseKurus
+    hotelExpenseKurus +
+    stationeryExpenseKurus +
+    fuelExpenseKurus +
+    mealExpenseKurus +
+    extraExpenseKurus
   const employeeExpenseKurus = totalReporterEarningsKurus + totalCameramanEarningsKurus
   // Toplam gider = saha giderleri + ücretler (KDV gelire eklenir, gidere değil)
   const totalExpenseKurus = operatingExpenseKurus + employeeExpenseKurus
@@ -249,6 +261,7 @@ function reportContent(input: DailyReportWriteInput) {
     hotelExpenseKurus,
     stationeryExpenseKurus,
     fuelExpenseKurus,
+    mealExpenseKurus,
     extraExpenseKurus,
     fieldPaidKurus,
     totalReporterEarningsKurus,

@@ -22,6 +22,7 @@ function validReport(overrides: Record<string, unknown> = {}) {
     hotelExpenseTry: '',
     stationeryExpenseTry: '',
     fuelExpenseTry: '',
+    mealExpenseTry: '',
     extraExpenseTry: '',
     fieldPaidTry: '',
     ...overrides,

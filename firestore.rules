@@ -1522,6 +1522,7 @@ service cloud.firestore {
               'hotelExpenseKurus',
               'stationeryExpenseKurus',
               'fuelExpenseKurus',
+              'mealExpenseKurus',
               'extraExpenseKurus',
               'operatingExpenseKurus',
               'employeeExpenseKurus',
