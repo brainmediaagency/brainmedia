@@ -380,7 +380,6 @@ export function VoiceRecordingPanel({
           size={compact ? 'sm' : 'md'}
           variant="secondary"
           onClick={() => downloadVoiceRecording(recording)}
-          disabled={saving}
         >
           <Download className="size-4" aria-hidden="true" />
           İndir

@@ -41,13 +41,11 @@ describe('direct Drive upload helpers (v28)', () => {
     expect(parseResumableRangeEnd('garbage')).toBeNull()
   })
 
-  it('scales the PUT stall guard with size, never below 2 minutes', () => {
-    expect(directPutTimeoutMs(1)).toBe(120_000)
-    // 30 min voice at 24 kbps ≈ 5.4 MB → ~173 s at the 32 KB/s floor
-    const thirtyMinVoice = 5.4 * 1024 * 1024
-    expect(directPutTimeoutMs(thirtyMinVoice)).toBeGreaterThan(120_000)
-    expect(directPutTimeoutMs(thirtyMinVoice)).toBeLessThan(300_000)
-    // Worst-case 29 MB still gets a finite, generous window
-    expect(directPutTimeoutMs(29 * 1024 * 1024)).toBeLessThan(1_200_000)
+  it('scales the PUT stall guard with size, never below 45s, caps slice at 3m', () => {
+    expect(directPutTimeoutMs(1)).toBe(45_000)
+    // One 512 KB direct slice at ~16 KB/s floor → 45s floor still applies
+    expect(directPutTimeoutMs(512 * 1024)).toBe(45_000)
+    // Unusually large single payload still hard-capped
+    expect(directPutTimeoutMs(80 * 1024 * 1024)).toBe(180_000)
   })
 })

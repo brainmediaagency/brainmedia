@@ -19,10 +19,10 @@ export const MAX_RECORDING_MINUTES = Math.round(MAX_RECORDING_MS / 60_000)
 export const RECORDING_LIMIT_WARN_MS = 2 * 60 * 1000
 
 /**
- * Target speech bitrate for long takes (30 min → roughly 5–6 MB at 24 kbps).
+ * Target speech bitrate for long takes (30 min → roughly 3.5–5 MB at 16 kbps).
  * Browsers may clamp; still far smaller than unconstrained MediaRecorder defaults.
  */
-export const VOICE_AUDIO_BITS_PER_SECOND = 24_000
+export const VOICE_AUDIO_BITS_PER_SECOND = 16_000
 
 /** Chunk interval: continuous flush so stop never depends on a single empty blob. */
 export const VOICE_CHUNK_INTERVAL_MS = 1000
@@ -461,7 +461,10 @@ class VoiceRecorderEngine {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-        },
+          channelCount: 1,
+          // Prefer speech-rate capture when the engine honors the constraint.
+          sampleRate: { ideal: 16_000 },
+        } as MediaTrackConstraints,
       })
       if (sessionId !== this.sessionId) {
         stream.getTracks().forEach((t) => t.stop())

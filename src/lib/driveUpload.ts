@@ -36,23 +36,29 @@ export type DriveUploadProgress = {
 export const DRIVE_SINGLE_SHOT_MAX_BYTES = 1.5 * 1024 * 1024
 
 /**
- * Raw binary per resumable chunk (~128 KB).
- * Fallback path only (webhook v27 uploadFileInit/Chunk) when the direct
- * browser → Drive PUT is unavailable (old webhook / blocked CORS).
+ * Raw binary per resumable chunk (~256 KB).
+ * Fallback path only (webhook uploadFileInit/Chunk) when the direct
+ * browser → Drive PUT is unavailable (blocked CORS).
  */
-export const DRIVE_CHUNK_BYTES = 128 * 1024
+export const DRIVE_CHUNK_BYTES = 256 * 1024
 
 /** Hard ceiling: protects tab memory + Apps Script / Drive sessions. */
 export const DRIVE_HARD_MAX_BYTES = 80 * 1024 * 1024
 
+/**
+ * Browser → Drive binary slice size for v28 direct path.
+ * Small enough that progress ticks often and a failed slice can re-start quickly.
+ */
+export const DRIVE_DIRECT_CHUNK_BYTES = 512 * 1024
+
 /** Full re-init of resumable when session drops mid long voice. */
 const RESUMABLE_FULL_RESTARTS = 3
 
-/** Direct upload: fresh Drive sessions to try before giving up / falling back. */
-const DIRECT_SESSION_ATTEMPTS = 3
+/** Direct path: one CORS-failed first chunk aborts the whole direct path. */
+const DIRECT_SESSION_ATTEMPTS = 2
 
-/** Direct upload: PUT/resume attempts within one Drive session. */
-const DIRECT_PUT_ATTEMPTS = 6
+/** Retries for a single 512 KB slice before marking the session lost. */
+const DIRECT_CHUNK_ATTEMPTS = 3
 
 const WEBHOOK_POST_ATTEMPTS = 5
 const WEBHOOK_CHUNK_ATTEMPTS = 5
@@ -630,7 +636,7 @@ async function uploadFileResumableOnce(input: {
 
 /**
  * "Range: bytes=0-12345" → 12345 (last committed byte). Null when missing —
- * cross-origin the header may not be exposed; caller then restarts clean.
+ * cross-origin the header may not be exposed; caller then uses known end.
  */
 export function parseResumableRangeEnd(header: string | null | undefined): number | null {
   const match = String(header ?? '').match(/bytes=\d+-(\d+)/)
@@ -639,9 +645,16 @@ export function parseResumableRangeEnd(header: string | null | undefined): numbe
   return Number.isFinite(end) && end >= 0 ? end : null
 }
 
-/** Generous stall guard: assume ≥ ~32 KB/s effective, never below 2 minutes. */
+/**
+ * Stall guard per slice. Short enough that CORS / dead sessions fall back
+ * quickly instead of sitting on the UI at 2% for many minutes.
+ */
 export function directPutTimeoutMs(bytes: number): number {
-  return Math.max(120_000, Math.ceil(bytes / (32 * 1024)) * 1000)
+  // Never under 45s, about ≥16 KB/s, hard ceiling 3 minutes for one slice.
+  return Math.min(
+    180_000,
+    Math.max(45_000, Math.ceil(bytes / (16 * 1024)) * 1000),
+  )
 }
 
 type DirectPutResponse = {
@@ -666,11 +679,15 @@ function putToDriveSession(input: {
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', input.sessionUrl)
     xhr.timeout = input.timeoutMs
+    // Only set Content-Type when uploading bytes (status-query uses empty body).
+    if (input.body) {
+      xhr.setRequestHeader(
+        'Content-Type',
+        input.mimeType || 'application/octet-stream',
+      )
+    }
     if (input.contentRange) {
       xhr.setRequestHeader('Content-Range', input.contentRange)
-    }
-    if (input.body) {
-      xhr.setRequestHeader('Content-Type', input.mimeType)
     }
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) input.onProgress?.(event.loaded)
@@ -699,9 +716,38 @@ function directResultFromFileJson(text: string): string | null {
 }
 
 /**
- * Upload the whole blob into one Drive session, resuming from the last
- * committed byte after network drops. Returns the Drive fileId.
- * Throws Error('session_lost') when the session must be re-initialized.
+ * Quick CORS / session health check. Empty PUT with Content-Range: bytes * /N
+ * should return 308 before any bytes leave the phone. Network error here means
+ * the browser cannot talk to Drive’s session URL — skip the direct path.
+ */
+async function probeDirectSession(
+  sessionUrl: string,
+  totalBytes: number,
+  mimeType: string,
+): Promise<'ok' | 'blocked' | 'dead'> {
+  try {
+    const probe = await putToDriveSession({
+      sessionUrl,
+      body: null,
+      contentRange: `bytes */${totalBytes}`,
+      mimeType,
+      timeoutMs: 20_000,
+    })
+    if (probe.status === 308) return 'ok'
+    if (probe.status >= 200 && probe.status < 300) return 'ok'
+    if (probe.status === 404 || probe.status === 410) return 'dead'
+    // Unexpected statuses usually mean the session is not CORS-usable.
+    return 'blocked'
+  } catch {
+    return 'blocked'
+  }
+}
+
+/**
+ * Slice-by-slice binary upload into one Drive resumable session.
+ * Tracks offset from known sent ranges (does not depend on CORS exposing Range).
+ * Throws Error('blocked') when the first slice cannot leave the device (CORS).
+ * Throws Error('session_lost') when the session must be re-opened.
  */
 async function putBlobWithResume(input: {
   sessionUrl: string
@@ -712,67 +758,98 @@ async function putBlobWithResume(input: {
   const total = input.file.size
   let offset = 0
 
-  for (let attempt = 0; attempt < DIRECT_PUT_ATTEMPTS; attempt += 1) {
-    if (attempt > 0) await sleep(500 * attempt)
+  while (offset < total) {
+    const endExclusive = Math.min(offset + DRIVE_DIRECT_CHUNK_BYTES, total)
+    const endInclusive = endExclusive - 1
+    const slice = input.file.slice(offset, endExclusive)
+    let lastError: 'network' | 'timeout' | 'bad' | null = null
 
-    let response: DirectPutResponse
-    try {
-      response = await putToDriveSession({
-        sessionUrl: input.sessionUrl,
-        body: offset === 0 ? input.file : input.file.slice(offset),
-        contentRange:
-          offset === 0 ? null : `bytes ${offset}-${total - 1}/${total}`,
-        mimeType: input.mimeType,
-        timeoutMs: directPutTimeoutMs(total - offset),
-        onProgress: (loaded) => input.onBytes?.(offset + loaded),
-      })
-    } catch {
-      // Network drop mid-PUT: ask Drive how much it committed.
-      let probe: DirectPutResponse | null = null
+    for (let attempt = 0; attempt < DIRECT_CHUNK_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await sleep(400 * attempt)
+
+      input.onBytes?.(offset)
+
+      let response: DirectPutResponse
       try {
-        probe = await putToDriveSession({
+        response = await putToDriveSession({
           sessionUrl: input.sessionUrl,
-          body: null,
-          contentRange: `bytes */${total}`,
+          body: slice,
+          contentRange: `bytes ${offset}-${endInclusive}/${total}`,
           mimeType: input.mimeType,
-          timeoutMs: 20_000,
+          timeoutMs: directPutTimeoutMs(slice.size),
+          onProgress: (loaded) => input.onBytes?.(offset + loaded),
         })
-      } catch {
-        // Probe also failed — retry loop (or exhaust attempts).
+      } catch (error) {
+        lastError =
+          error instanceof Error && error.message === 'timeout'
+            ? 'timeout'
+            : 'network'
         continue
       }
+
+      lastError = null
+
+      if (response.status >= 200 && response.status < 300) {
+        const fileId = directResultFromFileJson(response.text)
+        if (fileId) {
+          input.onBytes?.(total)
+          return fileId
+        }
+        // 2xx body without id — treat as lost session.
+        throw new Error('session_lost')
+      }
+
+      if (response.status === 308) {
+        // Drive accepted this slice. Prefer header offset; otherwise advance
+        // by the range we just sent (works when Range is hidden by CORS).
+        const committedEnd = parseResumableRangeEnd(response.rangeHeader)
+        offset = committedEnd !== null ? committedEnd + 1 : endExclusive
+        input.onBytes?.(Math.min(offset, total))
+        lastError = null
+        break
+      }
+
+      if (response.status === 404 || response.status === 410) {
+        throw new Error('session_lost')
+      }
+
+      lastError = 'bad'
+    }
+
+    if (lastError === null && offset >= endExclusive) {
+      // Advanced via 308 — keep going.
+      continue
+    }
+
+    // First slice never left the phone → CORS / network block. Bail fast.
+    if (offset === 0) {
+      throw new Error('blocked')
+    }
+
+    // Mid-upload: try status probe once, then re-open session.
+    try {
+      const probe = await putToDriveSession({
+        sessionUrl: input.sessionUrl,
+        body: null,
+        contentRange: `bytes */${total}`,
+        mimeType: input.mimeType,
+        timeoutMs: 15_000,
+      })
       if (probe.status >= 200 && probe.status < 300) {
         const fileId = directResultFromFileJson(probe.text)
         if (fileId) return fileId
-        throw new Error('session_lost')
       }
       if (probe.status === 308) {
         const committedEnd = parseResumableRangeEnd(probe.rangeHeader)
-        // Range unreadable → committed offset unknown; resending into the
-        // same session could corrupt the file. Force a fresh session.
-        if (committedEnd === null && offset > 0) throw new Error('session_lost')
-        offset = committedEnd === null ? 0 : committedEnd + 1
-        continue
+        if (committedEnd !== null) {
+          offset = committedEnd + 1
+          input.onBytes?.(offset)
+          continue
+        }
       }
-      // 4xx/410 probe: session is gone.
-      throw new Error('session_lost')
+    } catch {
+      /* force new session */
     }
-
-    if (response.status >= 200 && response.status < 300) {
-      const fileId = directResultFromFileJson(response.text)
-      if (fileId) {
-        input.onBytes?.(total)
-        return fileId
-      }
-      throw new Error('session_lost')
-    }
-    if (response.status === 308) {
-      const committedEnd = parseResumableRangeEnd(response.rangeHeader)
-      if (committedEnd === null && offset > 0) throw new Error('session_lost')
-      offset = committedEnd === null ? 0 : committedEnd + 1
-      continue
-    }
-    // 4xx/410: session dead or rejected — needs a fresh session.
     throw new Error('session_lost')
   }
 
@@ -781,9 +858,9 @@ async function putBlobWithResume(input: {
 
 /**
  * v28 direct path: webhook opens the Drive resumable session (with this
- * page's Origin for CORS), browser PUTs the raw binary straight to
- * googleapis.com, webhook then sets link sharing. Returns null when the
- * deployed webhook does not support uploadDirectInit (caller falls back).
+ * page's Origin for CORS), browser PUTs raw 512 KB slices to googleapis.com,
+ * webhook then sets link sharing. Returns null when CORS/old webhook prevents
+ * it so the chunked Apps Script path can take over.
  */
 async function uploadFileDirect(input: {
   file: Blob
@@ -797,17 +874,21 @@ async function uploadFileDirect(input: {
     return null
   }
   const total = input.file.size
+  if (!(total > 0)) return null
   const folderPath = input.folderPath?.trim() || ''
+  const report = (ratio: number, phase: DriveUploadProgress['phase'] = 'uploading') => {
+    input.onProgress?.({
+      phase,
+      ratio,
+      fileName: input.fileName,
+    })
+  }
 
   let fileId: string | null = null
   for (let round = 0; round < DIRECT_SESSION_ATTEMPTS && !fileId; round += 1) {
-    if (round > 0) await sleep(700 * round)
+    if (round > 0) await sleep(500 * round)
 
-    input.onProgress?.({
-      phase: 'uploading',
-      ratio: 0.02,
-      fileName: input.fileName,
-    })
+    report(0.03)
 
     let init: Record<string, unknown>
     try {
@@ -822,13 +903,25 @@ async function uploadFileDirect(input: {
         origin: window.location.origin,
       })
     } catch {
+      // Webhook unreachable/unreadable — let the outer caller try legacy path.
       return null
     }
 
     const sessionUrl = String(init.sessionUrl ?? '')
     if (init.ok !== true || !sessionUrl.startsWith('https://')) {
-      // Old webhook (Invalid request / unknown action) or Drive init error.
+      // Old webhook or Drive init error.
       return null
+    }
+
+    report(0.05)
+
+    const health = await probeDirectSession(sessionUrl, total, input.mimeType)
+    if (health === 'blocked') {
+      // Browser cannot reach googleapis session (CORS / network). Fall back.
+      return null
+    }
+    if (health === 'dead') {
+      continue
     }
 
     try {
@@ -837,40 +930,38 @@ async function uploadFileDirect(input: {
         file: input.file,
         mimeType: input.mimeType,
         onBytes: (sent) => {
-          input.onProgress?.({
-            phase: 'uploading',
-            ratio: 0.03 + (sent / total) * 0.92,
-            fileName: input.fileName,
-          })
+          const safe = Math.min(total, Math.max(0, sent))
+          report(0.06 + (safe / total) * 0.9)
         },
       })
-    } catch {
+    } catch (error) {
       fileId = null
-      // First session failing straight away often means CORS is blocked in
-      // this environment — bail to the chunked webhook fallback quickly.
-      if (round === 0) return null
+      const code = error instanceof Error ? error.message : ''
+      // CORS/blocked or any first-session failure → fall back immediately.
+      if (code === 'blocked' || round === 0) return null
     }
   }
 
   if (!fileId) return null
 
-  input.onProgress?.({
-    phase: 'finishing',
-    ratio: 0.97,
-    fileName: input.fileName,
-  })
+  report(0.97, 'finishing')
 
-  const finish = await postWebhookForm({
-    action: 'uploadDirectFinish',
-    fileId,
-  })
-  const result = resultFromParsed(finish)
-  input.onProgress?.({
-    phase: 'finishing',
-    ratio: 1,
-    fileName: input.fileName,
-  })
-  return result
+  try {
+    const finish = await postWebhookForm({
+      action: 'uploadDirectFinish',
+      fileId,
+    })
+    const result = resultFromParsed(finish)
+    report(1, 'finishing')
+    return result
+  } catch {
+    // File is already on Drive; still surface success if finish fails.
+    return {
+      fileId,
+      url: `https://drive.google.com/uc?export=view&id=${fileId}`,
+      webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+    }
+  }
 }
 
 function mapUnknownChunkError_(error: unknown): string {
