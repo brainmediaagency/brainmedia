@@ -13,7 +13,9 @@ Same Apps Script Web App handles:
    - Legacy English names (`Hiring`, `ZReports`, …) are renamed on next upload after **v18** deploy
 3. **Drive quota** → account used/limit (`action: "driveStorageUsage"`)
 4. **OneSignal push** → all subscribed roles / optional externalIds (`action: "pushNotify"`) — see [`../onesignal/README.md`](../onesignal/README.md)
-5. **Large voice** → `uploadFileInit` + `uploadFileChunk` (v24+; **v27** stores sessions in ScriptProperties so multi-minute / ~45 dk speech survives without Blaze/Storage)
+5. **Large voice (30 dk max)** → **v28** `uploadDirectInit` + `uploadDirectFinish`: webhook opens a Drive resumable session with the browser's `origin`, the client PUTs the raw binary **directly to googleapis.com** (no base64, no chunk hops), webhook then sets link sharing. Fastest + most reliable path. Legacy `uploadFileInit` + `uploadFileChunk` (v24–v27) kept as automatic fallback for old deployments.
+
+> **v28 deploy required for fast voice upload:** paste latest `Code.gs` → **Deploy → Manage deployments → Edit → New version → Deploy**. Old webhook keeps working (client falls back to chunked path), only slower.
 
 ## Wipe BrainUploads (admin)
 

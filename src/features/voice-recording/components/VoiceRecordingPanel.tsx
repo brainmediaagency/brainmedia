@@ -21,6 +21,7 @@ import {
 import {
   downloadVoiceRecording,
   isNearRecordingLimit,
+  MAX_RECORDING_MINUTES,
   MAX_RECORDING_MS,
   useVoiceRecorder,
   voiceRecorderErrorMessage,
@@ -186,7 +187,7 @@ export function VoiceRecordingPanel({
     const key = recordingDedupeKey(recording)
     if (maxDurationToastKeyRef.current === key) return
     maxDurationToastKeyRef.current = key
-    toast.message('45 dakika doldu — kayıt otomatik durduruldu.', {
+    toast.message(`${MAX_RECORDING_MINUTES} dakika doldu — kayıt otomatik durduruldu.`, {
       description: autoSaveOnStop
         ? 'Ses sisteme yazılıyor; pencereyi kapatmayın.'
         : 'Kaydet ile sisteme yazabilirsiniz.',
@@ -245,8 +246,8 @@ export function VoiceRecordingPanel({
             compact ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm',
           )}
         >
-          En fazla 45 dakika kayıt alınabilir; süre dolduğu için kayıt
-          otomatik durduruldu
+          En fazla {MAX_RECORDING_MINUTES} dakika kayıt alınabilir; süre
+          dolduğu için kayıt otomatik durduruldu
           {autoSaveOnStop ? ' ve sisteme yazılıyor.' : '.'}
         </p>
       ) : null}
@@ -311,7 +312,7 @@ export function VoiceRecordingPanel({
       detail={
         uploadUi.detail ||
         companyName.trim() ||
-        'Uzun kayıtlar parça parça yüklenir; lütfen bekleyin.'
+        'Ses doğrudan Drive’a yükleniyor; lütfen bekleyin.'
       }
       percent={uploadUi.percent}
     />
@@ -405,8 +406,8 @@ export function VoiceRecordingPanel({
             <p className="text-sm font-medium text-text-primary">Ses kaydı</p>
             <p className="text-xs text-text-secondary">
               {autoSaveOnStop
-                ? 'En fazla 45 dk · Durdur = sisteme yaz (uzun kayıtlar parça parça)'
-                : 'En fazla 45 dakika'}
+                ? `En fazla ${MAX_RECORDING_MINUTES} dk · Durdur = sisteme yaz`
+                : `En fazla ${MAX_RECORDING_MINUTES} dakika`}
             </p>
           </div>
           <div
@@ -464,8 +465,8 @@ export function VoiceRecordingPanel({
       title="Ses kaydı"
       description={
         autoSaveOnStop
-          ? 'Başlat → konuş → Durdur (en fazla 45 dk). Kayıt otomatik Drive’a yazılır; süre dolunca kayıt otomatik biter.'
-          : 'En fazla 45 dakika. Durdur sonrası Kaydet ile sisteme yazılır.'
+          ? `Başlat → konuş → Durdur (en fazla ${MAX_RECORDING_MINUTES} dk). Kayıt otomatik Drive’a yazılır; süre dolunca kayıt otomatik biter.`
+          : `En fazla ${MAX_RECORDING_MINUTES} dakika. Durdur sonrası Kaydet ile sisteme yazılır.`
       }
       defaultOpen
     >
@@ -493,7 +494,7 @@ export function VoiceRecordingPanel({
                 {formatElapsedAgainstLimit(displayElapsedMs)}
               </p>
               <p className="text-xs text-text-secondary">
-                En fazla 45 dakika
+                En fazla {MAX_RECORDING_MINUTES} dakika
                 {autoSaveOnStop ? ' · Durdur = sisteme yaz' : ''}
                 {nearLimit ? ' · süre dolmak üzere' : ''}
               </p>

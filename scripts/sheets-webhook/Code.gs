@@ -30,6 +30,11 @@
  *      multi-minute voice uploads; CacheService alone was dropping mid-way).
  *      Soft-cleanup of stale resume keys on init. Spark/Drive only — no
  *      Firebase Storage / Blaze.
+ * v28: uploadDirectInit + uploadDirectFinish — browser uploads the file
+ *      binary DIRECTLY to Drive's resumable session URL (no base64, no
+ *      per-chunk webhook round-trips). Init passes the browser Origin so
+ *      Drive answers the client's CORS PUTs; finish sets sharing + links.
+ *      Old chunked path (uploadFileInit/Chunk) kept as fallback.
  *
  * SON DURUM values (only):
  *   Konfirme | Çekildi | İptal edildi
@@ -54,8 +59,8 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v27'
-var SCRIPT_VERSION = 'v27'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v28'
+var SCRIPT_VERSION = 'v28'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
@@ -223,6 +228,12 @@ function doPost(e) {
     if (body.action === 'uploadFileChunk') {
       return handleUploadChunk_(body)
     }
+    if (body.action === 'uploadDirectInit') {
+      return handleUploadDirectInit_(body)
+    }
+    if (body.action === 'uploadDirectFinish') {
+      return handleUploadDirectFinish_(body)
+    }
     if (body.action === 'trashDriveFile') {
       return handleTrashDriveFile_(body)
     }
@@ -265,7 +276,7 @@ function doPost(e) {
     return jsonResponse_({
       ok: false,
       error:
-        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadFileInit/uploadFileChunk/trashDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
+        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadFileInit/uploadFileChunk/uploadDirectInit/uploadDirectFinish/trashDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     }, 400)
@@ -304,6 +315,8 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'uploadFile',
         'uploadFileInit',
         'uploadFileChunk',
+        'uploadDirectInit',
+        'uploadDirectFinish',
         'trashDriveFile',
         'uploadResult',
         'driveStorageUsage',
@@ -444,6 +457,8 @@ function roleAllowedForAction_(action, role) {
     action === 'uploadFile' ||
     action === 'uploadFileInit' ||
     action === 'uploadFileChunk' ||
+    action === 'uploadDirectInit' ||
+    action === 'uploadDirectFinish' ||
     action === 'uploadResult' ||
     action === 'driveStorageUsage' ||
     action === 'trashDriveFile'
@@ -1137,6 +1152,168 @@ function handleUploadChunk_(body) {
     var message = err && err.message ? String(err.message) : 'Chunk upload failed'
     return jsonResponse_({ ok: false, error: message }, 500)
   }
+}
+
+/**
+ * v28 — Direct browser → Drive upload.
+ * Opens a Drive v3 resumable session ON BEHALF OF the browser: the client's
+ * Origin is forwarded so Drive's session URL answers the browser's CORS
+ * preflight + PUT. The session URL is returned to the client, which PUTs the
+ * raw binary straight to googleapis.com (no base64, no webhook chunk hops,
+ * no Apps Script 6-minute execution limit on the transfer itself).
+ */
+function handleUploadDirectInit_(body) {
+  var totalBytes = Number(body.totalBytes || 0)
+  if (
+    !(totalBytes > 0) ||
+    totalBytes > 80 * 1024 * 1024 ||
+    totalBytes !== Math.floor(totalBytes)
+  ) {
+    return jsonResponse_({ ok: false, error: 'Invalid size' }, 400)
+  }
+  if (!body.fileName) {
+    return jsonResponse_({ ok: false, error: 'Missing fileName' }, 400)
+  }
+  var origin = String(body.origin || '').trim()
+  if (
+    !/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(origin) &&
+    !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)
+  ) {
+    return jsonResponse_({ ok: false, error: 'Invalid origin' }, 400)
+  }
+
+  try {
+    var folderKey = body.folder || 'misc'
+    var subName = FOLDER_NAMES[folderKey] || 'Diğer'
+    var folder = getOrCreateUploadFolder_(subName, folderKey)
+    var folderPath = String(body.folderPath || '').trim()
+    if (folderPath) {
+      var pathParts = folderPath.split('/')
+      for (var pi = 0; pi < pathParts.length; pi += 1) {
+        var part = String(pathParts[pi] || '')
+          .trim()
+          .replace(/[\\/]+/g, '')
+          .slice(0, 120)
+        if (part) {
+          folder = getOrCreateFolderByName_(folder, part)
+        }
+      }
+    }
+
+    var mimeType = String(body.mimeType || 'application/octet-stream').slice(0, 120)
+    var fileName = String(body.fileName).slice(0, 180)
+    var metadata = {
+      name: fileName,
+      parents: [folder.getId()],
+    }
+    var oauth = ScriptApp.getOAuthToken()
+    var resp = UrlFetchApp.fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true',
+      {
+        method: 'post',
+        contentType: 'application/json; charset=UTF-8',
+        headers: {
+          Authorization: 'Bearer ' + oauth,
+          Origin: origin,
+          'X-Upload-Content-Type': mimeType,
+          'X-Upload-Content-Length': String(totalBytes),
+        },
+        payload: JSON.stringify(metadata),
+        muteHttpExceptions: true,
+      },
+    )
+    var code = resp.getResponseCode()
+    if (code < 200 || code >= 300) {
+      return jsonResponse_(
+        {
+          ok: false,
+          error: 'Drive direct session failed',
+          detail: String(resp.getContentText() || '').substring(0, 280),
+        },
+        502,
+      )
+    }
+    var headers = resp.getAllHeaders()
+    var location =
+      headers.Location ||
+      headers.location ||
+      headers['Location'] ||
+      headers['location']
+    if (!location) {
+      return jsonResponse_({ ok: false, error: 'No resumable location' }, 502)
+    }
+    return jsonResponse_({
+      ok: true,
+      direct: true,
+      sessionUrl: String(location),
+      totalBytes: totalBytes,
+    })
+  } catch (err) {
+    var message = err && err.message ? String(err.message) : 'Direct init failed'
+    return jsonResponse_({ ok: false, error: message }, 500)
+  }
+}
+
+/**
+ * v28 — After the browser finished its direct PUT, set link sharing and
+ * return the canonical URLs. Only files under the upload root are accepted.
+ */
+function handleUploadDirectFinish_(body) {
+  var fileId = String(body.fileId || '').trim()
+  if (!fileId || fileId.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    return jsonResponse_({ ok: false, error: 'Invalid fileId' }, 400)
+  }
+  try {
+    var file = DriveApp.getFileById(fileId)
+    if (!isFileUnderUploadRoot_(file)) {
+      return jsonResponse_({ ok: false, error: 'File outside upload root' }, 403)
+    }
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW)
+    } catch (shareErr) {
+      // Best-effort; link may still work for signed-in users.
+    }
+    var webView = ''
+    try {
+      webView = file.getUrl()
+    } catch (uErr) {
+      webView = 'https://drive.google.com/file/d/' + fileId + '/view'
+    }
+    return jsonResponse_({
+      ok: true,
+      done: true,
+      fileId: fileId,
+      url: 'https://drive.google.com/uc?export=view&id=' + fileId,
+      webViewLink: webView,
+    })
+  } catch (err) {
+    var message = err && err.message ? String(err.message) : 'Direct finish failed'
+    return jsonResponse_({ ok: false, error: message }, 500)
+  }
+}
+
+/** Walk parent chain (max 8 levels) — file must live under the upload root. */
+function isFileUnderUploadRoot_(file) {
+  var rootName =
+    PropertiesService.getScriptProperties().getProperty('DRIVE_ROOT_FOLDER') ||
+    DEFAULT_DRIVE_ROOT
+  try {
+    var parents = file.getParents()
+    var frontier = []
+    while (parents.hasNext()) frontier.push(parents.next())
+    for (var depth = 0; depth < 8 && frontier.length > 0; depth += 1) {
+      var nextFrontier = []
+      for (var i = 0; i < frontier.length; i += 1) {
+        if (frontier[i].getName() === rootName) return true
+        var up = frontier[i].getParents()
+        while (up.hasNext()) nextFrontier.push(up.next())
+      }
+      frontier = nextFrontier
+    }
+  } catch (walkErr) {
+    return false
+  }
+  return false
 }
 
 var RESUME_PROP_PREFIX_ = 'uresume:'

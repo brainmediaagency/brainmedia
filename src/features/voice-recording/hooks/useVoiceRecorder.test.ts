@@ -11,9 +11,9 @@ import {
   voiceRecorderErrorMessage,
 } from '@/features/voice-recording/services/voiceRecorderEngine'
 
-describe('voice recorder 45-minute cap (Drive / Spark)', () => {
-  it('hard-caps at 45 minutes', () => {
-    expect(MAX_RECORDING_MS).toBe(45 * 60 * 1000)
+describe('voice recorder 30-minute cap (Drive / Spark)', () => {
+  it('hard-caps at 30 minutes', () => {
+    expect(MAX_RECORDING_MS).toBe(30 * 60 * 1000)
   })
 
   it('starts MediaRecorder with a steady chunk interval', () => {
@@ -22,7 +22,7 @@ describe('voice recorder 45-minute cap (Drive / Spark)', () => {
     expect(VOICE_CHUNK_INTERVAL_MS).toBeGreaterThanOrEqual(500)
   })
 
-  it('clamps elapsed to the 45-minute product max', () => {
+  it('clamps elapsed to the 30-minute product max', () => {
     const over = MAX_RECORDING_MS + 90_000
     expect(clampRecordingDurationMs(over)).toBe(MAX_RECORDING_MS)
     expect(clampRecordingDurationMs(MAX_RECORDING_MS)).toBe(MAX_RECORDING_MS)

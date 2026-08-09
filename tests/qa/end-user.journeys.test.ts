@@ -88,11 +88,14 @@ describe('QA · journey · management reviews notifications', () => {
 })
 
 describe('QA · journey · muhabir daily cash', () => {
-  it('net cash is fieldPaid − expense', () => {
+  it('net cash is fieldPaid − expense (itemized; legacy totalExpense ignored)', () => {
     expect(
       reportNetCashKurus({
         fieldPaidKurus: 100_00,
-        totalExpenseKurus: 40_00,
+        fuelExpenseKurus: 25_00,
+        mealExpenseKurus: 15_00,
+        // Legacy field may include VAT — expense always recomputed from items.
+        totalExpenseKurus: 99_00,
       }),
     ).toBe(60_00)
   })

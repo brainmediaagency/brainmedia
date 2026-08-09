@@ -98,10 +98,10 @@ describe('QA · UI Button UX', () => {
 })
 
 describe('QA · UI usePageTab deep-link', () => {
-  it('falls back when tab id invalid (e.g. ?tab=cash on viewer)', () => {
+  it('falls back when tab id invalid (e.g. ?tab=olmayan on viewer)', () => {
     const viewerIds = REPORTER_VIEWER_SECTIONS.map((s) => s.id)
     render(
-      <MemoryRouter initialEntries={['/reporter?tab=cash']}>
+      <MemoryRouter initialEntries={['/reporter?tab=olmayan']}>
         <PageTabProbe tabs={viewerIds} defaultTab="jobs" />
       </MemoryRouter>,
     )

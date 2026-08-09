@@ -9,14 +9,17 @@ import {
   type ScreenWakeLock,
 } from '@/lib/screenWakeLock'
 
-/** Hard product cap: Spark + Drive path targets ~8–12 MB speech at 24 kbps. */
-export const MAX_RECORDING_MS = 45 * 60 * 1000
+/** Hard product cap: 30 min ≈ 5–6 MB speech at 24 kbps (direct Drive PUT). */
+export const MAX_RECORDING_MS = 30 * 60 * 1000
+
+/** Whole minutes of the cap — single source for UI copy. */
+export const MAX_RECORDING_MINUTES = Math.round(MAX_RECORDING_MS / 60_000)
 
 /** Last N ms of the cap: warn in UI (color). */
 export const RECORDING_LIMIT_WARN_MS = 2 * 60 * 1000
 
 /**
- * Target speech bitrate for long takes (45 min → roughly 8–12 MB at 24 kbps).
+ * Target speech bitrate for long takes (30 min → roughly 5–6 MB at 24 kbps).
  * Browsers may clamp; still far smaller than unconstrained MediaRecorder defaults.
  */
 export const VOICE_AUDIO_BITS_PER_SECOND = 24_000
