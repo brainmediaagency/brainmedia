@@ -24,6 +24,14 @@ describe('generateTemporaryPassword', () => {
 })
 
 describe('password reset permissions', () => {
+  it('allows İK to reset media_planning / reporter / HR', () => {
+    expect(isAccountAdminRole('human_resources')).toBe(true)
+    expect(canManageRole('human_resources', 'media_planning')).toBe(true)
+    expect(canManageRole('human_resources', 'reporter')).toBe(true)
+    expect(canManageRole('human_resources', 'human_resources')).toBe(true)
+    expect(canManageRole('human_resources', 'management')).toBe(false)
+  })
+
   it('allows management to create şef accounts', () => {
     expect(canManageRole('management', 'sef')).toBe(true)
     expect(canManageRole('coordinator', 'sef')).toBe(false)
