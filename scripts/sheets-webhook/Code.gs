@@ -71,6 +71,7 @@ var ROLES_SHEET = {
   media_planning: true,
   coordinator: true,
   management: true,
+  sef: true,
 }
 var ROLES_DRIVE = {
   reporter: true,
@@ -79,6 +80,7 @@ var ROLES_DRIVE = {
   coordinator: true,
   management: true,
   kameraman: true,
+  sef: true,
 }
 /** Callers of notify* → pushNotify (audience default = all five role tags; optional externalIds). */
 var ROLES_PUSH = {
@@ -88,6 +90,7 @@ var ROLES_PUSH = {
   coordinator: true,
   management: true,
   kameraman: true,
+  sef: true,
 }
 
 /**

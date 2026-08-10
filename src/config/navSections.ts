@@ -58,6 +58,13 @@ export const COORDINATOR_SECTIONS = [
   { id: 'excel', label: 'Excel', icon: FileSpreadsheet },
 ] as const satisfies readonly NavSectionItem[]
 
+/** Şef: yalnızca konfirme / takvim / ses (saat vererek onay + red). */
+export const SEF_SECTIONS = [
+  { id: 'approvals', label: 'İş Konfirmeleri', icon: CheckSquare },
+  { id: 'schedule', label: 'Çekim Takvimi', icon: CalendarDays },
+  { id: 'voice', label: 'Ses kayıtları', icon: Mic },
+] as const satisfies readonly NavSectionItem[]
+
 /**
  * Yönetim / koordinatör sol menü “Kameraman” — saha km / kadran özeti.
  * Kameraman rolünün Raporlarım sekmesinden ayrı yüzey.
@@ -135,6 +142,8 @@ export function getNavSections(
       return MANAGEMENT_SECTIONS
     case 'coordinator':
       return COORDINATOR_SECTIONS
+    case 'sef':
+      return SEF_SECTIONS
     case 'kameraman-field':
       return KAMERAMAN_FIELD_SECTIONS
     case 'human-resources':

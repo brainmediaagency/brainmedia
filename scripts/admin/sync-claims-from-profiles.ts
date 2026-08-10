@@ -23,6 +23,7 @@ const ALLOWED_ROLES = new Set([
   'coordinator',
   'management',
   'kameraman',
+  'sef',
 ])
 
 function initAdmin() {

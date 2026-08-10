@@ -17,12 +17,13 @@ describe('hoop game product rules', () => {
     expect(MAX_DAILY_SHOTS).toBe(6)
   })
 
-  it('test mode: only management and coordinator can play', async () => {
+  it('test mode: only management, coordinator and şef can play', async () => {
     const { canPlayHoopGame, HOOP_PUBLIC_TEST_MODE, hoopShotLimitForRole } =
       await import('@/features/game/services/hoopScoreService')
     expect(HOOP_PUBLIC_TEST_MODE).toBe(true)
     expect(canPlayHoopGame('management')).toBe(true)
     expect(canPlayHoopGame('coordinator')).toBe(true)
+    expect(canPlayHoopGame('sef')).toBe(true)
     expect(canPlayHoopGame('reporter')).toBe(false)
     expect(hoopShotLimitForRole('management')).toBeNull()
   })

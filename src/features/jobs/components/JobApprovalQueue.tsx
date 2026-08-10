@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { toast } from 'sonner'
+import { isJobReviewerRole } from '@/config/roles'
 import type { JobDocument } from '@/features/jobs/types/job'
 import {
   forwardJobToReporter,
@@ -259,8 +260,7 @@ export function ReviewedJobsQueue({
   }, [jobs, selectedJobId])
 
   const actorRole = claims?.role ?? profile?.role
-  const canManageApproved =
-    actorRole === 'management' || actorRole === 'coordinator'
+  const canManageApproved = isJobReviewerRole(actorRole)
 
   async function handleForward(job: JobDocument) {
     if (!profile || !actorRole || !canManageApproved) return

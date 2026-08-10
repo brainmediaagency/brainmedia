@@ -6,6 +6,7 @@ export type AppRouteKey =
   | 'human-resources'
   | 'coordinator'
   | 'management'
+  | 'sef'
   | 'kameraman-field'
   | 'news-sites'
   | 'game'
@@ -41,6 +42,11 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
   ],
   /** Çekim takvimi + Projelerimiz + Oyun (muhabir ile aynı yan menü yüzeyi). */
   kameraman: ['reporter', 'news-sites', 'game'],
+  /**
+   * Şef: iş konfirmeleri (onay/red + saat), çekim takvimi, ses kaydı,
+   * Projelerimiz ve Oyun. Kasa / Excel / hesaplar yok.
+   */
+  sef: ['sef', 'news-sites', 'game'],
 }
 
 export function canAccessRoute(role: UserRole, routeKey: AppRouteKey): boolean {

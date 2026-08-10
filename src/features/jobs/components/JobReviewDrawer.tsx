@@ -16,6 +16,7 @@ import {
   type LocationDraft,
 } from '@/features/jobs/hooks/useJobReviewFieldEdit'
 import { EditableDetailRow } from '@/features/jobs/components/EditableDetailRow'
+import { isJobReviewerRole } from '@/config/roles'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import {
   formatJobStatusNote,
@@ -106,8 +107,7 @@ export function JobReviewDrawer({
   const [submitting, setSubmitting] = useState(false)
 
   const actorRole = claims?.role ?? profile?.role
-  const canReview =
-    actorRole === 'coordinator' || actorRole === 'management'
+  const canReview = isJobReviewerRole(actorRole)
 
   const canEditFields =
     mode === 'pending' && canReview && isOnline && job?.status === 'pending'

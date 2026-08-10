@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, Pencil, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
+import { isJobReviewerRole } from '@/config/roles'
 import type { JobDocument } from '@/features/jobs/types/job'
 import { ApprovedJobEditForm } from '@/features/jobs/components/ApprovedJobEditForm'
 import { cancelJob, markJobAsShot } from '@/features/jobs/services/jobService'
@@ -31,7 +32,7 @@ export type OverdueJobsConfirmationPanelProps = {
   jobs: JobDocument[]
   loading: boolean
   /**
-   * `actions` — coordinator/management can mark shot/cancelled.
+   * `actions` — reviewer roles (koordinatör/yönetim/şef) can mark shot/cancelled.
    * `readonly` — media planner status view only.
    */
   mode?: 'actions' | 'readonly'
@@ -57,13 +58,11 @@ export function OverdueJobsConfirmationPanel({
   const canAct = mode === 'actions'
   const role = claims?.role ?? profile?.role
   const actor =
-    canAct &&
-    profile &&
-    (role === 'coordinator' || role === 'management')
+    canAct && profile && isJobReviewerRole(role)
       ? {
           uid: profile.uid,
           fullName: profile.fullName,
-          role: role as 'coordinator' | 'management',
+          role,
         }
       : null
 

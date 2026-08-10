@@ -721,7 +721,7 @@ async function transitionJob(
   }
 }
 
-const REVIEWER_ROLES: UserRole[] = ['coordinator', 'management']
+const REVIEWER_ROLES: UserRole[] = ['coordinator', 'management', 'sef']
 
 async function requireFreshJob(jobId: string): Promise<JobDocument> {
   const fresh = await getJob(jobId)
@@ -755,7 +755,7 @@ export async function approveJob(
       createdByUid: actor.uid,
       createdByNameSnapshot: actor.fullName,
       /** Muhabir, kameraman ve MPU konfirme push’u almaz. */
-      pushRoles: ['management', 'coordinator', 'human_resources'],
+      pushRoles: ['management', 'coordinator', 'human_resources', 'sef'],
     })
   } catch {
     /* notify is best-effort */

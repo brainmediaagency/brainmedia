@@ -32,7 +32,7 @@ import type { UserRole } from '@/config/roles'
 export const MAX_DAILY_SHOTS = 6
 
 /**
- * Soft-launch: only management + coordinator play; daily shot cap is off for them.
+ * Soft-launch: only management + coordinator + şef play; daily shot cap is off for them.
  * Flip to false and reintroduce caps when opening to all roles.
  */
 export const HOOP_PUBLIC_TEST_MODE = true
@@ -45,7 +45,7 @@ export function canPlayHoopGame(
 ): boolean {
   if (!role) return false
   if (!HOOP_PUBLIC_TEST_MODE) return true
-  return role === 'management' || role === 'coordinator'
+  return role === 'management' || role === 'coordinator' || role === 'sef'
 }
 
 /** null = unlimited (within HOOP_TEST_MAX_SHOTS safety). */

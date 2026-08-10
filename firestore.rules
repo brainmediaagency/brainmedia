@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: hoop-test-mgmt-coord-33
+// rules-rev: sef-job-reviewer-34
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -43,7 +43,8 @@ service cloud.firestore {
         'human_resources',
         'coordinator',
         'management',
-        'kameraman'
+        'kameraman',
+        'sef'
       ];
     }
 
@@ -84,14 +85,23 @@ service cloud.firestore {
       return isAuthenticated() && role() == 'management';
     }
 
+    function isSef() {
+      return isAuthenticated() && role() == 'sef';
+    }
+
     // Single role() lookup — avoids double isAuthenticated() from coord || mgmt.
     function isCoordinatorOrManagement() {
       return isAuthenticated() && role() in ['coordinator', 'management'];
     }
 
+    /** Job reviewers: konfirme / red / saat — şef included (not full ops admin). */
+    function isJobReviewer() {
+      return isAuthenticated() && role() in ['coordinator', 'management', 'sef'];
+    }
+
     /** Shared cheap guards for reviewer job status transitions. */
     function jobReviewerStatusBump() {
-      return isCoordinatorOrManagement()
+      return isJobReviewer()
         && request.resource.data.statusVersion == resource.data.statusVersion + 1
         && request.resource.data.updatedAt == request.time;
     }
@@ -231,6 +241,11 @@ service cloud.firestore {
             && resource.data.role in ['media_planning', 'reporter', 'human_resources']
           )
           || (
+            // Şef onay/red sonrası MPU istatistik güncellemesi (users/{owner} update okuması)
+            role() == 'sef'
+            && resource.data.role == 'media_planning'
+          )
+          || (
             role() == 'reporter'
             && resource.data.role == 'media_planning'
           )
@@ -281,7 +296,7 @@ service cloud.firestore {
 
       // Stats-only — FIRST allow (own budget). affectedKeys already freezes other fields.
       // SEC-06: only ±1 single-counter deltas (matches jobService increment() / getStatsDelta).
-      allow update: if isCoordinatorOrManagement()
+      allow update: if isJobReviewer()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stats', 'updatedAt'])
         && request.resource.data.updatedAt == request.time
         && isValidStatsIncrement(resource.data.stats, request.resource.data.stats);
@@ -683,7 +698,7 @@ service cloud.firestore {
       allow read: if isAuthenticated()
         && (
           resource.data.createdByUid == request.auth.uid
-          || isCoordinatorOrManagement()
+          || isJobReviewer()
           || isHumanResources()
           || isReporter()
           || isKameraman()
@@ -772,7 +787,7 @@ service cloud.firestore {
         && request.resource.data.statusVersion == resource.data.statusVersion
         && (
           (isMediaPlanning() && resource.data.createdByUid == request.auth.uid)
-          || isCoordinatorOrManagement()
+          || isJobReviewer()
         )
         && request.resource.data.updatedAt == request.time
         && request.resource.data.diff(resource.data).affectedKeys()
@@ -801,12 +816,12 @@ service cloud.firestore {
         && isJobSchedule(request.resource.data.plannedExecutionDate)
         && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
 
-      // Approved content edit — coordinator / management only (Çekim Durumu reschedule).
+      // Approved content edit — job reviewers (Çekim Durumu reschedule).
       // Keeps status approved; plannedExecutionDate may move the job to another day/time.
       allow update: if resource.data.status == 'approved'
         && request.resource.data.status == 'approved'
         && request.resource.data.statusVersion == resource.data.statusVersion
-        && isCoordinatorOrManagement()
+        && isJobReviewer()
         && request.resource.data.updatedAt == request.time
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly([
@@ -1000,10 +1015,10 @@ service cloud.firestore {
         && request.resource.data.forwardedToReporterByNameSnapshot == null
         && request.resource.data.forwardedToReporterAt == null;
 
-      // Forward approved job to reporter calendar — coordinator / management
+      // Forward approved job to reporter calendar — job reviewers
       allow update: if resource.data.status == 'approved'
         && request.resource.data.status == 'approved'
-        && isCoordinatorOrManagement()
+        && isJobReviewer()
         && jobForwardedFlag(resource.data) == false
         && request.resource.data.forwardedToReporter == true
         && request.resource.data.forwardedToReporterByUid == request.auth.uid
@@ -1054,7 +1069,7 @@ service cloud.firestore {
         allow read: if isAuthenticated()
           && (
             get(/databases/$(database)/documents/jobs/$(jobId)).data.createdByUid == request.auth.uid
-            || isCoordinatorOrManagement()
+            || isJobReviewer()
             || isHumanResources()
             || isReporter()
           );
@@ -1075,9 +1090,9 @@ service cloud.firestore {
               && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion == 1
             )
             ||
-            // Status transition history by coordinator/management
+            // Status transition history by job reviewers (coord/mgmt/şef)
             (
-              isCoordinatorOrManagement()
+              isJobReviewer()
               && exists(/databases/$(database)/documents/jobs/$(jobId))
               && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
               && request.resource.data.fromStatus == get(/databases/$(database)/documents/jobs/$(jobId)).data.status
@@ -1625,11 +1640,11 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ---------- hoopDailyScores (test: sadece yönetim/koordinatör, limit yok) ----------
+    // ---------- hoopDailyScores (test: reviewer roles; limit yok) ----------
     match /hoopDailyScores/{scoreId} {
       allow read: if isAuthenticated();
 
-      allow create: if isCoordinatorOrManagement()
+      allow create: if isJobReviewer()
         && request.resource.data.keys().hasOnly([
           'date',
           'uid',
@@ -1652,7 +1667,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
-      allow update: if isCoordinatorOrManagement()
+      allow update: if isJobReviewer()
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.date == resource.data.date
@@ -1946,9 +1961,9 @@ service cloud.firestore {
 
     // ---------- voiceRecordings (Drive-backed via Apps Script; Spark) ----------
     match /voiceRecordings/{recordingId} {
-      allow read: if isCoordinatorOrManagement();
+      allow read: if isJobReviewer();
 
-      allow create: if isCoordinatorOrManagement()
+      allow create: if isJobReviewer()
         && request.resource.data.keys().hasOnly([
           'companyName',
           'jobId',
@@ -1974,7 +1989,7 @@ service cloud.firestore {
         && request.resource.data.webViewLink.matches('https://.*')
         && request.resource.data.durationMs is number
         && request.resource.data.durationMs >= 0
-        && request.resource.data.durationMs <= 45 * 60 * 1000
+        && request.resource.data.durationMs <= 30 * 60 * 1000
         && request.resource.data.size is number
         && isPosWhole(request.resource.data.size)
         && request.resource.data.size <= 50 * 1024 * 1024

@@ -21,6 +21,7 @@ export function getManageableRoles(actorRole: UserRole): UserRole[] {
       'human_resources',
       'coordinator',
       'management',
+      'sef',
     ]
   }
   if (actorRole === 'coordinator' || actorRole === 'human_resources') {

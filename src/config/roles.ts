@@ -5,6 +5,7 @@ export const USER_ROLES = [
   'coordinator',
   'management',
   'kameraman',
+  'sef',
 ] as const
 
 export type UserRole = (typeof USER_ROLES)[number]
@@ -16,6 +17,28 @@ export const ROLE_DISPLAY_NAMES: Record<UserRole, string> = {
   coordinator: 'Koordinatör',
   management: 'Yönetim',
   kameraman: 'Kameraman',
+  sef: 'Şef',
+}
+
+/**
+ * Roles that review jobs (approve with time / reject / schedule edits).
+ * Not full coordinator/management ops (kasa, Excel, hesaplar…).
+ */
+export const JOB_REVIEWER_ROLES = [
+  'coordinator',
+  'management',
+  'sef',
+] as const satisfies readonly UserRole[]
+
+export type JobReviewerRole = (typeof JOB_REVIEWER_ROLES)[number]
+
+export function isJobReviewerRole(
+  value: unknown,
+): value is JobReviewerRole {
+  return (
+    typeof value === 'string'
+    && (JOB_REVIEWER_ROLES as readonly string[]).includes(value)
+  )
 }
 
 /** Roles that can start/end attendance shifts. */

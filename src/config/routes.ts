@@ -4,6 +4,7 @@ import {
   Briefcase,
   Camera,
   Car,
+  Crown,
   LayoutDashboard,
   Newspaper,
   Shield,
@@ -19,6 +20,7 @@ export const APP_ROUTES = {
   humanResources: '/human-resources',
   coordinator: '/coordinator',
   management: '/management',
+  sef: '/sef',
   /** Yönetim/koordinatör saha özeti — solda “Kameraman” menüsü. */
   kameramanField: '/kameraman',
   newsSites: '/news-sites',
@@ -69,6 +71,12 @@ export const NAV_ITEMS: NavItem[] = [
     path: APP_ROUTES.management,
     label: 'Yönetim',
     icon: Shield,
+  },
+  {
+    key: 'sef',
+    path: APP_ROUTES.sef,
+    label: 'Şef',
+    icon: Crown,
   },
   {
     key: 'news-sites',

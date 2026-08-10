@@ -16,6 +16,7 @@ import { ReporterPage } from '@/pages/ReporterPage'
 import { NewsSitesPage } from '@/pages/NewsSitesPage'
 import { GamePage } from '@/pages/GamePage'
 import { KameramanFieldPage } from '@/pages/KameramanFieldPage'
+import { SefPage } from '@/pages/SefPage'
 
 function RootRedirect() {
   const { user, claims, loading } = useAuth()
@@ -113,6 +114,17 @@ export function AppRouter() {
           <ProtectedRoute routeKey="management">
             <AuthenticatedLayout>
               <ManagementPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.sef}
+        element={
+          <ProtectedRoute routeKey="sef">
+            <AuthenticatedLayout>
+              <SefPage />
             </AuthenticatedLayout>
           </ProtectedRoute>
         }

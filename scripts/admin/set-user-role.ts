@@ -23,6 +23,7 @@ const ALLOWED_ROLES = [
   'coordinator',
   'management',
   'kameraman',
+  'sef',
 ] as const
 
 type AllowedRole = (typeof ALLOWED_ROLES)[number]

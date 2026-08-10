@@ -12,6 +12,7 @@ export const WEBHOOK_PUSH_ROLES: readonly UserRole[] = [
   'coordinator',
   'management',
   'kameraman',
+  'sef',
 ]
 
 export function normalizePushRoles(

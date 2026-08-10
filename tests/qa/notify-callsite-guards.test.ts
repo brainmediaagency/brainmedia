@@ -95,9 +95,18 @@ describe('QA · notify call-site static guards', () => {
     const source = readSrc(
       join(process.cwd(), 'src/features/jobs/services/jobService.ts'),
     )
-    expect(source).toMatch(
-      /pushRoles:\s*\[\s*'management',\s*'coordinator',\s*'human_resources'\s*\]/,
+    const approveBlock = source.match(
+      /type:\s*'job_approved'[\s\S]{0,400}pushRoles:\s*\[([^\]]+)\]/,
     )
+    expect(approveBlock?.[1]).toBeTruthy()
+    const rolesLiteral = approveBlock![1]!
+    expect(rolesLiteral).toMatch(/'management'/)
+    expect(rolesLiteral).toMatch(/'coordinator'/)
+    expect(rolesLiteral).toMatch(/'human_resources'/)
+    expect(rolesLiteral).toMatch(/'sef'/)
+    expect(rolesLiteral).not.toMatch(/'media_planning'/)
+    expect(rolesLiteral).not.toMatch(/'reporter'/)
+    expect(rolesLiteral).not.toMatch(/'kameraman'/)
   })
 })
 
