@@ -25,7 +25,8 @@ export function useNotificationInbox() {
   const role = claims?.role
   const enabled = Boolean(uid) && isUserRole(role)
   const inboxRole = isUserRole(role) ? role : undefined
-  const isManagement = role === 'management'
+  const canReadManagementFeed =
+    role === 'management' || role === 'sef'
   const [items, setItems] = useState<AppNotification[]>([])
   const [error, setError] = useState<string | null>(null)
   const seenIdsRef = useRef<Set<string>>(new Set())
@@ -61,7 +62,7 @@ export function useNotificationInbox() {
     broadcastRef.current = []
     personalRef.current = []
     readyRef.current = {
-      management: !isManagement,
+      management: !canReadManagementFeed,
       broadcast: false,
       personal: false,
     }
@@ -142,7 +143,7 @@ export function useNotificationInbox() {
       ),
     ]
 
-    if (isManagement) {
+    if (canReadManagementFeed) {
       unsubs.push(
         subscribeManagementNotifications((rows) => {
           managementRef.current = rows
@@ -155,7 +156,7 @@ export function useNotificationInbox() {
     return () => {
       for (const unsub of unsubs) unsub()
     }
-  }, [enabled, uid, isManagement, inboxRole])
+  }, [enabled, uid, canReadManagementFeed, inboxRole])
 
   const unreadCount = useMemo(() => {
     if (!uid) return 0

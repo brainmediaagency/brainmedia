@@ -50,6 +50,7 @@ const CALENDAR_JOB_EDIT_PUSH_ROLES: UserRole[] = [
   'coordinator',
   'reporter',
   'kameraman',
+  'sef',
 ]
 
 function parseStatus(value: unknown): JobStatus {
@@ -255,7 +256,7 @@ export async function createJob(input: CreateJobInput): Promise<string> {
     link: '/management',
     createdByUid: input.createdByUid,
     createdByNameSnapshot: input.createdByNameSnapshot,
-    pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources'],
+    pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources', 'sef'],
   })
 
   return jobRef.id

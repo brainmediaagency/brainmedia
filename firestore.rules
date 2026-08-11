@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: sef-job-reviewer-34
+// rules-rev: sef-notify-five-35
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -507,7 +507,7 @@ service cloud.firestore {
 
     // ---------- managementNotifications (Spark in-app inbox; no Cloud Functions) ----------
     match /managementNotifications/{notificationId} {
-      allow read: if isManagement();
+      allow read: if isManagement() || isSef();
 
       allow create: if isAuthenticated()
         && request.resource.data.keys().hasOnly([
@@ -539,7 +539,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.readByUids == [];
 
-      allow update: if isManagement()
+      allow update: if (isManagement() || isSef())
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readByUids'])
         && request.resource.data.type == resource.data.type
         && request.resource.data.title == resource.data.title

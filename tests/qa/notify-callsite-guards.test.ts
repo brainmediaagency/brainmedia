@@ -55,13 +55,15 @@ describe('QA · notify call-site static guards', () => {
     }
   })
 
-  it('shooting calendar evening push targets kameraman + reporter only', () => {
+  it('shooting calendar evening push targets kameraman + reporter + şef', () => {
     const file = join(
       process.cwd(),
       'src/features/jobs/services/shootingCalendarNotifyService.ts',
     )
     const source = readSrc(file)
-    expect(source).toMatch(/roles:\s*\[\s*'kameraman'\s*,\s*'reporter'\s*\]/)
+    expect(source).toMatch(
+      /roles:\s*\[\s*'kameraman'\s*,\s*'reporter'\s*,\s*'sef'\s*\]/,
+    )
   })
 
   it('HR / hiring notify management-only pushRoles', () => {
@@ -88,6 +90,7 @@ describe('QA · notify call-site static guards', () => {
       'coordinator',
       'reporter',
       'kameraman',
+      'sef',
     ])
   })
 

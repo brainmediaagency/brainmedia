@@ -75,6 +75,7 @@ describe('isNotificationVisibleForRole', () => {
       'coordinator',
       'media_planning',
       'human_resources',
+      'sef',
     ] as const) {
       expect(isNotificationVisibleForRole(regionItem, role)).toBe(true)
     }
@@ -95,10 +96,45 @@ describe('isNotificationVisibleForRole', () => {
       'reporter',
       'human_resources',
       'kameraman',
+      'sef',
     ] as const) {
       expect(isNotificationVisibleForRole(hrReport, role)).toBe(false)
       expect(isNotificationVisibleForRole(hiring, role)).toBe(false)
     }
+  })
+
+  it('şef only sees job_created, job_approved, and region_created in inbox', () => {
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_created' },
+        'sef',
+      ),
+    ).toBe(true)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_approved' },
+        'sef',
+      ),
+    ).toBe(true)
+    expect(isNotificationVisibleForRole(regionItem, 'sef')).toBe(true)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'daily_report' },
+        'sef',
+      ),
+    ).toBe(false)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'z_report' },
+        'sef',
+      ),
+    ).toBe(false)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'odometer_report' },
+        'sef',
+      ),
+    ).toBe(false)
   })
 })
 

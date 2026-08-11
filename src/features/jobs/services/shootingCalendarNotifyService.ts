@@ -117,7 +117,7 @@ export async function runDueShootingCalendarNotify(actor: {
     title: 'Çekim takvimi hazır',
     body: `Bugün için ${jobCount} iş çekim takvimine düştü.`,
     link: '/reporter',
-    roles: ['kameraman', 'reporter'],
+    roles: ['kameraman', 'reporter', 'sef'],
   })
 
   return { skipped: false, date: today, jobCount }

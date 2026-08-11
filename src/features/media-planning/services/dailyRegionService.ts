@@ -238,7 +238,7 @@ export async function runDueDailyRegionDayNotify(actor: {
     /** Sistem tetikleyicisi — tetikleyen kullanıcı da görsün. */
     notifyActor: true,
     /** Günün bölgesi muhabiri ilgilendirmiyor. */
-    pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources'],
+    pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources', 'sef'],
   })
 
   return {
