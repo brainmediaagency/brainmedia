@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AUTO_CANCEL_REVIEW_NOTE,
   isStalePendingJob,
   STALE_PENDING_AFTER_MS,
 } from '@/features/jobs/services/autoCancelPendingJobsService'
@@ -24,5 +25,12 @@ describe('isStalePendingJob', () => {
     expect(isStalePendingJob(now - STALE_PENDING_AFTER_MS - 60_000, now)).toBe(
       true,
     )
+  })
+})
+
+describe('AUTO_CANCEL_REVIEW_NOTE', () => {
+  it('describes automatic rejection after 48 hours', () => {
+    expect(AUTO_CANCEL_REVIEW_NOTE).toMatch(/otomatik red/i)
+    expect(AUTO_CANCEL_REVIEW_NOTE).toMatch(/48/)
   })
 })

@@ -2,8 +2,9 @@
  * Google Apps Script — Sheets log + Drive file upload (no Firebase Storage / Blaze).
  *
  * IMPORTANT: Do NOT reorder existing columns without an explicit product decision.
- * Ops template cols 1–12 stay fixed (col 12 = Fatura, manual). Col 13 = JOB ID
- * (Firestore job id) was approved for stable row identity (FUNC-02 / v13).
+ * Ops template cols 1–12 stay fixed (col 12 = Fatura, manual).
+ * JOB ID: v13–v34 wrote column M (13); v35+ writes column V (22). Legacy M
+ * cell values still match on read; new upserts only write V.
  * v14: pushNotify audience = all five app roles (OR), optional externalIds.
  * v15: onesignalUpsertUsers — create Audience users by Firebase uid + role tag.
  * v16: wipeBrainUploads — trash all files/folders under BrainUploads (management/coordinator).
@@ -34,12 +35,33 @@
  *      binary DIRECTLY to Drive's resumable session URL (no base64, no
  *      per-chunk webhook round-trips). Init passes the browser Origin so
  *      Drive answers the client's CORS PUTs; finish sets sharing + links.
- *      Old chunked path (uploadFileInit/Chunk) kept as fallback.
+ * v29: Çekildi/DK never inserts a new Excel row. Stronger findRow: JOB ID,
+ *      firma+iş alım/çekim günü, sıkıştırılmış firma adı, tekil firma.
+ *      TARİH Date cells always Europe/Istanbul.
+ * v30: TARİH is çekim günü only (`dd.MM.yyyy` Date, never a time string).
+ *      Mixed "12.08.2026 18:00" text was overflowing into FİRMA ADI.
+ * v31: getDriveFile — authenticated base64 of a BrainUploads file so the
+ *      site can play voice in-page (Drive usercontent CORS/CORP 403s the SPA).
+ * v32: findRow never overwrites a row that already has a different JOB ID
+ *      (fuzzy/phone match only on legacy empty JOB ID cells). deleteJobRow
+ *      removes a Konfirme row on revert/reject (JOB ID only, never fuzzy).
+ * v33: MPU create writes Onay bekliyor + JOB ID. Reject deletes the pending
+ *      row. Revert restores Onay bekliyor. Çekildi still never inserts.
+ * v34: 48h auto-cancel pending writes SON DURUM İptal edildi (same as manual
+ *      cancel upsert) — no longer deletes the Excel row.
+ * v35: JOB ID column moves from M (13) to V (22). New writes only to V;
+ *      findRow still matches legacy M. M1 "JOB ID" header cleared when present.
+ * v36: Monthly tabs by çekim tarihi — "Eylül 2026". JOB ID search across
+ *      target ±2 months + legacy IslemLogu. Row moves when shoot month changes.
+ * v37: deleteJobRow / JOB ID scan always includes base month (offset 0) so
+ *      rejects without tarih still find the current month tab (e.g. Eylül 2026).
+ * v38: shootTarihFromBody_ prefers plannedTarih/cekTarih over tarih so
+ *      updateDkHaber finds the çekim month tab (acquired-as-tarih was missing
+ *      rows → empty DK/KAZANÇ while SON DURUM could still be Çekildi).
  *
- * SON DURUM values (only):
- *   Konfirme | Çekildi | İptal edildi
- *   (Reddet → Excel yazılmaz)
- * (Muhabire ilet does not write SON DURUM.)
+ * SON DURUM values:
+ *   Onay bekliyor | Konfirme | Çekildi | İptal edildi
+ *   (Reddet → Excel satırı silinir; “Reddedildi” yazılmaz)
  *
  * Deploy as Web App:
  *   Execute as: Me
@@ -59,11 +81,27 @@
  * doGet ping stays public (version/features only — no secrets).
  */
 
-var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v28'
-var SCRIPT_VERSION = 'v28'
+var SCRIPT_SERVICE = 'brain-sheets-drive-webhook-v37'
+var SCRIPT_VERSION = 'v38'
 var FIREBASE_PROJECT_ID = 'brain-c5fcb'
 var DEFAULT_SHEET_NAME = 'IslemLogu'
 var DEFAULT_DRIVE_ROOT = 'BrainUploads'
+
+/** Turkish month names for sheet tabs (index 0 = January). */
+var TR_MONTH_NAMES = [
+  'Ocak',
+  'Şubat',
+  'Mart',
+  'Nisan',
+  'Mayıs',
+  'Haziran',
+  'Temmuz',
+  'Ağustos',
+  'Eylül',
+  'Ekim',
+  'Kasım',
+  'Aralık',
+]
 
 /** Roles that may mutate sheets / Drive / push (when customClaims.role is present). */
 var ROLES_SHEET = {
@@ -97,10 +135,11 @@ var ROLES_PUSH = {
  * Fixed ops template — do not reorder cols 1–12 without approval.
  * Col 11 is unused (legacy “MERVE HANIM” label may still exist in live workbooks);
  * the app never writes that column. Col 12 = fatura (manual).
- * Col 13 = JOB ID (Firestore job id) — appended for stable row match (v13+).
+ * JOB ID: v35+ column V (22). Legacy values may remain in M (13).
  * ensureHeaderRow_ only runs on empty sheets — existing header rows are never
- * fully overwritten; ensureJobIdHeader_ may write M1 if that cell is empty.
+ * fully overwritten; ensureJobIdHeader_ writes V1 and clears stale M1 “JOB ID”.
  */
+var OPS_COL_COUNT = 12
 var HEADERS = [
   'TARİH',
   'FİRMA ADI',
@@ -114,7 +153,6 @@ var HEADERS = [
   'KAZANÇ',
   '', // unused (legacy MERVE HANIM — app does not write)
   '', // fatura — manual; app never fills
-  'JOB ID',
 ]
 
 var COL = {
@@ -130,7 +168,10 @@ var COL = {
   KAZANC: 10,
   UNUSED_11: 11,
   FATURA: 12,
-  JOB_ID: 13,
+  /** Pre-v35 JOB ID column (M). Read-only for matching. */
+  JOB_ID_LEGACY: 13,
+  /** v35+ JOB ID column (V). */
+  JOB_ID: 22,
 }
 
 /** Drive subfolder display names (Turkish). Keys stay stable in client uploads. */
@@ -139,6 +180,8 @@ var FOLDER_NAMES = {
   'z-reports': 'Z raporu',
   'voice-recordings': 'Ses kayıtları',
   'hr-reports': 'Günlük İK raporu',
+  odometer: 'Kameraman KM Raporları',
+  // Backward-compatible alias for clients deployed before the odometer key.
   'kameraman-km': 'Kameraman KM Raporları',
 }
 
@@ -148,6 +191,7 @@ var FOLDER_LEGACY_NAMES = {
   'z-reports': ['ZReports', 'Z Reports'],
   'voice-recordings': ['VoiceRecordings', 'Voice Recordings'],
   'hr-reports': ['HrReports', 'HRReports', 'HR Reports'],
+  odometer: ['KameramanKm', 'Kameraman KM', 'Odometer'],
   'kameraman-km': ['KameramanKm', 'Kameraman KM', 'Odometer'],
 }
 
@@ -240,6 +284,9 @@ function doPost(e) {
     if (body.action === 'trashDriveFile') {
       return handleTrashDriveFile_(body)
     }
+    if (body.action === 'getDriveFile') {
+      return handleGetDriveFile_(body)
+    }
     if (body.action === 'driveStorageUsage') {
       return handleDriveStorageUsage_()
     }
@@ -257,6 +304,9 @@ function doPost(e) {
     }
     if (body.action === 'updateDkHaber') {
       return handleUpdateDkHaber_(body)
+    }
+    if (body.action === 'deleteJobRow') {
+      return handleDeleteJobRow_(body)
     }
     if (body.action === 'pushNotify') {
       return handlePushNotify_(body)
@@ -279,7 +329,7 @@ function doPost(e) {
     return jsonResponse_({
       ok: false,
       error:
-        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/uploadFile/uploadFileInit/uploadFileChunk/uploadDirectInit/uploadDirectFinish/trashDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
+        'Invalid request (expected upsertJobRow/updateSonDurum/updateDkHaber/deleteJobRow/uploadFile/uploadFileInit/uploadFileChunk/uploadDirectInit/uploadDirectFinish/trashDriveFile/getDriveFile/uploadResult/driveStorageUsage/wipeBrainUploads/pushNotify/onesignalUpsertUsers/resetUserPassword)',
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     }, 400)
@@ -315,12 +365,14 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'upsertJobRow',
         'updateSonDurum',
         'updateDkHaber',
+        'deleteJobRow',
         'uploadFile',
         'uploadFileInit',
         'uploadFileChunk',
         'uploadDirectInit',
         'uploadDirectFinish',
         'trashDriveFile',
+        'getDriveFile',
         'uploadResult',
         'driveStorageUsage',
         'wipeBrainUploads',
@@ -328,6 +380,7 @@ function routeParameterizedAction_(params, allowAnonymousPing, e) {
         'onesignalUpsertUsers',
         'resetUserPassword',
         'firebaseIdTokenAuth',
+        'monthlySheets',
       ],
       auth: 'firebase-id-token',
     })
@@ -456,6 +509,13 @@ function roleAllowedForAction_(action, role) {
   if (action === 'onesignalUpsertUsers' || action === 'wipeBrainUploads') {
     return role === 'management' || role === 'coordinator'
   }
+  if (action === 'getDriveFile') {
+    return role === 'management'
+      || role === 'coordinator'
+      || role === 'sef'
+      || role === 'reporter'
+      || role === 'human_resources'
+  }
   if (
     action === 'uploadFile' ||
     action === 'uploadFileInit' ||
@@ -560,55 +620,93 @@ function authorizeMutatingRequest_(payload, action, e) {
 
 /**
  * Insert or update by JOB ID (preferred, v13+) or FİRMA ADI + TARİH (legacy rows).
+ * Writes to the monthly tab for çekim tarihi (e.g. Eylül 2026).
  * Preserves fatura, unused col 11, DK, HABER and KAZANÇ cells on update
  * (DK/HABER/KAZANÇ are written by the daily reporter report — status upserts
- * must not wipe them).
+ * must not wipe them). If the row lives on another month tab, it is moved.
  */
 function handleUpsertJobRow_(body) {
-  var sheet = getOrCreateLogSheet_()
-  ensureHeaderRow_(sheet)
-  ensureJobIdHeader_(sheet)
-
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  var targetSheet = getOrCreateLogSheetForBody_(body)
   var rowValues = buildJobRowValues_(body)
-  var existingRow = findRow_(sheet, body)
+  var loc = findRowLocation_(ss, body)
 
-  if (existingRow > 1) {
-    var faturaVal = sheet.getRange(existingRow, COL.FATURA).getValue()
+  if (loc && loc.row > 1) {
+    var sourceSheet = loc.sheet
+    var existingRow = loc.row
+    var faturaVal = sourceSheet.getRange(existingRow, COL.FATURA).getValue()
     rowValues[COL.FATURA - 1] = faturaVal
-    var unused11Val = sheet.getRange(existingRow, COL.UNUSED_11).getValue()
+    var unused11Val = sourceSheet.getRange(existingRow, COL.UNUSED_11).getValue()
     rowValues[COL.UNUSED_11 - 1] = unused11Val
-    var dkCol = findHeaderColumn_(sheet, 'DK', COL.DK)
-    var haberCol = findHeaderColumn_(sheet, 'HABER', COL.HABER)
-    var kazancCol = findKazancColumn_(sheet)
-    rowValues[dkCol - 1] = sheet.getRange(existingRow, dkCol).getValue()
-    rowValues[haberCol - 1] = sheet.getRange(existingRow, haberCol).getValue()
-    rowValues[kazancCol - 1] = sheet.getRange(existingRow, kazancCol).getValue()
-    // Preserve existing JOB ID if body omitted it (shouldn't happen from v13 clients).
-    var jobIdCol = findHeaderColumn_(sheet, 'JOB ID', COL.JOB_ID)
-    if (!String(rowValues[jobIdCol - 1] || '').trim()) {
-      rowValues[jobIdCol - 1] = sheet.getRange(existingRow, jobIdCol).getValue()
+    var dkCol = findHeaderColumn_(sourceSheet, 'DK', COL.DK)
+    var haberCol = findHeaderColumn_(sourceSheet, 'HABER', COL.HABER)
+    var kazancCol = findKazancColumn_(sourceSheet)
+    rowValues[COL.DK - 1] = sourceSheet.getRange(existingRow, dkCol).getValue()
+    rowValues[COL.HABER - 1] = sourceSheet.getRange(existingRow, haberCol).getValue()
+    rowValues[COL.KAZANC - 1] = sourceSheet.getRange(existingRow, kazancCol).getValue()
+
+    if (sourceSheet.getSheetId() !== targetSheet.getSheetId()) {
+      // Shoot month changed — move row to the target month tab (append then delete).
+      targetSheet.appendRow(rowValues)
+      var movedRow = targetSheet.getLastRow()
+      writeJobIdToPrimary_(targetSheet, movedRow, body)
+      writeTarihCell_(targetSheet, movedRow, body.tarih || body.plannedTarih || '')
+      writeOptionalInstagramColumn_(targetSheet, movedRow, body)
+      sourceSheet.deleteRow(existingRow)
+      return jsonResponse_({
+        ok: true,
+        moved: true,
+        inserted: true,
+        row: movedRow,
+        sheet: targetSheet.getName(),
+        service: SCRIPT_SERVICE,
+        version: SCRIPT_VERSION,
+      })
     }
-    // getRange(row, column, numRows, numColumns)
-    sheet.getRange(existingRow, 1, 1, HEADERS.length).setValues([rowValues])
-    writeOptionalInstagramColumn_(sheet, existingRow, body)
+
+    // Same month tab — in-place update (ops cols 1–12 only).
+    sheetApplyOpsRowUpdate_(targetSheet, existingRow, rowValues, body)
     return jsonResponse_({
       ok: true,
       updated: true,
       row: existingRow,
+      sheet: targetSheet.getName(),
       service: SCRIPT_SERVICE,
       version: SCRIPT_VERSION,
     })
   }
 
-  sheet.appendRow(rowValues)
-  var insertedRow = sheet.getLastRow()
-  writeOptionalInstagramColumn_(sheet, insertedRow, body)
+  // Çekildi must patch the Konfirme row — never append a duplicate Excel record.
+  if (String(rowValues[COL.SON_DURUM - 1] || '').trim() === 'Çekildi') {
+    return jsonResponse_({
+      ok: false,
+      error: 'Row not found (match JOB ID or FİRMA ADI + TARİH)',
+      service: SCRIPT_SERVICE,
+      version: SCRIPT_VERSION,
+    }, 404)
+  }
+
+  targetSheet.appendRow(rowValues)
+  var insertedRow = targetSheet.getLastRow()
+  writeJobIdToPrimary_(targetSheet, insertedRow, body)
+  writeTarihCell_(targetSheet, insertedRow, body.tarih || body.plannedTarih || '')
+  writeOptionalInstagramColumn_(targetSheet, insertedRow, body)
   return jsonResponse_({
     ok: true,
     inserted: true,
+    row: insertedRow,
+    sheet: targetSheet.getName(),
     service: SCRIPT_SERVICE,
     version: SCRIPT_VERSION,
   })
+}
+
+/** In-place ops update on an existing row (same sheet). */
+function sheetApplyOpsRowUpdate_(sheet, existingRow, rowValues, body) {
+  sheet.getRange(existingRow, 1, 1, OPS_COL_COUNT).setValues([rowValues])
+  writeJobIdToPrimary_(sheet, existingRow, body)
+  writeTarihCell_(sheet, existingRow, body.tarih || body.plannedTarih || '')
+  writeOptionalInstagramColumn_(sheet, existingRow, body)
 }
 
 /**
@@ -628,12 +726,9 @@ function handleUpdateSonDurum_(body) {
     return jsonResponse_({ ok: false, error: 'Missing sonDurum' }, 400)
   }
 
-  var sheet = getOrCreateLogSheet_()
-  ensureHeaderRow_(sheet)
-  ensureJobIdHeader_(sheet)
-
-  var existingRow = findRow_(sheet, body)
-  if (existingRow < 2) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  var loc = findRowLocation_(ss, body)
+  if (!loc || loc.row < 2) {
     return jsonResponse_({
       ok: false,
       error: 'Row not found (match JOB ID or FİRMA ADI + TARİH)',
@@ -642,15 +737,18 @@ function handleUpdateSonDurum_(body) {
     }, 404)
   }
 
+  var sheet = loc.sheet
+  prepareLogSheet_(sheet)
+  var existingRow = loc.row
   var sonDurumCol = findHeaderColumn_(sheet, 'SON DURUM', COL.SON_DURUM)
   sheet.getRange(existingRow, sonDurumCol).setValue(sonDurum)
-  // Backfill JOB ID on legacy rows when client sends jobId.
   writeJobIdIfPresent_(sheet, existingRow, body)
 
   return jsonResponse_({
     ok: true,
     updated: true,
     row: existingRow,
+    sheet: sheet.getName(),
     service: SCRIPT_SERVICE,
     version: SCRIPT_VERSION,
   })
@@ -658,18 +756,15 @@ function handleUpdateSonDurum_(body) {
 
 /**
  * Patch DK + HABER + KAZANÇ (and optional SON DURUM) for daily reporter report.
- * Row match: JOB ID preferred; else FİRMA ADI + TARİH (acquiredDate dd.MM.yyyy).
- * KAZANÇ = per-firma toplam gelir (matrah+KDV), e.g. "12.500 TL".
+ * Always updates an existing row — never appends.
+ * Match: JOB ID across month tabs, then best firma/phone/tarih on target/legacy.
  * Optional body.sonDurum (e.g. "Çekildi") is written in the same request so a
  * later status-only patch cannot race-clear money columns.
  */
 function handleUpdateDkHaber_(body) {
-  var sheet = getOrCreateLogSheet_()
-  ensureHeaderRow_(sheet)
-  ensureJobIdHeader_(sheet)
-
-  var existingRow = findRow_(sheet, body)
-  if (existingRow < 2) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  var loc = findRowLocation_(ss, body)
+  if (!loc || loc.row < 2) {
     return jsonResponse_({
       ok: false,
       error: 'Row not found (match JOB ID or FİRMA ADI + TARİH)',
@@ -678,13 +773,15 @@ function handleUpdateDkHaber_(body) {
     }, 404)
   }
 
+  var sheet = loc.sheet
+  prepareLogSheet_(sheet)
+  var existingRow = loc.row
+
   var dkCol = findHeaderColumn_(sheet, 'DK', COL.DK)
   var haberCol = findHeaderColumn_(sheet, 'HABER', COL.HABER)
   var kazancCol = findKazancColumn_(sheet)
   sheet.getRange(existingRow, dkCol).setValue(String(body.dk != null ? body.dk : ''))
   sheet.getRange(existingRow, haberCol).setValue(String(body.haber != null ? body.haber : ''))
-  // Always write KAZANÇ when the field is present (including "" to clear).
-  // Older v6 deployments ignored this key — v10+ must fill column J.
   if (Object.prototype.hasOwnProperty.call(body, 'kazanc')) {
     sheet.getRange(existingRow, kazancCol).setValue(String(body.kazanc != null ? body.kazanc : ''))
   }
@@ -696,14 +793,54 @@ function handleUpdateDkHaber_(body) {
   }
 
   writeJobIdIfPresent_(sheet, existingRow, body)
+  var plannedDay = String(body.plannedTarih || body.cekTarih || '').trim()
+  if (plannedDay) {
+    writeTarihCell_(sheet, existingRow, plannedDay)
+  } else {
+    normalizeTarihCell_(sheet, existingRow)
+  }
 
   return jsonResponse_({
     ok: true,
     updated: true,
     row: existingRow,
+    sheet: sheet.getName(),
     kazancCol: kazancCol,
     wroteKazanc: Object.prototype.hasOwnProperty.call(body, 'kazanc'),
     wroteSonDurum: Boolean(sonDurum),
+    service: SCRIPT_SERVICE,
+    version: SCRIPT_VERSION,
+  })
+}
+
+/**
+ * Remove the Excel row for a Firestore job (revert to pending / reject).
+ * JOB ID only — never fuzzy-match, never delete another job's row.
+ * Missing row is success (idempotent). Searches month tabs + legacy IslemLogu.
+ */
+function handleDeleteJobRow_(body) {
+  var jobId = resolveJobId_(body)
+  if (!jobId) {
+    return jsonResponse_({ ok: false, error: 'Missing jobId' }, 400)
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  var loc = findRowByJobIdAcrossSheets_(ss, body)
+  if (!loc || loc.row < 2) {
+    return jsonResponse_({
+      ok: true,
+      deleted: false,
+      service: SCRIPT_SERVICE,
+      version: SCRIPT_VERSION,
+    })
+  }
+
+  loc.sheet.deleteRow(loc.row)
+  return jsonResponse_({
+    ok: true,
+    deleted: true,
+    row: loc.row,
+    sheet: loc.sheet.getName(),
     service: SCRIPT_SERVICE,
     version: SCRIPT_VERSION,
   })
@@ -717,6 +854,7 @@ function resolveSonDurum_(body) {
 }
 
 function buildJobRowValues_(body) {
+  // Ops template cols 1–12 only. JOB ID is written separately to column V.
   return [
     body.tarih || '',
     body.firmaAdi || body.firma || '',
@@ -730,7 +868,6 @@ function buildJobRowValues_(body) {
     body.kazanc || body.tutar || '',
     '', // unused col 11 (legacy MERVE HANIM) — app never fills
     '', // fatura — app never fills; preserved on update
-    resolveJobId_(body),
   ]
 }
 
@@ -770,21 +907,333 @@ function findKazancColumn_(sheet) {
   return findHeaderColumn_(sheet, 'KAZANÇ', COL.KAZANC)
 }
 
+/**
+ * Primary JOB ID write column (V / header). After ensureJobIdHeader_, M1 is no
+ * longer labeled JOB ID so the first header match is V.
+ */
+function findJobIdColumn_(sheet) {
+  return findHeaderColumn_(sheet, 'JOB ID', COL.JOB_ID)
+}
+
+/** Pre-v35 JOB ID column (M) — read-only for matching. */
+function findLegacyJobIdColumn_() {
+  return COL.JOB_ID_LEGACY
+}
+
 /** Resolve Firestore job id from body (jobId preferred; isId legacy alias). */
 function resolveJobId_(body) {
   return String(body.jobId || body.isId || '').trim()
 }
 
 /**
- * Prefer JOB ID match when present; else FİRMA ADI + TARİH for legacy rows.
+ * Write JOB ID to primary column V only (never clears legacy M).
+ * If body omits jobId, backfill V from existing V or legacy M when empty.
+ */
+function writeJobIdToPrimary_(sheet, row, body) {
+  if (row < 2) return
+  var primaryCol = findJobIdColumn_(sheet)
+  var jobId = resolveJobId_(body)
+  if (jobId) {
+    sheet.getRange(row, primaryCol).setValue(jobId)
+    return
+  }
+  var existing = String(sheet.getRange(row, primaryCol).getValue() || '').trim()
+  if (existing) return
+  var legacy = String(
+    sheet.getRange(row, findLegacyJobIdColumn_()).getValue() || '',
+  ).trim()
+  if (legacy) {
+    sheet.getRange(row, primaryCol).setValue(legacy)
+  }
+}
+
+/**
+ * Prefer JOB ID; then best existing firma/phone/tarih row among *legacy*
+ * rows (empty JOB ID). Never overwrite a row that already has a different JOB ID.
+ * Keep cascade in sync with `pickSheetRow` in src/features/jobs/utils/sheetRowMatch.ts.
+ * Çekildi / DK patches must never append a row — only update.
  */
 function findRow_(sheet, body) {
   var byJobId = findRowByJobId_(sheet, body)
   if (byJobId > 1) return byJobId
-  return findRowByFirmaAndTarih_(sheet, body)
+
+  var lastRow = sheet.getLastRow()
+  if (lastRow < 2) return -1
+
+  var jobId = resolveJobId_(body)
+  var firmaCol = findHeaderColumn_(sheet, 'FİRMA ADI', COL.FIRMA_ADI)
+  var tarihCol = findHeaderColumn_(sheet, 'TARİH', COL.TARIH)
+  var telCol = findHeaderColumn_(sheet, 'TEL NO', COL.TEL_NO)
+  var sonDurumCol = findHeaderColumn_(sheet, 'SON DURUM', COL.SON_DURUM)
+  var sahibiCol = findHeaderColumn_(sheet, 'FİRMA SAHİBİ', COL.FIRMA_SAHIBI)
+  var jobIdCol = findJobIdColumn_(sheet)
+  var legacyJobIdCol = findLegacyJobIdColumn_()
+  var numRows = lastRow - 1
+  var firmas = sheet.getRange(2, firmaCol, numRows, 1).getValues()
+  var tarihs = sheet.getRange(2, tarihCol, numRows, 1).getValues()
+  var tels = sheet.getRange(2, telCol, numRows, 1).getValues()
+  var sonDurums = sheet.getRange(2, sonDurumCol, numRows, 1).getValues()
+  var sahibis = sheet.getRange(2, sahibiCol, numRows, 1).getValues()
+  var jobIds = sheet.getRange(2, jobIdCol, numRows, 1).getValues()
+  var legacyJobIds =
+    legacyJobIdCol !== jobIdCol
+      ? sheet.getRange(2, legacyJobIdCol, numRows, 1).getValues()
+      : jobIds
+  var sheetTz = sheetTimeZone_(sheet)
+
+  var dayKeys = collectTarihDayKeys_(body)
+  var queryFirma = String(body.firmaAdi || body.firma || '')
+  var firmaCompact = compactFirmaKey_(queryFirma)
+  var phoneKey = phoneDigitsKey_(body.telNo || body.telefon || '')
+  var sahibiKey = normalizeFirmaKey_(body.firmaSahibi || body.yetkili || '')
+
+  var bestRow = -1
+  var bestScore = 0
+  for (var i = 0; i < firmas.length; i++) {
+    var row = i + 2
+    // jobId present but not in sheet: only legacy rows with empty JOB ID (V and M).
+    // Never overwrite a row owned by a different Firestore job.
+    var occupiedPrimary = String(jobIds[i][0] || '').trim()
+    var occupiedLegacy = String(legacyJobIds[i][0] || '').trim()
+    if (jobId && (occupiedPrimary || occupiedLegacy)) continue
+    var sheetFirma = String(firmas[i][0] || '')
+    var fCompact = compactFirmaKey_(sheetFirma)
+    var compactHit = Boolean(firmaCompact && fCompact === firmaCompact)
+    var containsHit = !compactHit && queryFirma && firmaContainsMatch_(queryFirma, sheetFirma)
+    var fuzzyHit = !compactHit && !containsHit && queryFirma && firmaFuzzyMatch_(queryFirma, sheetFirma)
+    var phone = phoneDigitsKey_(tels[i][0])
+    var phoneHit = Boolean(phoneKey && phone && phone === phoneKey)
+    var sahibiHit = Boolean(
+      sahibiKey && normalizeFirmaKey_(sahibis[i][0]) === sahibiKey,
+    )
+    if (!compactHit && !containsHit && !fuzzyHit && !phoneHit && !sahibiHit) continue
+
+    var score = 0
+    if (compactHit) score += 400
+    else if (containsHit) score += 300
+    else if (fuzzyHit) score += 250
+    if (phoneHit) score += 80
+    if (sahibiHit) score += 40
+    if (isOpenSonDurum_(sonDurums[i][0])) score += 30
+
+    var dist = cellDayDistance_(tarihs[i][0], dayKeys, sheetTz)
+    if (dist === 0) score += 500
+    else if (dist === 1) score += 350
+    else if (dist >= 0 && dist < 60) score += Math.max(0, 200 - dist)
+
+    if (score > bestScore || (score === bestScore && score > 0 && row > bestRow)) {
+      bestScore = score
+      bestRow = row
+    }
+  }
+  return bestRow > 1 ? bestRow : -1
 }
 
-/** Match last row with same JOB ID (col 13). */
+function collectTarihDayKeys_(body) {
+  var keys = {}
+  var candidates = [body.tarih, body.plannedTarih, body.cekTarih, body.acquiredTarih]
+  for (var i = 0; i < candidates.length; i++) {
+    var k = tarihDayKey_(candidates[i])
+    if (k) keys[k] = true
+  }
+  return keys
+}
+
+function sheetTimeZone_(sheet) {
+  try {
+    return sheet.getParent().getSpreadsheetTimeZone() || 'Europe/Istanbul'
+  } catch (e) {
+    return 'Europe/Istanbul'
+  }
+}
+
+function cellDayDistance_(value, dayKeys, sheetTz) {
+  var cellKeys = cellDayKeys_(value, sheetTz)
+  var targets = []
+  for (var k in dayKeys) {
+    if (dayKeys[k]) targets.push(k)
+  }
+  if (!cellKeys.length || !targets.length) return -1
+  var best = 9999
+  for (var i = 0; i < cellKeys.length; i++) {
+    var n = isoToUtcDays_(cellKeys[i])
+    if (n < 0) continue
+    for (var t = 0; t < targets.length; t++) {
+      var tn = isoToUtcDays_(targets[t])
+      if (tn < 0) continue
+      var d = Math.abs(n - tn)
+      if (d < best) best = d
+    }
+  }
+  return best === 9999 ? -1 : best
+}
+
+function isoToUtcDays_(iso) {
+  var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return -1
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000
+}
+
+function cellDayKeys_(value, sheetTz) {
+  var keys = []
+  var seen = {}
+  function add(key) {
+    if (key && !seen[key]) {
+      seen[key] = true
+      keys.push(key)
+    }
+  }
+  var asDate = coerceSheetDate_(value)
+  if (asDate) {
+    add(Utilities.formatDate(asDate, 'Europe/Istanbul', 'yyyy-MM-dd'))
+    add(Utilities.formatDate(asDate, 'UTC', 'yyyy-MM-dd'))
+    add(Utilities.formatDate(asDate, sheetTz || 'Europe/Istanbul', 'yyyy-MM-dd'))
+  }
+  add(tarihDayKey_(formatSheetTarihCell_(value)))
+  return keys
+}
+
+function coerceSheetDate_(value) {
+  if (value && Object.prototype.toString.call(value) === '[object Date]') {
+    if (!isNaN(value.getTime())) return value
+    return null
+  }
+  if (typeof value === 'number' && isFinite(value) && value > 20000 && value < 80000) {
+    return new Date(Math.round((value - 25569) * 86400 * 1000))
+  }
+  return null
+}
+
+function normalizeFirmaKey_(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLocaleLowerCase('tr-TR')
+}
+
+function foldTrAscii_(value) {
+  return String(value || '')
+    .replace(/ı/g, 'i')
+    .replace(/İ/g, 'i')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ş/g, 's')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+}
+
+function compactFirmaKey_(value) {
+  return foldTrAscii_(normalizeFirmaKey_(value))
+    .replace(/[.'’`]/g, '')
+    .replace(/\b(ltd|sti|as|inc|co)\b/g, '')
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function firmaContainsMatch_(a, b) {
+  var ca = compactFirmaKey_(a)
+  var cb = compactFirmaKey_(b)
+  if (!ca || !cb) return false
+  if (ca === cb) return true
+  if (ca.length < 5 || cb.length < 5) return false
+  return ca.indexOf(cb) !== -1 || cb.indexOf(ca) !== -1
+}
+
+function levenshtein_(a, b) {
+  if (a === b) return 0
+  var m = a.length
+  var n = b.length
+  if (!m) return n
+  if (!n) return m
+  var prev = []
+  var cur = []
+  var j
+  for (j = 0; j <= n; j++) prev[j] = j
+  for (var i = 1; i <= m; i++) {
+    cur[0] = i
+    for (j = 1; j <= n; j++) {
+      var cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+    }
+    for (j = 0; j <= n; j++) prev[j] = cur[j]
+  }
+  return prev[n]
+}
+
+function firmaFuzzyMatch_(a, b) {
+  var ca = compactFirmaKey_(a)
+  var cb = compactFirmaKey_(b)
+  if (!ca || !cb) return false
+  if (ca === cb) return true
+  var maxLen = Math.max(ca.length, cb.length)
+  if (maxLen < 5) return false
+  var dist = levenshtein_(ca, cb)
+  return dist <= (maxLen >= 10 ? 2 : 1)
+}
+
+function pad2_(n) {
+  n = String(n || '')
+  return n.length === 1 ? '0' + n : n
+}
+
+function tarihDayKey_(value) {
+  var raw = String(value || '').trim()
+  if (!raw) return ''
+  var iso = raw.match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3]
+  var dmy = raw.match(/(\d{1,2})[./-](\d{1,2})[./-](\d{4})/)
+  if (dmy) return dmy[3] + '-' + pad2_(dmy[2]) + '-' + pad2_(dmy[1])
+  return ''
+}
+
+function phoneDigitsKey_(value) {
+  var digits = String(value || '').replace(/\D/g, '')
+  if (digits.indexOf('90') === 0 && digits.length >= 12) digits = digits.slice(2)
+  if (digits.charAt(0) === '0') digits = digits.slice(1)
+  return digits.length >= 10 ? digits : ''
+}
+
+function isOpenSonDurum_(value) {
+  var s = String(value || '').trim().toLocaleLowerCase('tr-TR')
+  return !s || s === 'konfirme' || s === 'onay bekliyor'
+}
+
+function formatSheetTarihCell_(value) {
+  var asDate = coerceSheetDate_(value)
+  if (asDate) {
+    return Utilities.formatDate(asDate, 'Europe/Istanbul', 'dd.MM.yyyy')
+  }
+  return String(value || '').trim()
+}
+
+/**
+ * Write TARİH as a real Date at noon Istanbul, format dd.MM.yyyy.
+ * Strips times so "12.08.2026 18:00" cannot overflow into FİRMA ADI.
+ */
+function writeTarihCell_(sheet, row, value) {
+  if (row < 2) return
+  var col = findHeaderColumn_(sheet, 'TARİH', COL.TARIH)
+  var cell = sheet.getRange(row, col)
+  cell.setNumberFormat('dd.MM.yyyy')
+  var parsed = sheetDateFromDayString_(value)
+  if (parsed) cell.setValue(parsed)
+}
+
+function normalizeTarihCell_(sheet, row) {
+  if (row < 2) return
+  var col = findHeaderColumn_(sheet, 'TARİH', COL.TARIH)
+  var current = formatSheetTarihCell_(sheet.getRange(row, col).getValue())
+  if (tarihDayKey_(current)) writeTarihCell_(sheet, row, current)
+}
+
+function sheetDateFromDayString_(value) {
+  var key = tarihDayKey_(value)
+  if (!key) return null
+  var parts = key.split('-')
+  // 09:00 UTC = 12:00 Europe/Istanbul — stays on the same calendar day.
+  return new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 9, 0, 0))
+}
+
+/** Match last row with same JOB ID (primary V, then legacy M). */
 function findRowByJobId_(sheet, body) {
   var jobId = resolveJobId_(body)
   if (!jobId) return -1
@@ -792,9 +1241,21 @@ function findRowByJobId_(sheet, body) {
   var lastRow = sheet.getLastRow()
   if (lastRow < 2) return -1
 
-  var jobIdCol = findHeaderColumn_(sheet, 'JOB ID', COL.JOB_ID)
   var numRows = lastRow - 1
-  var values = sheet.getRange(2, jobIdCol, numRows, 1).getValues()
+  var primaryCol = findJobIdColumn_(sheet)
+  var found = scanJobIdColumn_(sheet, primaryCol, numRows, jobId)
+  if (found > 1) return found
+
+  var legacyCol = findLegacyJobIdColumn_()
+  if (legacyCol !== primaryCol) {
+    found = scanJobIdColumn_(sheet, legacyCol, numRows, jobId)
+  }
+  return found
+}
+
+function scanJobIdColumn_(sheet, col, numRows, jobId) {
+  if (!col || col < 1 || numRows < 1) return -1
+  var values = sheet.getRange(2, col, numRows, 1).getValues()
   var found = -1
   for (var i = 0; i < values.length; i++) {
     if (String(values[i][0] || '').trim() === jobId) {
@@ -804,53 +1265,9 @@ function findRowByJobId_(sheet, body) {
   return found
 }
 
-/** Match last row with same firma + tarih (date prefix OK if time present). */
-function findRowByFirmaAndTarih_(sheet, body) {
-  var firma = String(body.firmaAdi || body.firma || '')
-    .trim()
-    .toLocaleLowerCase('tr-TR')
-  var tarih = String(body.tarih || '').trim()
-  if (!firma || !tarih) return -1
-
-  var lastRow = sheet.getLastRow()
-  if (lastRow < 2) return -1
-
-  var firmaCol = findHeaderColumn_(sheet, 'FİRMA ADI', COL.FIRMA_ADI)
-  var tarihCol = findHeaderColumn_(sheet, 'TARİH', COL.TARIH)
-  var numRows = lastRow - 1
-  var firmas = sheet.getRange(2, firmaCol, numRows, 1).getValues()
-  var tarihs = sheet.getRange(2, tarihCol, numRows, 1).getValues()
-  var tarihPrefix = tarih.split(' ')[0]
-  var found = -1
-
-  for (var i = 0; i < firmas.length; i++) {
-    var f = String(firmas[i][0] || '')
-      .trim()
-      .toLocaleLowerCase('tr-TR')
-    var t = String(tarihs[i][0] || '').trim()
-    if (t && Object.prototype.toString.call(tarihs[i][0]) === '[object Date]') {
-      t = Utilities.formatDate(
-        tarihs[i][0],
-        Session.getScriptTimeZone() || 'Europe/Istanbul',
-        'dd.MM.yyyy',
-      )
-    }
-    if (f === firma && (t === tarih || t.indexOf(tarihPrefix) === 0)) {
-      found = i + 2
-    }
-  }
-  return found
-}
-
-/** Backfill JOB ID cell when matching a legacy row. */
+/** Backfill JOB ID into primary V when matching a legacy row. */
 function writeJobIdIfPresent_(sheet, row, body) {
-  var jobId = resolveJobId_(body)
-  if (!jobId || row < 2) return
-  var jobIdCol = findHeaderColumn_(sheet, 'JOB ID', COL.JOB_ID)
-  var existing = String(sheet.getRange(row, jobIdCol).getValue() || '').trim()
-  if (!existing) {
-    sheet.getRange(row, jobIdCol).setValue(jobId)
-  }
+  writeJobIdToPrimary_(sheet, row, body)
 }
 
 function handleUpload_(body) {
@@ -1414,6 +1831,49 @@ function handleTrashDriveFile_(body) {
   }
 }
 
+/**
+ * v31 — Return a BrainUploads file as base64 so the SPA can play audio.
+ * Browser fetch of drive.usercontent is 403/CORS from Vercel.
+ * Kameraman is denied in roleAllowedForAction_.
+ */
+var GET_DRIVE_FILE_MAX_BYTES = 8 * 1024 * 1024
+
+function handleGetDriveFile_(body) {
+  var fileId = String(body.fileId || '').trim()
+  if (!fileId || fileId.length > 128 || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    return jsonResponse_({ ok: false, error: 'Invalid fileId' }, 400)
+  }
+  try {
+    var file = DriveApp.getFileById(fileId)
+    if (!isFileUnderUploadRoot_(file)) {
+      return jsonResponse_({ ok: false, error: 'File outside upload root' }, 403)
+    }
+    if (file.isTrashed()) {
+      return jsonResponse_({ ok: false, error: 'File trashed' }, 404)
+    }
+    var size = Number(file.getSize())
+    if (!(size > 0)) {
+      return jsonResponse_({ ok: false, error: 'Empty file' }, 400)
+    }
+    if (size > GET_DRIVE_FILE_MAX_BYTES) {
+      return jsonResponse_({ ok: false, error: 'too large', usePreview: true }, 413)
+    }
+    var blob = file.getBlob()
+    var mime = String(blob.getContentType() || 'audio/mp4').slice(0, 100)
+    var bytes = blob.getBytes()
+    return jsonResponse_({
+      ok: true,
+      fileId: fileId,
+      mimeType: mime,
+      size: bytes.length,
+      base64: Utilities.base64Encode(bytes),
+    })
+  } catch (err) {
+    var message = err && err.message ? String(err.message) : 'Read failed'
+    return jsonResponse_({ ok: false, error: message }, 500)
+  }
+}
+
 function handleUploadResult_(token) {
   if (!token) {
     return jsonResponse_({ ok: false, error: 'Missing token' }, 400)
@@ -1597,22 +2057,175 @@ function renameLegacyUploadFolder_(root, folderKey, newName) {
   }
 }
 
-function getOrCreateLogSheet_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet()
-  var name =
+/**
+ * Çekim tarihi from payload (Excel TARİH / plannedExecutionDate).
+ */
+function shootTarihFromBody_(body) {
+  // Prefer çekim günü (`plannedTarih` / `cekTarih`) over iş alım (`tarih` when
+  // clients still send acquired there). Wrong month tab → DK/HABER miss.
+  return String(
+    (body && (body.plannedTarih || body.cekTarih || body.tarih)) || '',
+  ).trim()
+}
+
+/** Today as yyyy-MM-dd in Europe/Istanbul. */
+function todayIstanbulDayKey_() {
+  return Utilities.formatDate(new Date(), 'Europe/Istanbul', 'yyyy-MM-dd')
+}
+
+/**
+ * "Eylül 2026" from dd.MM.yyyy / ISO day. Empty if unparseable.
+ */
+function monthSheetNameFromTarih_(tarih) {
+  var key = tarihDayKey_(tarih)
+  if (!key) return ''
+  var parts = key.split('-')
+  var year = Number(parts[0])
+  var month = Number(parts[1])
+  if (!year || month < 1 || month > 12) return ''
+  return TR_MONTH_NAMES[month - 1] + ' ' + year
+}
+
+/**
+ * Month tab name shifted by monthOffset from a day key / tarih string.
+ * Falls back to today Istanbul when base is empty.
+ */
+function monthSheetNameFromOffset_(baseTarih, monthOffset) {
+  var key = tarihDayKey_(baseTarih) || todayIstanbulDayKey_()
+  var parts = key.split('-')
+  var y = Number(parts[0])
+  var m = Number(parts[1]) - 1 + Number(monthOffset || 0)
+  while (m < 0) {
+    m += 12
+    y -= 1
+  }
+  while (m > 11) {
+    m -= 12
+    y += 1
+  }
+  return TR_MONTH_NAMES[m] + ' ' + y
+}
+
+function prepareLogSheet_(sheet) {
+  if (!sheet) return null
+  ensureHeaderRow_(sheet)
+  ensureJobIdHeader_(sheet)
+  return sheet
+}
+
+function legacyLogSheetName_() {
+  return (
     PropertiesService.getScriptProperties().getProperty('SHEET_NAME') ||
     DEFAULT_SHEET_NAME
+  )
+}
+
+function getLegacyLogSheet_(ss, createIfMissing) {
+  var name = legacyLogSheetName_()
+  var sheet = ss.getSheetByName(name)
+  if (!sheet && createIfMissing) {
+    sheet = ss.insertSheet(name)
+  }
+  return prepareLogSheet_(sheet)
+}
+
+function getOrCreateMonthSheetByName_(ss, name) {
+  if (!name) return null
   var sheet = ss.getSheetByName(name)
   if (!sheet) {
     sheet = ss.insertSheet(name)
   }
-  return sheet
+  return prepareLogSheet_(sheet)
+}
+
+/**
+ * Target month tab for çekim tarihi (creates if missing).
+ * Fallback: today's Istanbul month when tarih missing.
+ */
+function getOrCreateLogSheetForBody_(body) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  var name =
+    monthSheetNameFromTarih_(shootTarihFromBody_(body)) ||
+    monthSheetNameFromTarih_(todayIstanbulDayKey_())
+  return getOrCreateMonthSheetByName_(ss, name)
+}
+
+/** @deprecated Prefer getOrCreateLogSheetForBody_ — kept for rare callers. */
+function getOrCreateLogSheet_() {
+  return getOrCreateLogSheetForBody_({})
+}
+
+/**
+ * JOB ID search: target month, ±2 neighboring months, then legacy IslemLogu.
+ * Does not create missing month tabs.
+ * When body has no tarih, still searches the current Istanbul month (offset 0).
+ * @returns {{sheet: GoogleAppsScript.Spreadsheet.Sheet, row: number}|null}
+ */
+function findRowByJobIdAcrossSheets_(ss, body) {
+  var jobId = resolveJobId_(body)
+  if (!jobId) return null
+
+  var shoot = shootTarihFromBody_(body)
+  var base = shoot || todayIstanbulDayKey_()
+  var names = []
+  function pushName(n) {
+    if (n && names.indexOf(n) < 0) names.push(n)
+  }
+  // Target from çekim tarihi when present; always include base month (offset 0)
+  // so deleteJobRow without tarih still finds "Eylül 2026" in September.
+  pushName(monthSheetNameFromTarih_(shoot))
+  pushName(monthSheetNameFromOffset_(base, 0))
+  for (var off = 1; off <= 2; off++) {
+    pushName(monthSheetNameFromOffset_(base, -off))
+    pushName(monthSheetNameFromOffset_(base, off))
+  }
+  pushName(legacyLogSheetName_())
+
+  for (var i = 0; i < names.length; i++) {
+    var sheet = ss.getSheetByName(names[i])
+    if (!sheet) continue
+    var row = findRowByJobId_(sheet, body)
+    if (row > 1) return { sheet: sheet, row: row }
+  }
+  return null
+}
+
+/**
+ * Resolve existing row: JOB ID across month tabs, else fuzzy on target month
+ * + legacy IslemLogu (does not create tabs).
+ */
+function findRowLocation_(ss, body) {
+  var byId = findRowByJobIdAcrossSheets_(ss, body)
+  if (byId) return byId
+
+  var candidates = []
+  var targetName = monthSheetNameFromTarih_(shootTarihFromBody_(body))
+  if (targetName) {
+    var target = ss.getSheetByName(targetName)
+    if (target) candidates.push(target)
+  }
+  var legacy = ss.getSheetByName(legacyLogSheetName_())
+  if (legacy) {
+    var already = false
+    for (var c = 0; c < candidates.length; c++) {
+      if (candidates[c].getSheetId() === legacy.getSheetId()) already = true
+    }
+    if (!already) candidates.push(legacy)
+  }
+
+  for (var i = 0; i < candidates.length; i++) {
+    var sheet = candidates[i]
+    prepareLogSheet_(sheet)
+    var row = findRow_(sheet, body)
+    if (row > 1) return { sheet: sheet, row: row }
+  }
+  return null
 }
 
 /**
  * Only write full headers if the sheet is empty.
  * Never overwrite an existing header row (protects the ops Excel layout).
- * Existing sheets: ensureJobIdHeader_ may fill M1 when empty (does not touch A–L).
+ * Existing sheets: ensureJobIdHeader_ fills V1 (does not touch A–L).
  */
 function ensureHeaderRow_(sheet) {
   if (sheet.getLastRow() === 0) {
@@ -1622,10 +2235,14 @@ function ensureHeaderRow_(sheet) {
 }
 
 /**
- * Write "JOB ID" into column M (13) header cell when empty.
- * Safe for live ops workbooks: never overwrites a non-empty M1 / template labels.
+ * Ensure V1 = "JOB ID". Clear M1 when it is exactly "JOB ID" so header lookup
+ * prefers V (legacy M cell values on data rows are left intact).
  */
 function ensureJobIdHeader_(sheet) {
+  var legacyHeader = sheet.getRange(1, COL.JOB_ID_LEGACY)
+  if (String(legacyHeader.getValue() || '').trim() === 'JOB ID') {
+    legacyHeader.setValue('')
+  }
   var cell = sheet.getRange(1, COL.JOB_ID)
   if (!String(cell.getValue() || '').trim()) {
     cell.setValue('JOB ID')

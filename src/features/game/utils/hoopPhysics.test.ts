@@ -17,15 +17,20 @@ describe('hoop game product rules', () => {
     expect(MAX_DAILY_SHOTS).toBe(6)
   })
 
-  it('test mode: only management, coordinator and şef can play', async () => {
+  it('public launch: every signed-in role can play with a 6-shot day cap', async () => {
     const { canPlayHoopGame, HOOP_PUBLIC_TEST_MODE, hoopShotLimitForRole } =
       await import('@/features/game/services/hoopScoreService')
-    expect(HOOP_PUBLIC_TEST_MODE).toBe(true)
+    expect(HOOP_PUBLIC_TEST_MODE).toBe(false)
     expect(canPlayHoopGame('management')).toBe(true)
     expect(canPlayHoopGame('coordinator')).toBe(true)
     expect(canPlayHoopGame('sef')).toBe(true)
-    expect(canPlayHoopGame('reporter')).toBe(false)
-    expect(hoopShotLimitForRole('management')).toBeNull()
+    expect(canPlayHoopGame('reporter')).toBe(true)
+    expect(canPlayHoopGame('media_planning')).toBe(true)
+    expect(canPlayHoopGame('human_resources')).toBe(true)
+    expect(canPlayHoopGame('kameraman')).toBe(true)
+    expect(canPlayHoopGame(null)).toBe(false)
+    expect(hoopShotLimitForRole('reporter')).toBe(6)
+    expect(hoopShotLimitForRole('management')).toBe(6)
   })
 
   it('oscillates aim between configured min and max', () => {

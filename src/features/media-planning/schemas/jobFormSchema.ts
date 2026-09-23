@@ -8,7 +8,6 @@ import {
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { isValidTurkishPhone } from '@/lib/phone'
-import { toTitleCaseTr } from '@/lib/text'
 
 export { combineJobDateAndTime, isValidJobTimeLocal }
 
@@ -17,8 +16,7 @@ const contactSchema = z.object({
     .string()
     .trim()
     .min(2, 'Yetkili adı en az 2 karakter olmalıdır.')
-    .max(100, 'Yetkili adı en fazla 100 karakter olabilir.')
-    .transform(toTitleCaseTr),
+    .max(100, 'Yetkili adı en fazla 100 karakter olabilir.'),
   mobilePhone: z
     .string()
     .min(1, 'Cep telefonu gereklidir.')
@@ -36,8 +34,7 @@ const jobFormObjectSchema = z.object({
     .string()
     .trim()
     .min(2, 'Firma adı en az 2 karakter olmalıdır.')
-    .max(120, 'Firma adı en fazla 120 karakter olabilir.')
-    .transform(toTitleCaseTr),
+    .max(120, 'Firma adı en fazla 120 karakter olabilir.'),
   contacts: z
     .array(contactSchema)
     .min(1, 'En az bir yetkili ekleyin.')
@@ -48,8 +45,7 @@ const jobFormObjectSchema = z.object({
     .string()
     .trim()
     .min(10, 'Adres en az 10 karakter olmalıdır.')
-    .max(500, 'Adres en fazla 500 karakter olabilir.')
-    .transform(toTitleCaseTr),
+    .max(500, 'Adres en fazla 500 karakter olabilir.'),
   instagram: z
     .string()
     .trim()

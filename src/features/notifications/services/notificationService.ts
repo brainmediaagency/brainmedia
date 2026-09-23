@@ -71,7 +71,7 @@ export function isOwnActionNotification(
  * filtered out for reporters here — they do not act on region planning.
  * Kameraman only receives the evening shooting-calendar push (not inbox noise).
  * İK rapor / CV bildirimleri yalnızca yönetim inbox'ında (media_planning hariç).
- * Şef: yalnızca iş konfirme / takvim güncelle / günün bölgesi (yönetim özet kutusu filtreli).
+ * Şef / koordinatör: yönetim kutusunda seçili iş & saha olayları (İK hariç).
  */
 export function isNotificationVisibleForRole(
   item: AppNotification,
@@ -83,11 +83,25 @@ export function isNotificationVisibleForRole(
   if (item.type === 'hr_report' || item.type === 'hiring_note') {
     return role === 'management'
   }
-  if (role === 'sef') {
+  if (item.type === 'job_call_status') {
+    return (
+      role === 'management'
+      || role === 'coordinator'
+      || role === 'sef'
+      || role === 'media_planning'
+    )
+  }
+  if (role === 'sef' || role === 'coordinator') {
     return (
       item.type === 'job_created'
       || item.type === 'job_approved'
       || item.type === 'region_created'
+      || item.type === 'job_clock_report'
+      || (role === 'coordinator' && (
+        item.type === 'odometer_report'
+        || item.type === 'daily_report'
+        || item.type === 'z_report'
+      ))
     )
   }
   return true

@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/Button'
 import { Drawer } from '@/components/ui/Drawer'
 import { PushNotificationToggle } from '@/features/notifications/components/PushNotificationToggle'
@@ -19,6 +20,7 @@ import type { AppNotification } from '@/features/notifications/types'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { sanitizeAppPath } from '@/lib/appPath'
 import { cn } from '@/lib/classNames'
+import { mapAppError } from '@/lib/errors'
 
 function formatWhen(createdAt: { toDate?: () => Date } | null): string {
   if (!createdAt?.toDate) return ''
@@ -173,6 +175,7 @@ export function NotificationBell() {
   const { enabled, items, unreadCount, uid, markRead, markAllRead } =
     useNotificationInbox()
   const [open, setOpen] = useState(false)
+  const [markingAll, setMarkingAll] = useState(false)
   const panelId = useId()
   const anchorRef = useRef<HTMLButtonElement>(null)
   const prevDesktopRef = useRef<boolean | null>(null)
@@ -199,16 +202,30 @@ export function NotificationBell() {
     navigate(sanitizeAppPath(item.link))
   }
 
+  const handleMarkAllRead = async () => {
+    setMarkingAll(true)
+    try {
+      await markAllRead()
+    } catch (error) {
+      toast.error(mapAppError(error, 'Bildirimler okundu olarak işaretlenemedi.'))
+    } finally {
+      setMarkingAll(false)
+    }
+  }
+
   const markAllButton =
     unreadCount > 0 ? (
-      <button
+      <Button
         type="button"
-        className="inline-flex items-center gap-1 text-xs font-medium text-brand-cyan hover:underline"
-        onClick={() => void markAllRead()}
+        size="sm"
+        variant="secondary"
+        loading={markingAll}
+        className="h-8 gap-1.5 px-2.5 text-xs"
+        onClick={() => void handleMarkAllRead()}
       >
         <CheckCheck className="size-3.5" aria-hidden="true" />
-        Tümünü okundu
-      </button>
+        Tümünü okundu say
+      </Button>
     ) : null
 
   const pushToggle = (

@@ -6,10 +6,12 @@ import { cn } from '@/lib/classNames'
 export type ModalProps = {
   open: boolean
   onClose: () => void
-  title: string
+  title: ReactNode
   description?: string
   children: ReactNode
   className?: string
+  titleClassName?: string
+  headerClassName?: string
   showCloseButton?: boolean
 }
 
@@ -51,6 +53,8 @@ export function Modal({
   description,
   children,
   className,
+  titleClassName,
+  headerClassName,
   showCloseButton = true,
 }: ModalProps) {
   const titleId = useId()
@@ -97,9 +101,21 @@ export function Modal({
           className,
         )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-3">
+        <div
+          className={cn(
+            'relative border-b border-border px-4 py-3 sm:px-6 sm:py-5',
+            showCloseButton && 'pr-12 sm:pr-14',
+            headerClassName,
+          )}
+        >
           <div className="min-w-0">
-            <h2 id={titleId} className="font-display text-lg font-semibold text-text-primary">
+            <h2
+              id={titleId}
+              className={cn(
+                'font-display text-lg font-semibold text-text-primary',
+                titleClassName,
+              )}
+            >
               {title}
             </h2>
             {description && (
@@ -112,7 +128,7 @@ export function Modal({
             <button
               type="button"
               onClick={onClose}
-              className="touch-target inline-flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-text-secondary hover:bg-surface-muted hover:text-text-primary"
+              className="touch-target absolute top-2 right-2 inline-flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-text-secondary hover:bg-surface-muted hover:text-text-primary sm:top-3 sm:right-3"
               aria-label="Kapat"
             >
               <X className="size-5" />

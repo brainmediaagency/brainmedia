@@ -7,25 +7,31 @@ import {
   ensureBrowserNotificationPermission,
   getBrowserNotificationPermission,
   initOneSignal,
-  isIosDevice,
+  IOS_PUSH_DENIED_HINT,
+  IOS_PUSH_SETUP_HINT,
+  iosPushBlockedInThisBrowser,
   isOneSignalConfigured,
   isOneSignalPushRole,
-  isStandaloneDisplayMode,
   loginOneSignalWithRole,
+  needsIosHomeScreenForPush,
+  onesignalBannerDismissKey,
   requestOneSignalPushPermission,
 } from '@/lib/onesignal'
 
-const DISMISS_KEY = 'brain-onesignal-banner-dismissed'
-
 /**
- * OneSignal Web Push opt-in for every authenticated app role
- * (works when site is closed). iPhone: requires Add to Home Screen (PWA) first.
+ * OneSignal Web Push opt-in. iPhone: Safari Home Screen PWA, then enable.
+ * Dismissing the A2HS hint in Safari must not hide enable inside the icon app.
  */
 export function OneSignalSubscribeBanner() {
   const { claims, profile } = useAuth()
+  const needsHomeScreen = needsIosHomeScreenForPush()
+  const blockedBrowser = iosPushBlockedInThisBrowser()
+  const dismissKind = needsHomeScreen || blockedBrowser ? 'homescreen-hint' : 'enable'
+  const dismissKey = onesignalBannerDismissKey(dismissKind)
+
   const [dismissed, setDismissed] = useState(() => {
     try {
-      return localStorage.getItem(DISMISS_KEY) === '1'
+      return localStorage.getItem(dismissKey) === '1'
     } catch {
       return false
     }
@@ -34,10 +40,16 @@ export function OneSignalSubscribeBanner() {
   const [subscribed, setSubscribed] = useState(false)
 
   const configured = isOneSignalConfigured()
-  const isIos = isIosDevice()
-  const isStandalone = isStandaloneDisplayMode()
-  const needsHomeScreen = isIos && !isStandalone
   const pushRole = isOneSignalPushRole(claims?.role) ? claims.role : null
+  const canEnable = !needsHomeScreen && !blockedBrowser
+
+  useEffect(() => {
+    try {
+      setDismissed(localStorage.getItem(dismissKey) === '1')
+    } catch {
+      setDismissed(false)
+    }
+  }, [dismissKey])
 
   useEffect(() => {
     if (!pushRole || !profile?.uid || !configured) return
@@ -45,45 +57,44 @@ export function OneSignalSubscribeBanner() {
       await initOneSignal()
       await loginOneSignalWithRole(profile.uid, pushRole)
       if (
+        canEnable &&
         typeof Notification !== 'undefined' &&
-        Notification.permission === 'granted' &&
-        !needsHomeScreen
+        Notification.permission === 'granted'
       ) {
         const ok = await requestOneSignalPushPermission()
         if (ok) setSubscribed(true)
       }
     })()
-  }, [pushRole, profile?.uid, configured, needsHomeScreen])
+  }, [pushRole, profile?.uid, configured, canEnable])
 
   const dismiss = useCallback(() => {
     setDismissed(true)
     try {
-      localStorage.setItem(DISMISS_KEY, '1')
+      localStorage.setItem(dismissKey, '1')
     } catch {
       /* ignore */
     }
-  }, [])
+  }, [dismissKey])
 
   const enable = useCallback(async () => {
     if (!profile?.uid || !pushRole) return
+    if (blockedBrowser) {
+      toast.message(IOS_PUSH_SETUP_HINT)
+      return
+    }
     if (needsHomeScreen) {
-      toast.message(
-        'iPhone’da Safari → Paylaş → Ana Ekrana Ekle, sonra B’RAIN ikonundan açın.',
-      )
+      toast.message(IOS_PUSH_SETUP_HINT)
       return
     }
     setBusy(true)
     try {
-      // Ask the browser first while the click gesture is still valid.
       const browser = await ensureBrowserNotificationPermission()
       if (browser === 'denied') {
-        toast.error(
-          'Tarayıcı bu site için bildirimi engellemiş. Adres çubuğundaki kilit → Bildirimler → İzin ver, sonra sayfayı yenileyin.',
-        )
+        toast.error(IOS_PUSH_DENIED_HINT)
         return
       }
       if (browser !== 'granted') {
-        toast.error('Bildirim izni verilmedi.')
+        toast.error('Bildirim izni verilmedi. Ekranda çıkan pencerede İzin Ver’e basın.')
         return
       }
       await initOneSignal()
@@ -91,49 +102,49 @@ export function OneSignalSubscribeBanner() {
       const ok = await requestOneSignalPushPermission()
       if (ok) {
         setSubscribed(true)
-        toast.success('OneSignal bildirimleri açıldı.')
+        toast.success('Push bildirimleri açıldı.')
         dismiss()
       } else if (getBrowserNotificationPermission() === 'denied') {
-        toast.error(
-          'Tarayıcı bu site için bildirimi engellemiş. Adres çubuğundaki kilit → Bildirimler → İzin ver, sonra sayfayı yenileyin.',
-        )
+        toast.error(IOS_PUSH_DENIED_HINT)
       } else {
-        toast.error('Bildirimler açılamadı. Sayfayı yenileyip tekrar deneyin.')
+        toast.error(
+          'Bildirimler açılamadı. Ana ekran ikonundan açtığınızdan emin olun, sonra tekrar deneyin.',
+        )
       }
     } finally {
       setBusy(false)
     }
-  }, [profile?.uid, pushRole, needsHomeScreen, dismiss])
+  }, [profile?.uid, pushRole, needsHomeScreen, blockedBrowser, dismiss])
 
   if (!pushRole) return null
   if (!configured) return null
   if (dismissed || subscribed) return null
 
   return (
-    <div className="border-b border-border bg-surface-muted/80 px-4 py-3 sm:px-4 lg:px-6">
-      <div className="content-shell flex max-w-full flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
-            <BellRing className="size-4 shrink-0 text-brand-cyan" aria-hidden="true" />
-            Push bildirimleri (OneSignal)
-          </p>
-          {needsHomeScreen ? (
-            <p className="text-sm text-text-secondary">
-              iPhone’da site kapalıyken bildirim için Safari’de{' '}
+    <div className="border-b border-border bg-surface-muted/80 px-4 py-2 lg:px-6">
+      <div className="content-shell flex max-w-full items-center justify-between gap-3">
+        <p className="flex min-w-0 items-center gap-2 text-sm text-text-secondary">
+          <BellRing className="size-4 shrink-0 text-brand-cyan" aria-hidden="true" />
+          {blockedBrowser ? (
+            <span>
+              Bildirim için Safari’de{' '}
+              <strong className="font-medium text-text-primary">Ana Ekrana Ekle</strong>{' '}
+              kullanın.
+            </span>
+          ) : needsHomeScreen ? (
+            <span>
+              Safari’de{' '}
               <strong className="font-medium text-text-primary">Paylaş</strong>{' '}
               <Share className="inline size-3.5 align-text-bottom" aria-hidden="true" /> →{' '}
-              <strong className="font-medium text-text-primary">Ana Ekrana Ekle</strong>,
-              ardından uygulamayı ikondan açıp bildirim izni verin.
-            </p>
+              <strong className="font-medium text-text-primary">Ana Ekrana Ekle</strong>
+              , ikondan açın.
+            </span>
           ) : (
-            <p className="text-sm text-text-secondary">
-              Site kapalıyken bile iş durumu, konfirme, Z/kasa ve İK/CV olaylarında
-              telefon veya bilgisayarınıza bildirim gelir.
-            </p>
+            <span>Önemli güncellemeleri kaçırmayın.</span>
           )}
-        </div>
+        </p>
         <div className="flex shrink-0 items-center gap-2">
-          {!needsHomeScreen ? (
+          {canEnable ? (
             <Button size="sm" loading={busy} onClick={() => void enable()}>
               Bildirimleri aç
             </Button>
@@ -145,7 +156,7 @@ export function OneSignalSubscribeBanner() {
             onClick={dismiss}
             className="px-2"
           >
-            <X className="size-4" aria-hidden="true" />
+            <X className="size-4" />
           </Button>
         </div>
       </div>

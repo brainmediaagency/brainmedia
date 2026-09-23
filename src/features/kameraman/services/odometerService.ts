@@ -25,6 +25,10 @@ import type {
   OdometerSlot,
 } from '@/features/kameraman/types/odometer'
 import {
+  ODOMETER_PHOTO_MAX_BYTES,
+  ODOMETER_PHOTO_MAX_MB,
+} from '@/features/kameraman/types/odometer'
+import {
   buildDriveFolderKey,
   slotFileName,
   slotLabelTr,
@@ -34,6 +38,8 @@ import { isValidDateOnly, todayDateOnlyIstanbul, formatDateOnlyShortTr } from '@
 import { DEFAULT_LIST_LIMIT } from '@/config/roles'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
+import { writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
+import type { ActivityLogAction } from '@/features/activity-log/types/activityLog'
 
 const converter: FirestoreDataConverter<KameramanOdometerReading> = {
   toFirestore(item: KameramanOdometerReading): DocumentData {
@@ -113,9 +119,11 @@ async function uploadOdometerPhoto(input: {
     file: input.photoFile,
     fileName,
     mimeType,
-    folder: 'kameraman-km',
+    folder: 'odometer',
     folderPath: folderKey,
     onProgress: input.onProgress,
+    // Fast encode → usually <1.5 MB single-shot; same Drive folder / webhook auth.
+    compress: { fast: true, maxEdge: 1600 },
   })
   return {
     photoStoragePath: drive.fileId,
@@ -183,6 +191,33 @@ export async function fetchOdometerReadingsInRange(params: {
   }
 }
 
+function logOdometerActivity(
+  action: Extract<
+    ActivityLogAction,
+    | 'field.odometer_created'
+    | 'field.odometer_updated'
+    | 'field.odometer_deleted'
+  >,
+  params: {
+    ownerName: string
+    slot: OdometerSlot
+    reportDate: string
+    km?: number
+    entityId: string
+  },
+): void {
+  const kmPart =
+    params.km != null ? ` · ${params.km.toLocaleString('tr-TR')} km` : ''
+  writeActivityLogForCurrentUser({
+    category: 'field',
+    action,
+    summary: `${params.ownerName.trim() || 'Kameraman'} — ${slotLabelTr(params.slot)}${kmPart} · ${formatDateOnlyShortTr(params.reportDate)}`,
+    entityType: 'odometer',
+    entityId: params.entityId,
+    actorNameFallback: params.ownerName,
+  })
+}
+
 export async function upsertOdometerReading(input: {
   reportDate: string
   slot: OdometerSlot
@@ -218,8 +253,10 @@ export async function upsertOdometerReading(input: {
       if (!photoFile.type.startsWith('image/')) {
         throw new UserFacingError('Yalnızca görsel dosyaları yüklenebilir.')
       }
-      if (photoFile.size > 8 * 1024 * 1024) {
-        throw new UserFacingError('Görsel en fazla 8 MB olabilir.')
+      if (photoFile.size > ODOMETER_PHOTO_MAX_BYTES) {
+        throw new UserFacingError(
+          `Görsel en fazla ${ODOMETER_PHOTO_MAX_MB} MB olabilir.`,
+        )
       }
     }
 
@@ -283,6 +320,13 @@ export async function upsertOdometerReading(input: {
           updatedAt: serverTimestamp(),
         })
       }
+      logOdometerActivity('field.odometer_updated', {
+        ownerName: input.createdByNameSnapshot,
+        slot: input.slot,
+        reportDate: input.reportDate,
+        km,
+        entityId: docId,
+      })
       return docId
     }
 
@@ -321,6 +365,14 @@ export async function upsertOdometerReading(input: {
       createdByUid: authUid,
       createdByNameSnapshot: input.createdByNameSnapshot.trim().slice(0, 120),
       pushRoles: ['management', 'coordinator'],
+    })
+
+    logOdometerActivity('field.odometer_created', {
+      ownerName: input.createdByNameSnapshot,
+      slot: input.slot,
+      reportDate: input.reportDate,
+      km,
+      entityId: docId,
     })
 
     return docId
@@ -362,8 +414,10 @@ export async function adminUpdateOdometerReading(input: {
       if (!photoFile.type.startsWith('image/')) {
         throw new UserFacingError('Yalnızca görsel dosyaları yüklenebilir.')
       }
-      if (photoFile.size > 8 * 1024 * 1024) {
-        throw new UserFacingError('Görsel en fazla 8 MB olabilir.')
+      if (photoFile.size > ODOMETER_PHOTO_MAX_BYTES) {
+        throw new UserFacingError(
+          `Görsel en fazla ${ODOMETER_PHOTO_MAX_MB} MB olabilir.`,
+        )
       }
     }
 
@@ -412,6 +466,13 @@ export async function adminUpdateOdometerReading(input: {
         updatedAt: serverTimestamp(),
       })
     }
+    logOdometerActivity('field.odometer_updated', {
+      ownerName: ownerName,
+      slot,
+      reportDate,
+      km,
+      entityId: id,
+    })
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(
@@ -435,11 +496,26 @@ export async function deleteOdometerReading(readingId: string): Promise<void> {
     if (!snap.exists()) {
       throw new UserFacingError('Kadran raporu bulunamadı.')
     }
-    const data = snap.data() as { photoStoragePath?: string }
+    const data = snap.data() as {
+      photoStoragePath?: string
+      reportDate?: string
+      slot?: string
+      createdByNameSnapshot?: string
+      odometerKm?: number
+    }
     const fileId = String(data.photoStoragePath ?? '').trim()
+    const slot: OdometerSlot =
+      String(data.slot ?? '') === 'evening' ? 'evening' : 'morning'
 
     await deleteDoc(ref)
     if (fileId) void trashDriveFile(fileId)
+    logOdometerActivity('field.odometer_deleted', {
+      ownerName: String(data.createdByNameSnapshot ?? 'Kameraman'),
+      slot,
+      reportDate: String(data.reportDate ?? ''),
+      km: Math.floor(Number(data.odometerKm ?? 0)) || undefined,
+      entityId: id,
+    })
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(

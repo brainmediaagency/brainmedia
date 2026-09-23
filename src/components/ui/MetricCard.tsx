@@ -12,10 +12,14 @@ export type MetricTopBar =
   | 'violet'
   | 'green'
   | 'pink'
+  | 'orange'
 
 export type MetricCardProps = {
   label: string
-  value: number
+  /** Numeric value (animated when `animate`). Ignored when `valueText` is set. */
+  value?: number
+  /** Preformatted display (e.g. ₺ amount). Takes precedence over `value`. */
+  valueText?: string
   icon?: LucideIcon
   accent?: MetricAccent
   /** Üst şerit: accent, sarı|lacivert split, veya düz renk */
@@ -65,6 +69,7 @@ const solidTopBar: Record<Exclude<MetricTopBar, 'accent' | 'splitYellowNavy'>, s
   violet: 'bg-[#7c3aed]',
   green: 'bg-success',
   pink: 'bg-brand-pink',
+  orange: 'bg-brand-orange',
 }
 
 function YellowNavySplitBar() {
@@ -113,7 +118,8 @@ function useAnimatedNumber(target: number, animate: boolean): number {
 
 export function MetricCard({
   label,
-  value,
+  value = 0,
+  valueText,
   icon: Icon,
   accent = 'cyan',
   topBar = 'accent',
@@ -122,8 +128,10 @@ export function MetricCard({
   className,
   footer,
 }: MetricCardProps) {
-  const displayValue = useAnimatedNumber(value, animate)
-  const formatted = new Intl.NumberFormat('tr-TR').format(displayValue)
+  const displayValue = useAnimatedNumber(value, animate && valueText == null)
+  const formatted =
+    valueText ??
+    new Intl.NumberFormat('tr-TR').format(displayValue)
 
   return (
     <div
@@ -146,20 +154,33 @@ export function MetricCard({
         />
       )}
       <div className="flex items-start justify-between gap-3 pt-1">
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <p className="text-sm font-medium text-text-secondary">{label}</p>
-          <p className={cn('font-display text-3xl font-semibold tracking-tight', accentText[accent])}>
+          <p
+            className={cn(
+              'font-display text-3xl font-semibold tracking-tight tabular-nums',
+              accentText[accent],
+            )}
+          >
             {formatted}
-            {suffix && <span className="ml-1 text-lg font-normal text-text-secondary">{suffix}</span>}
+            {suffix && !valueText ? (
+              <span className="ml-1 text-lg font-normal text-text-secondary">
+                {suffix}
+              </span>
+            ) : null}
           </p>
         </div>
         {Icon && (
-          <div className={cn('rounded-[var(--radius-sm)] p-2.5', accentChip[accent])}>
+          <div className={cn('shrink-0 rounded-[var(--radius-sm)] p-2.5', accentChip[accent])}>
             <Icon className="size-5" aria-hidden="true" />
           </div>
         )}
       </div>
-      {footer && <div className="mt-3 border-t border-border pt-3 text-sm text-text-secondary">{footer}</div>}
+      {footer && (
+        <div className="mt-3 border-t border-border pt-3 text-sm text-text-secondary">
+          {footer}
+        </div>
+      )}
     </div>
   )
 }

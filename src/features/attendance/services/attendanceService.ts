@@ -23,9 +23,9 @@ import { getDb } from '@/lib/firebase/firestore'
 import type { ActiveShift, AttendanceLog } from '@/features/attendance/types/attendance'
 import { generateShiftId } from '@/features/attendance/utils/timeSync'
 import { getUserProfile } from '@/features/users/services/userService'
-import { UserFacingError } from '@/lib/errors'
+import { UserFacingError, mapAppError } from '@/lib/errors'
 import { DEFAULT_LIST_LIMIT, isShiftRole } from '@/config/roles'
-import { mapAppError } from '@/lib/errors'
+import { writeActivityLog } from '@/features/activity-log/services/activityLogService'
 
 export const activeShiftConverter: FirestoreDataConverter<ActiveShift> = {
   toFirestore(data: ActiveShift): DocumentData {
@@ -346,6 +346,18 @@ export async function updateAttendanceLogTimes(input: {
         newWorkedMinutes: workedMinutes,
         createdAt: serverTimestamp(),
       })
+    })
+    writeActivityLog({
+      actor: {
+        uid: input.actorUid,
+        fullName: input.actorName,
+        role: input.actorRole,
+      },
+      category: 'field',
+      action: 'field.attendance_updated',
+      summary: `${input.actorName} — ${input.reason.trim()}`,
+      entityType: 'attendance',
+      entityId: input.shiftId,
     })
   } catch (error) {
     if (error instanceof UserFacingError) throw error

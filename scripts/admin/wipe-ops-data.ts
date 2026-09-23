@@ -5,6 +5,7 @@
  *   jobs (+ history), reporterDailyReports (+ history), voiceRecordings,
  *   reporterZReports, hrReports, hiringNotes, dailyRegions,
  *   managementNotifications, broadcastNotifications, userNotifications,
+ *   activityLogs,
  *   reactionDailyScores, reactionDailyWinners, hoopDailyScores, hoopDailyWinners,
  *   activeShifts, timeSync,
  *   users/{uid}/attendanceLogs (+ history)
@@ -30,6 +31,7 @@ const FLAT_COLLECTIONS = [
   'dailyRegions',
   'managementNotifications',
   'broadcastNotifications',
+  'activityLogs',
   'reactionDailyScores',
   'reactionDailyWinners',
   'hoopDailyScores',

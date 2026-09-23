@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase/firestore'
 import type { JobStatus } from '@/config/roles'
+import type { JobCallOutcome } from '@/features/jobs/utils/jobCallOutcome'
 
 export interface JobContact {
   name: string
@@ -37,6 +38,11 @@ export interface JobDocument {
   reviewedByNameSnapshot: string | null
   reviewedAt: Timestamp | null
   reviewNote: string | null
+  /**
+   * Last outbound call result while the job is pending confirmation.
+   * Confirming the job sets `reached` without a separate notify.
+   */
+  callOutcome: JobCallOutcome | null
   /** Yönetim/koordinatör muhabir çekim takvimine iletti mi */
   forwardedToReporter: boolean
   forwardedToReporterByUid: string | null
@@ -66,7 +72,6 @@ export interface JobHistoryEntry {
 export type AllowedJobTransition =
   | { from: 'pending'; to: 'approved' }
   | { from: 'pending'; to: 'rejected' }
-  | { from: 'pending'; to: 'cancelled' }
   | { from: 'approved'; to: 'pending' }
   | { from: 'approved'; to: 'shot' }
   | { from: 'approved'; to: 'cancelled' }

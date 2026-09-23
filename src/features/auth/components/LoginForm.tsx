@@ -83,9 +83,11 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
       >
         <div className="relative">
           <Input
+            id="password"
             type={showPassword ? 'text' : 'password'}
             autoComplete="current-password"
-            placeholder="••••••••"
+            aria-invalid={errors.password ? true : undefined}
+            aria-describedby={errors.password ? 'password-error' : undefined}
             hasError={Boolean(errors.password)}
             disabled={submitting}
             className="pr-11"
@@ -120,6 +122,10 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
       <Button type="submit" loading={submitting} disabled={submitting} className="w-full">
         Giriş Yap
       </Button>
+
+      <p className="text-center text-xs text-text-secondary">
+        Şifrenizi mi unuttunuz? Yöneticinizden sıfırlama isteyin.
+      </p>
     </form>
   )
 }

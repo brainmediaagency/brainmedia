@@ -1,16 +1,14 @@
 import { type HTMLAttributes, type ReactNode } from 'react'
 import { cn } from '@/lib/classNames'
-import { SectionNumber } from '@/components/ui/SectionNumber'
+import { SectionTitleMark } from '@/components/ui/SectionTitleMark'
 
 export type SectionHeaderProps = HTMLAttributes<HTMLDivElement> & {
-  number: number | string
   title: string
   description?: string
   action?: ReactNode
 }
 
 export function SectionHeader({
-  number,
   title,
   description,
   action,
@@ -26,12 +24,14 @@ export function SectionHeader({
       {...props}
     >
       <div className="space-y-1">
-        <div className="flex items-center gap-2.5 font-display text-base font-semibold text-text-primary sm:text-lg">
-          <SectionNumber value={number} />
-          <h2>{title}</h2>
+        <div className="flex items-center gap-2.5 font-display text-base font-semibold sm:text-lg">
+          <SectionTitleMark />
+          <h2 className="section-header__title">{title}</h2>
         </div>
         {description && (
-          <p className="text-sm leading-relaxed text-text-secondary">{description}</p>
+          <p className="pl-[calc(0.25rem+0.625rem)] text-sm leading-relaxed text-text-secondary">
+            {description}
+          </p>
         )}
       </div>
       {action && <div className="shrink-0">{action}</div>}

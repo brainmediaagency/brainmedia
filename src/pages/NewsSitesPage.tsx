@@ -11,7 +11,6 @@ export function NewsSitesPage() {
     <div className="space-y-8 animate-fade-in-up">
       <PageHeader
         title="Projelerimiz"
-        subtitle="B’rain Medya Produksiyon haber ağı — marka vitrini ve yayın siteleri."
       />
 
       <section aria-label="Tasarım vitrini" className="mx-auto max-w-5xl">

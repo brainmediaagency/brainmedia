@@ -6,12 +6,15 @@ import {
   ensureBrowserNotificationPermission,
   getBrowserNotificationPermission,
   initOneSignal,
+  IOS_PUSH_DENIED_HINT,
+  IOS_PUSH_SETUP_HINT,
+  iosPushBlockedInThisBrowser,
   isIosDevice,
   isOneSignalConfigured,
   isOneSignalPushOptedIn,
   isOneSignalPushRole,
-  isStandaloneDisplayMode,
   loginOneSignalWithRole,
+  needsIosHomeScreenForPush,
   setOneSignalPushOptedIn,
 } from '@/lib/onesignal'
 
@@ -21,7 +24,7 @@ type PushNotificationToggleProps = {
   className?: string
 }
 
-const DENIED_HELP =
+const DESKTOP_DENIED_HELP =
   'Tarayıcı bu site için bildirimi engellemiş. Adres çubuğundaki kilit / site ayarı → Bildirimler → İzin ver, sonra sayfayı yenileyin.'
 
 /**
@@ -45,7 +48,9 @@ export function PushNotificationToggle({
   const configured = isOneSignalConfigured()
   const pushRole = isOneSignalPushRole(claims?.role) ? claims.role : null
   const canUse = Boolean(configured && pushRole && profile?.uid)
-  const needsHomeScreen = isIosDevice() && !isStandaloneDisplayMode()
+  const needsHomeScreen = needsIosHomeScreenForPush()
+  const blockedBrowser = iosPushBlockedInThisBrowser()
+  const deniedHelp = isIosDevice() ? IOS_PUSH_DENIED_HINT : DESKTOP_DENIED_HELP
   const browserDenied = permission === 'denied'
   const unsupported = permission === 'unsupported'
 
@@ -73,10 +78,13 @@ export function PushNotificationToggle({
     async (next: boolean) => {
       if (!profile?.uid || !pushRole || busy) return
 
+      if (blockedBrowser) {
+        toast.message(IOS_PUSH_SETUP_HINT)
+        return
+      }
+
       if (needsHomeScreen) {
-        toast.message(
-          'iPhone’da Safari → Paylaş → Ana Ekrana Ekle, sonra B’RAIN ikonundan açın.',
-        )
+        toast.message(IOS_PUSH_SETUP_HINT)
         return
       }
 
@@ -90,11 +98,15 @@ export function PushNotificationToggle({
         const browser = await ensureBrowserNotificationPermission()
         setPermission(browser)
         if (browser === 'denied') {
-          toast.error(DENIED_HELP)
+          toast.error(deniedHelp)
           return
         }
         if (browser !== 'granted') {
-          toast.error('Bildirim izni verilmedi.')
+          toast.error(
+            isIosDevice()
+              ? 'Bildirim izni verilmedi. Ekranda çıkan pencerede İzin Ver’e basın.'
+              : 'Bildirim izni verilmedi.',
+          )
           return
         }
       }
@@ -109,7 +121,7 @@ export function PushNotificationToggle({
           toast.error(
             next
               ? getBrowserNotificationPermission() === 'denied'
-                ? DENIED_HELP
+                ? deniedHelp
                 : 'Bildirimler açılamadı. Sayfayı yenileyip tekrar deneyin.'
               : 'Bildirimler kapatılamadı.',
           )
@@ -130,21 +142,27 @@ export function PushNotificationToggle({
       busy,
       refresh,
       needsHomeScreen,
+      blockedBrowser,
       unsupported,
+      deniedHelp,
     ],
   )
 
   if (!canUse) return null
 
-  const statusText = needsHomeScreen
-    ? 'iPhone’da önce Ana Ekrana Ekle gerekir.'
+  const statusText = blockedBrowser
+    ? 'Safari yer imi veya Chrome kısayolu yetmez. Paylaş → Ana Ekrana Ekle, ikondan açın.'
+    : needsHomeScreen
+    ? 'Yer imi yetmez. Safari → Paylaş → Ana Ekrana Ekle, sonra ikondan açıp izin verin.'
     : browserDenied
-      ? DENIED_HELP
+      ? deniedHelp
       : unsupported
         ? 'Bu tarayıcı Web Push desteklemiyor.'
         : optedIn
           ? 'Açık — site kapalıyken de gelir.'
-          : 'Kapalı — açmak için anahtarı kullanın.'
+          : isIosDevice()
+            ? 'Kapalı — anahtarı açın; iPhone bir izin penceresi gösterir (Ayarlar’da uygulama yok).'
+            : 'Kapalı — açmak için anahtarı kullanın.'
 
   return (
     <div
@@ -165,7 +183,7 @@ export function PushNotificationToggle({
         <Toggle
           checked={optedIn}
           onChange={(v) => void onChange(v)}
-          disabled={busy || !ready || needsHomeScreen || unsupported}
+          disabled={busy || !ready || needsHomeScreen || blockedBrowser || unsupported}
           aria-labelledby={labelId}
           aria-describedby={helpId}
         />

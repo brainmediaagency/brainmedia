@@ -59,14 +59,16 @@ export function ReporterPage() {
     }
   }, [isHrCalendarOnly, isKameraman, isReporter])
 
-  const [tab, setTab] = usePageTab(viewerConfig.tabIds, 'jobs')
+  const [tab, setTab] = usePageTab(
+    viewerConfig.tabIds,
+    isReporter || isKameraman || isHrCalendarOnly ? 'jobs' : 'daily-reports',
+  )
 
   if (isReporter) {
     return (
       <div className="space-y-6">
         <PageHeader
           title="Muhabir"
-          subtitle="Günün çekim takvimi, günlük rapor ve Z raporu."
         />
 
         <TabNav
@@ -101,7 +103,6 @@ export function ReporterPage() {
       <div className="space-y-6">
         <PageHeader
           title="Kameraman"
-          subtitle="Çekim takvimi ve günlük km kadran raporları."
         />
 
         <TabNav
@@ -125,7 +126,6 @@ export function ReporterPage() {
       <div className="space-y-6">
         <PageHeader
           title="Muhabir"
-          subtitle="Çekim takvimini görüntüleyin."
         />
 
         <TabNav
@@ -147,7 +147,6 @@ export function ReporterPage() {
     <div className="space-y-6">
       <PageHeader
         title="Muhabir"
-        subtitle="Muhabir çekim takvimi, günlük raporlar ve Z raporları."
       />
 
       <TabNav
@@ -159,11 +158,8 @@ export function ReporterPage() {
       />
 
       <div key={tab} className="animate-fade-in-up">
-        {tab === 'jobs' && <ReporterJobsPanel embedded />}
         {tab === 'daily-reports' && <ManagementReporterInbox view="daily" />}
         {tab === 'muhabir-ozet' && <ReporterSummaryPanel allowReporterPicker />}
-        {tab === 'z-reports' && <ManagementReporterInbox view="z" />}
-        {tab === 'cash' && <ReporterCashPanel />}
         {tab === 'notebook' && <ReporterNotebookPanel />}
       </div>
     </div>

@@ -1,6 +1,11 @@
 import type { UserRole } from '@/config/roles'
 
 export type AppRouteKey =
+  | 'shooting-calendar'
+  | 'job-approvals'
+  | 'region-planning'
+  | 'ops-ledger'
+  | 'coordinator-share'
   | 'media-planning'
   | 'reporter'
   | 'human-resources'
@@ -23,6 +28,11 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
   ],
   coordinator: [
     'coordinator',
+    'shooting-calendar',
+    'job-approvals',
+    'region-planning',
+    'ops-ledger',
+    'coordinator-share',
     'media-planning',
     'reporter',
     'kameraman-field',
@@ -32,7 +42,11 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
   ],
   management: [
     'management',
-    'coordinator',
+    'shooting-calendar',
+    'job-approvals',
+    'region-planning',
+    'ops-ledger',
+    'coordinator-share',
     'media-planning',
     'reporter',
     'kameraman-field',
@@ -43,8 +57,8 @@ export const rolePermissions: Record<UserRole, AppRouteKey[]> = {
   /** Çekim takvimi + Projelerimiz + Oyun (muhabir ile aynı yan menü yüzeyi). */
   kameraman: ['reporter', 'news-sites', 'game'],
   /**
-   * Şef: iş konfirmeleri (onay/red + saat), çekim takvimi, ses kaydı,
-   * Projelerimiz ve Oyun. Kasa / Excel / hesaplar yok.
+   * Şef: iş konfirmeleri + çekim takvimi + ses.
+   * Kameraman iş saatleri çekim takvimi iş detayında görünür.
    */
   sef: ['sef', 'news-sites', 'game'],
 }

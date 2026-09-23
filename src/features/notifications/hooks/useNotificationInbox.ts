@@ -26,7 +26,7 @@ export function useNotificationInbox() {
   const enabled = Boolean(uid) && isUserRole(role)
   const inboxRole = isUserRole(role) ? role : undefined
   const canReadManagementFeed =
-    role === 'management' || role === 'sef'
+    role === 'management' || role === 'sef' || role === 'coordinator'
   const [items, setItems] = useState<AppNotification[]>([])
   const [error, setError] = useState<string | null>(null)
   const seenIdsRef = useRef<Set<string>>(new Set())

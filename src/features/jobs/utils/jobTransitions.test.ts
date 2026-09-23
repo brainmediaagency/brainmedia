@@ -17,7 +17,7 @@ describe('isAllowedTransition', () => {
   const cases: Array<[JobStatus, JobStatus, boolean]> = [
     ['pending', 'approved', true],
     ['pending', 'rejected', true],
-    ['pending', 'cancelled', true],
+    ['pending', 'cancelled', false],
     ['pending', 'shot', false],
     ['approved', 'pending', true],
     ['approved', 'shot', true],
@@ -39,13 +39,18 @@ describe('getStatsDelta', () => {
     expect(getStatsDelta('pending', 'rejected').jobsReceived).toBe(0)
   })
 
-  it('counts shot and cancelled from approved', () => {
+  it('counts shot and cancelled from approved; pending cancel is not allowed', () => {
     expect(getStatsDelta('approved', 'shot')).toEqual({
       jobsReceived: 0,
       jobsShot: 1,
       jobsCancelled: 0,
     })
     expect(getStatsDelta('approved', 'cancelled').jobsCancelled).toBe(1)
+    expect(getStatsDelta('pending', 'cancelled')).toEqual({
+      jobsReceived: 0,
+      jobsShot: 0,
+      jobsCancelled: 0,
+    })
   })
 
   it('reverses received on approved→pending', () => {

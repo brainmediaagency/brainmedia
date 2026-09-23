@@ -103,7 +103,28 @@ describe('isNotificationVisibleForRole', () => {
     }
   })
 
-  it('şef only sees job_created, job_approved, and region_created in inbox', () => {
+  it('şef and coordinator see job_clock_report in inbox filter', () => {
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_clock_report' },
+        'sef',
+      ),
+    ).toBe(true)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_clock_report' },
+        'coordinator',
+      ),
+    ).toBe(true)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_clock_report' },
+        'management',
+      ),
+    ).toBe(true)
+  })
+
+  it('şef sees job_created, job_approved, job_call_status, job_clock_report, and region_created', () => {
     expect(
       isNotificationVisibleForRole(
         { ...item('x'), type: 'job_created' },
@@ -117,6 +138,18 @@ describe('isNotificationVisibleForRole', () => {
       ),
     ).toBe(true)
     expect(isNotificationVisibleForRole(regionItem, 'sef')).toBe(true)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_call_status' },
+        'sef',
+      ),
+    ).toBe(true)
+    expect(
+      isNotificationVisibleForRole(
+        { ...item('x'), type: 'job_clock_report' },
+        'sef',
+      ),
+    ).toBe(true)
     expect(
       isNotificationVisibleForRole(
         { ...item('x'), type: 'daily_report' },

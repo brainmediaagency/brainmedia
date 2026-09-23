@@ -1,4 +1,4 @@
-import { BrandLogo } from '@/components/brand/BrandLogo'
+import { BrandPreloaderMark } from '@/components/brand/BrandPreloaderMark'
 import { cn } from '@/lib/classNames'
 
 interface LoadingScreenProps {
@@ -6,25 +6,19 @@ interface LoadingScreenProps {
   className?: string
 }
 
+/** Full-screen loader — same visual as the route preloader so they never stack. */
 export function LoadingScreen({
   message = 'Yükleniyor…',
   className,
 }: LoadingScreenProps) {
   return (
     <div
-      className={cn(
-        'flex min-h-[50vh] flex-col items-center justify-center gap-4 text-text-secondary',
-        className,
-      )}
+      className={cn('route-preloader route-preloader--screen', className)}
       role="status"
       aria-live="polite"
     >
-      <BrandLogo variant="blue" className="h-8 w-auto max-w-[160px] opacity-90" />
-      <span
-        className="size-7 animate-spin rounded-full border-2 border-brand-cyan border-t-transparent"
-        aria-hidden="true"
-      />
-      <p>{message}</p>
+      <BrandPreloaderMark />
+      <p className="route-preloader__message">{message}</p>
     </div>
   )
 }

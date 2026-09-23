@@ -16,9 +16,6 @@ export function getStatsDelta(
   if (from === 'approved' && to === 'cancelled') {
     return { jobsReceived: 0, jobsShot: 0, jobsCancelled: 1 }
   }
-  if (from === 'pending' && to === 'cancelled') {
-    return { jobsReceived: 0, jobsShot: 0, jobsCancelled: 1 }
-  }
   return { jobsReceived: 0, jobsShot: 0, jobsCancelled: 0 }
 }
 
@@ -29,7 +26,6 @@ export function isAllowedTransition(
   const allowed: Array<[JobStatus, JobStatus]> = [
     ['pending', 'approved'],
     ['pending', 'rejected'],
-    ['pending', 'cancelled'],
     ['approved', 'pending'],
     ['approved', 'shot'],
     ['approved', 'cancelled'],

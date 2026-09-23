@@ -3,9 +3,11 @@ import {
   Briefcase,
   Camera,
   Clock3,
+  Newspaper,
   Wallet,
   XCircle,
 } from 'lucide-react'
+import { CASH_METRIC_VISUAL, cashBalanceFooter, cashBalanceVisual } from '@/features/cash/config/cashMetricVisuals'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -31,62 +33,11 @@ import { formatTryFromKurus } from '@/lib/currency'
 import { mapAppError } from '@/lib/errors'
 import { toast } from 'sonner'
 
-function MoneyCard({
-  label,
-  valueKurus,
-  hint,
-  tone,
-  topBar,
-}: {
-  label: string
-  valueKurus: number
-  hint: string
-  tone: 'income' | 'expense' | 'field' | 'cash'
-  topBar?: 'yellow' | 'navy' | 'violet' | 'green' | 'pink'
-}) {
-  const toneClass =
-    tone === 'income'
-      ? 'border-success/30 bg-success/5'
-      : tone === 'expense'
-        ? 'border-danger/30 bg-danger/5'
-        : tone === 'field'
-          ? 'border-warning/30 bg-warning/5'
-          : 'border-brand-blue/30 bg-brand-blue/5'
-
-  const barClass =
-    topBar === 'yellow'
-      ? 'bg-[#f7c600]'
-      : topBar === 'navy'
-        ? 'bg-brand-navy'
-        : topBar === 'violet'
-          ? 'bg-[#7c3aed]'
-          : topBar === 'green'
-            ? 'bg-success'
-            : topBar === 'pink'
-              ? 'bg-brand-pink'
-              : null
-
-  return (
-    <div className={`relative overflow-hidden rounded-[var(--radius-md)] border p-4 ${toneClass}`}>
-      {barClass ? (
-        <span aria-hidden="true" className={`absolute inset-x-0 top-0 h-1.5 ${barClass}`} />
-      ) : null}
-      <p className="text-sm text-text-secondary">{label}</p>
-      <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-text-primary">
-        {formatTryFromKurus(valueKurus)}
-      </p>
-      <p className="mt-1 text-xs text-text-secondary">{hint}</p>
-    </div>
-  )
-}
-
 export type MonthlyStatsPanelProps = {
-  sectionNumber?: string
   defaultOpen?: boolean
 }
 
 export function MonthlyStatsPanel({
-  sectionNumber = '01',
   defaultOpen = true,
 }: MonthlyStatsPanelProps) {
   const [yearMonth, setYearMonth] = useState<YearMonth>(() => currentYearMonthIstanbul())
@@ -131,9 +82,8 @@ export function MonthlyStatsPanel({
 
   return (
     <AccordionSection
-      number={sectionNumber}
       title="Aylık Özet"
-      description="Seçilen aydaki işler, çekim dakikası, kasa ve medya planlama performansı. Ayın son günü bir sonraki aya sayılır."
+      description="Seçilen aydaki işler, çekim dakikası, kasa ve medya planlama performansı. Rapor / çekim günü kendi takvim ayına yazılır (ayın son günü dahil)."
       defaultOpen={defaultOpen}
     >
       <div className="space-y-5">
@@ -198,12 +148,13 @@ export function MonthlyStatsPanel({
                   topBar="green"
                   animate
                 />
-                <MoneyCard
+                <MetricCard
                   label="Haber geliri"
-                  valueKurus={stats.org.totalNewsIncomeKurus}
-                  hint="Formlardaki haber tutarları toplamı"
-                  tone="cash"
+                  valueText={formatTryFromKurus(stats.org.totalNewsIncomeKurus)}
+                  icon={Newspaper}
+                  accent="pink"
                   topBar="pink"
+                  footer="Formlardaki haber tutarları toplamı"
                 />
               </div>
             </div>
@@ -213,29 +164,29 @@ export function MonthlyStatsPanel({
                 Aylık kasa
               </h3>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <MoneyCard
+                <MetricCard
                   label="Toplam gelir"
-                  valueKurus={stats.org.totalIncomeKurus}
-                  hint="Matrah + KDV"
-                  tone="income"
+                  valueText={formatTryFromKurus(stats.org.totalIncomeKurus)}
+                  {...CASH_METRIC_VISUAL.income}
+                  footer="Matrah + KDV"
                 />
-                <MoneyCard
+                <MetricCard
                   label="Toplam gider"
-                  valueKurus={stats.org.totalExpenseKurus}
-                  hint="Saha + ücret + KDV"
-                  tone="expense"
+                  valueText={formatTryFromKurus(stats.org.totalExpenseKurus)}
+                  {...CASH_METRIC_VISUAL.expense}
+                  footer="Saha giderleri + ücretler"
                 />
-                <MoneyCard
+                <MetricCard
                   label="Sahaya ödenen"
-                  valueKurus={stats.org.totalFieldPaidKurus}
-                  hint="Muhabir formları"
-                  tone="field"
+                  valueText={formatTryFromKurus(stats.org.totalFieldPaidKurus)}
+                  {...CASH_METRIC_VISUAL.fieldPaid}
+                  footer="Muhabir formları"
                 />
-                <MoneyCard
+                <MetricCard
                   label="Kasa"
-                  valueKurus={stats.org.cashBalanceKurus}
-                  hint="Sahaya ödenen − gider"
-                  tone="cash"
+                  valueText={formatTryFromKurus(stats.org.cashBalanceKurus)}
+                  {...cashBalanceVisual(stats.org.cashBalanceKurus)}
+                  footer={cashBalanceFooter(stats.org.cashBalanceKurus, 'Sahaya ödenen − gider')}
                 />
               </div>
             </div>

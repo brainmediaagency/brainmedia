@@ -8,13 +8,16 @@ import {
   limit,
   getDocs,
   getDoc,
+  increment,
   runTransaction,
   serverTimestamp,
+  updateDoc,
   Timestamp,
   type DocumentData,
   type FirestoreDataConverter,
   type QueryDocumentSnapshot,
   type SnapshotOptions,
+  type Transaction,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
@@ -29,11 +32,17 @@ import {
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { formatInTimeZone } from 'date-fns-tz'
-import { notifyManagement } from '@/features/notifications/services/notificationService'
+import {
+  notifyManagement,
+  notifyUser,
+} from '@/features/notifications/services/notificationService'
+import { writeActivityLog } from '@/features/activity-log/services/activityLogService'
 import {
   applyCompanyCashContributionDelta,
   reportCashParts,
 } from '@/features/cash/services/companyCashService'
+import { getStatsDelta } from '@/features/jobs/utils/jobTransitions'
+import { DAILY_REPORT_CANCEL_NOTE } from '@/features/jobs/services/jobService'
 
 /** Firestore rules expect non-negative whole numbers (int or whole float). */
 function toKurusInt(value: number): number {
@@ -64,10 +73,29 @@ function resolveReportDate(data: DocumentData): string {
 }
 
 function sanitizeCompany(company: ReporterDailyCompany): ReporterDailyCompany {
+  if (company.cancelled === true) {
+    return {
+      jobId: String(company.jobId ?? '').trim(),
+      companyName: company.companyName.trim(),
+      cancelled: true,
+      hasNews: false,
+      newsTotalKurus: null,
+      newsReporterFeeKurus: null,
+      newsCameramanFeeKurus: null,
+      shootMinutes: 0,
+      shootReporterFeeKurus: 0,
+      shootCameramanFeeKurus: 0,
+      vatRate: parseVatRate(company.vatRate),
+      vatBaseKurus: 0,
+      vatKurus: 0,
+      chargeMode: 'cash',
+    }
+  }
   const hasNews = Boolean(company.hasNews)
   return {
     jobId: String(company.jobId ?? '').trim(),
     companyName: company.companyName.trim(),
+    cancelled: false,
     hasNews,
     newsTotalKurus: hasNews ? toKurusInt(company.newsTotalKurus ?? 0) : null,
     newsReporterFeeKurus: hasNews ? toKurusInt(company.newsReporterFeeKurus ?? 0) : null,
@@ -121,6 +149,7 @@ const converter: FirestoreDataConverter<ReporterDailyReport> = {
       return {
         jobId: String(c.jobId ?? ''),
         companyName: String(c.companyName ?? ''),
+        cancelled: c.cancelled === true,
         hasNews,
         newsTotalKurus: nullableNumber(c.newsTotalKurus),
         newsReporterFeeKurus: nullableNumber(c.newsReporterFeeKurus),
@@ -141,6 +170,7 @@ const converter: FirestoreDataConverter<ReporterDailyReport> = {
     return {
       id: snapshot.id,
       reportDate: resolveReportDate(data),
+      leaveDayCash: data.leaveDayCash === true,
       companyCount: Number(data.companyCount ?? 0),
       companies,
       note: String(data.note ?? ''),
@@ -201,6 +231,7 @@ function dayEnd(dateOnly: string) {
 
 export type DailyReportWriteInput = {
   reportDate: string
+  leaveDayCash?: boolean
   companies: ReporterDailyCompany[]
   note: string
   hotelExpenseKurus: number
@@ -227,7 +258,11 @@ function reportContent(input: DailyReportWriteInput) {
   if (!isValidDateOnly(input.reportDate)) {
     throw new UserFacingError('Geçerli bir rapor tarihi seçin.')
   }
-  const companies = input.companies.map(sanitizeCompany)
+  const leaveDayCash = input.leaveDayCash === true
+  const companies = leaveDayCash ? [] : input.companies.map(sanitizeCompany)
+  if (!leaveDayCash && companies.length < 1) {
+    throw new UserFacingError('En az bir firma gerekli.')
+  }
   const hotelExpenseKurus = toKurusInt(input.hotelExpenseKurus)
   const stationeryExpenseKurus = toKurusInt(input.stationeryExpenseKurus)
   const fuelExpenseKurus = toKurusInt(input.fuelExpenseKurus)
@@ -255,6 +290,7 @@ function reportContent(input: DailyReportWriteInput) {
 
   return {
     reportDate: input.reportDate,
+    leaveDayCash,
     companyCount: companies.length,
     companies,
     note: input.note.trim(),
@@ -290,6 +326,36 @@ function uniqueCompanyJobIds(
   return out
 }
 
+function reportActivityJobFields(
+  companies: Array<{ jobId?: string | null; companyName?: string }>,
+): { jobId: string | null; jobCompanyName: string | null } {
+  const jobIds = uniqueCompanyJobIds(companies)
+  if (jobIds.length !== 1) {
+    return { jobId: null, jobCompanyName: null }
+  }
+  const jobId = jobIds[0]!
+  const company = companies.find(
+    (item) => String(item.jobId ?? '').trim() === jobId,
+  )
+  return {
+    jobId,
+    jobCompanyName: company?.companyName?.trim() || null,
+  }
+}
+
+function reportActivitySummary(
+  reportDate: string,
+  companies: Array<{ companyName?: string }>,
+  leaveDayCash: boolean,
+): string {
+  if (leaveDayCash) return `${reportDate} — izin günü kasası`
+  const names = companies
+    .map((item) => String(item.companyName ?? '').trim())
+    .filter(Boolean)
+    .slice(0, 3)
+  return names.length > 0 ? `${reportDate} — ${names.join(', ')}` : reportDate
+}
+
 function jobClaimFromData(data: DocumentData | undefined): string | null {
   if (!data) return null
   const raw = data.dailyReportId
@@ -298,13 +364,31 @@ function jobClaimFromData(data: DocumentData | undefined): string | null {
   return id.length > 0 ? id : null
 }
 
+function plannedDayOfJob(data: DocumentData | undefined): string {
+  const raw = String(data?.plannedExecutionDate ?? '').trim()
+  if (raw.length >= 10) return raw.slice(0, 10)
+  return ''
+}
+
 function assertJobClaimable(
   data: DocumentData | undefined,
   reportId: string,
   exists: boolean,
+  reportDate: string,
 ): void {
   if (!exists) {
     throw new UserFacingError('Seçilen iş bulunamadı.')
+  }
+  const status = String(data?.status ?? '')
+  if (status !== 'approved' && status !== 'shot') {
+    throw new UserFacingError(
+      'Yalnızca konfirme veya çekilmiş işler günlük rapora girilebilir.',
+    )
+  }
+  if (plannedDayOfJob(data) !== reportDate) {
+    throw new UserFacingError(
+      'Seçilen işin çekim günü rapor tarihiyle eşleşmiyor. Rapor tarihini o işin gününe alın.',
+    )
   }
   const claimedBy = jobClaimFromData(data)
   if (claimedBy != null && claimedBy !== reportId) {
@@ -312,16 +396,216 @@ function assertJobClaimable(
   }
 }
 
+type JobOutcomeEvent = {
+  jobId: string
+  companyName: string
+  createdByUid: string
+  toStatus: 'shot' | 'cancelled'
+}
+
+type OwnerStatsDelta = {
+  ownerUid: string
+  jobsShot: number
+  jobsCancelled: number
+}
+
+/**
+ * Claim job for this report and, when still approved, transition to shot/cancelled
+ * in the same write so Firestore never leaves “claimed but still Konfirme”.
+ */
+function applyDailyReportJobOutcome(
+  transaction: Transaction,
+  args: {
+    jobId: string
+    jobData: DocumentData
+    reportId: string
+    cancelled: boolean
+    actor: DailyReportActor
+  },
+): { event: JobOutcomeEvent | null; stats: OwnerStatsDelta | null } {
+  const { jobId, jobData, reportId, cancelled, actor } = args
+  const status = String(jobData.status ?? '')
+  const claimedBy = jobClaimFromData(jobData)
+  const needsClaim = claimedBy !== reportId
+  const companyName = String(jobData.companyName ?? 'İş')
+  const createdByUid = String(jobData.createdByUid ?? '')
+  const jobRef = doc(getDb(), 'jobs', jobId)
+
+  if (cancelled) {
+    if (status === 'approved') {
+      const nextVersion = Number(jobData.statusVersion ?? 0) + 1
+      transaction.update(jobRef, {
+        status: 'cancelled',
+        statusVersion: nextVersion,
+        updatedAt: serverTimestamp(),
+        reviewNote: DAILY_REPORT_CANCEL_NOTE,
+        dailyReportId: reportId,
+      })
+      transaction.set(doc(collection(getDb(), 'jobs', jobId, 'history')), {
+        version: nextVersion,
+        fromStatus: 'approved',
+        toStatus: 'cancelled',
+        actorUid: actor.uid,
+        actorNameSnapshot: actor.name,
+        actorRole: actor.role,
+        note: DAILY_REPORT_CANCEL_NOTE,
+        createdAt: serverTimestamp(),
+      })
+      const delta = getStatsDelta('approved', 'cancelled')
+      return {
+        event: { jobId, companyName, createdByUid, toStatus: 'cancelled' },
+        stats:
+          createdByUid && delta.jobsCancelled !== 0
+            ? {
+                ownerUid: createdByUid,
+                jobsShot: 0,
+                jobsCancelled: delta.jobsCancelled,
+              }
+            : null,
+      }
+    }
+    if (needsClaim) {
+      transaction.update(jobRef, {
+        dailyReportId: reportId,
+        updatedAt: serverTimestamp(),
+      })
+    }
+    return { event: null, stats: null }
+  }
+
+  if (status === 'approved') {
+    const nextVersion = Number(jobData.statusVersion ?? 0) + 1
+    transaction.update(jobRef, {
+      status: 'shot',
+      statusVersion: nextVersion,
+      updatedAt: serverTimestamp(),
+      dailyReportId: reportId,
+    })
+    transaction.set(doc(collection(getDb(), 'jobs', jobId, 'history')), {
+      version: nextVersion,
+      fromStatus: 'approved',
+      toStatus: 'shot',
+      actorUid: actor.uid,
+      actorNameSnapshot: actor.name,
+      actorRole: actor.role,
+      note: null,
+      createdAt: serverTimestamp(),
+    })
+    const delta = getStatsDelta('approved', 'shot')
+    return {
+      event: { jobId, companyName, createdByUid, toStatus: 'shot' },
+      stats:
+        createdByUid && delta.jobsShot !== 0
+          ? { ownerUid: createdByUid, jobsShot: delta.jobsShot, jobsCancelled: 0 }
+          : null,
+    }
+  }
+
+  if (needsClaim) {
+    if (status !== 'shot' && status !== 'approved') {
+      throw new UserFacingError(
+        'Yalnızca konfirme veya çekilmiş işler günlük rapora girilebilir.',
+      )
+    }
+    transaction.update(jobRef, {
+      dailyReportId: reportId,
+      updatedAt: serverTimestamp(),
+    })
+  }
+  return { event: null, stats: null }
+}
+
+function mergeOwnerStats(
+  into: Map<string, OwnerStatsDelta>,
+  next: OwnerStatsDelta | null,
+): void {
+  if (!next) return
+  const prev = into.get(next.ownerUid)
+  if (!prev) {
+    into.set(next.ownerUid, { ...next })
+    return
+  }
+  prev.jobsShot += next.jobsShot
+  prev.jobsCancelled += next.jobsCancelled
+}
+
+async function applyDeferredOwnerStats(
+  statsByOwner: Map<string, OwnerStatsDelta>,
+): Promise<void> {
+  for (const stats of statsByOwner.values()) {
+    const patch: Record<string, ReturnType<typeof increment> | ReturnType<typeof serverTimestamp>> =
+      { updatedAt: serverTimestamp() }
+    if (stats.jobsShot !== 0) patch['stats.jobsShot'] = increment(stats.jobsShot)
+    if (stats.jobsCancelled !== 0) {
+      patch['stats.jobsCancelled'] = increment(stats.jobsCancelled)
+    }
+    try {
+      await updateDoc(doc(getDb(), 'users', stats.ownerUid), patch)
+    } catch {
+      /* best-effort — report/job already committed */
+    }
+  }
+}
+
+function notifyJobOutcomes(
+  events: JobOutcomeEvent[],
+  actor: DailyReportActor,
+): void {
+  for (const event of events) {
+    if (event.toStatus === 'shot' && event.createdByUid) {
+      void notifyUser({
+        recipientUid: event.createdByUid,
+        type: 'job_shot',
+        title: `"${event.companyName}" işiniz çekildi olarak işaretlendi.`,
+        body: '',
+        link: '/media-planning',
+        createdByUid: actor.uid,
+        createdByNameSnapshot: actor.name,
+      })
+    }
+    writeActivityLog({
+      actor: {
+        uid: actor.uid,
+        fullName: actor.name,
+        role: actor.role,
+      },
+      category: 'job',
+      action: event.toStatus === 'shot' ? 'job.shot' : 'job.cancelled',
+      summary:
+        event.toStatus === 'shot'
+          ? event.companyName
+          : `${event.companyName} — ${DAILY_REPORT_CANCEL_NOTE}`,
+      jobId: event.jobId,
+      jobCompanyName: event.companyName,
+      entityType: 'job',
+      entityId: event.jobId,
+    })
+  }
+}
+
 export async function createDailyReport(input: DailyReportWriteInput & {
   createdByUid: string
   createdByNameSnapshot: string
   createdByEmailSnapshot: string
+  actorRole?: DailyReportActor['role']
 }): Promise<string> {
   try {
     const content = reportContent(input)
+    const actor: DailyReportActor = {
+      uid: input.createdByUid,
+      name: input.createdByNameSnapshot,
+      role: input.actorRole ?? 'reporter',
+    }
+    const companiesByJobId = new Map(
+      content.companies
+        .filter((c) => c.jobId.trim())
+        .map((c) => [c.jobId.trim(), c] as const),
+    )
     const jobIds = uniqueCompanyJobIds(content.companies)
     const ref = doc(collection(getDb(), 'reporterDailyReports'))
     const db = getDb()
+    const outcomeEvents: JobOutcomeEvent[] = []
+    const statsByOwner = new Map<string, OwnerStatsDelta>()
 
     await runTransaction(db, async (transaction) => {
       const jobSnaps = await Promise.all(
@@ -329,7 +613,7 @@ export async function createDailyReport(input: DailyReportWriteInput & {
       )
       for (let i = 0; i < jobIds.length; i++) {
         const snap = jobSnaps[i]!
-        assertJobClaimable(snap.data(), ref.id, snap.exists())
+        assertJobClaimable(snap.data(), ref.id, snap.exists(), content.reportDate)
       }
 
       transaction.set(ref, {
@@ -351,21 +635,35 @@ export async function createDailyReport(input: DailyReportWriteInput & {
         version: 0,
         actorUid: input.createdByUid,
         actorNameSnapshot: input.createdByNameSnapshot,
-        actorRole: 'reporter',
+        actorRole: actor.role,
         createdAt: serverTimestamp(),
       })
-      for (const jobId of jobIds) {
-        transaction.update(doc(db, 'jobs', jobId), {
-          dailyReportId: ref.id,
-          updatedAt: serverTimestamp(),
+
+      for (let i = 0; i < jobIds.length; i++) {
+        const jobId = jobIds[i]!
+        const company = companiesByJobId.get(jobId)
+        if (!company) continue
+        const result = applyDailyReportJobOutcome(transaction, {
+          jobId,
+          jobData: jobSnaps[i]!.data()!,
+          reportId: ref.id,
+          cancelled: company.cancelled === true,
+          actor,
         })
+        if (result.event) outcomeEvents.push(result.event)
+        mergeOwnerStats(statsByOwner, result.stats)
       }
     })
+
+    void applyDeferredOwnerStats(statsByOwner)
+    notifyJobOutcomes(outcomeEvents, actor)
 
     void notifyManagement({
       type: 'daily_report',
       title: 'Muhabir günlük rapor / kasa',
-      body: `${input.createdByNameSnapshot} — ${input.reportDate}`,
+      body: `${input.createdByNameSnapshot} — ${input.reportDate}${
+        content.leaveDayCash ? ' (izin günü kasası)' : ''
+      }`,
       link: '/reporter?tab=daily-reports',
       createdByUid: input.createdByUid,
       createdByNameSnapshot: input.createdByNameSnapshot,
@@ -377,6 +675,26 @@ export async function createDailyReport(input: DailyReportWriteInput & {
         /* muhabir kasa snapshot best-effort */
       },
     )
+
+    const jobFields = reportActivityJobFields(content.companies)
+    writeActivityLog({
+      actor: {
+        uid: input.createdByUid,
+        fullName: input.createdByNameSnapshot,
+        role: actor.role,
+      },
+      category: 'report',
+      action: 'report.created',
+      summary: reportActivitySummary(
+        content.reportDate,
+        content.companies,
+        content.leaveDayCash === true,
+      ),
+      jobId: jobFields.jobId,
+      jobCompanyName: jobFields.jobCompanyName,
+      entityType: 'daily_report',
+      entityId: ref.id,
+    })
 
     return ref.id
   } catch (error) {
@@ -395,6 +713,8 @@ export async function updateDailyReport(
   try {
     let prevParts: ReturnType<typeof reportCashParts> | null = null
     let nextParts: ReturnType<typeof reportCashParts> | null = null
+    const outcomeEvents: JobOutcomeEvent[] = []
+    const statsByOwner = new Map<string, OwnerStatsDelta>()
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(ref)
       if (!snap.exists()) throw new UserFacingError('Rapor bulunamadı.')
@@ -406,6 +726,11 @@ export async function updateDailyReport(
       const content = reportContent(input)
       prevParts = reportCashParts(current)
       nextParts = reportCashParts(content)
+      const companiesByJobId = new Map(
+        content.companies
+          .filter((c) => c.jobId.trim())
+          .map((c) => [c.jobId.trim(), c] as const),
+      )
       const nextJobIds = uniqueCompanyJobIds(content.companies)
       const prevCompanies = Array.isArray(current.companies) ? current.companies : []
       const prevJobIds = uniqueCompanyJobIds(
@@ -423,7 +748,7 @@ export async function updateDailyReport(
 
       for (const jobId of nextJobIds) {
         const jobSnap = snapById.get(jobId)!
-        assertJobClaimable(jobSnap.data(), reportId, jobSnap.exists())
+        assertJobClaimable(jobSnap.data(), reportId, jobSnap.exists(), content.reportDate)
       }
 
       const version = Number(current.editVersion ?? 0) + 1
@@ -445,13 +770,17 @@ export async function updateDailyReport(
 
       for (const jobId of nextJobIds) {
         const jobSnap = snapById.get(jobId)!
-        const claimedBy = jobClaimFromData(jobSnap.data())
-        if (claimedBy !== reportId) {
-          transaction.update(doc(db, 'jobs', jobId), {
-            dailyReportId: reportId,
-            updatedAt: serverTimestamp(),
-          })
-        }
+        const company = companiesByJobId.get(jobId)
+        if (!company || !jobSnap.exists()) continue
+        const result = applyDailyReportJobOutcome(transaction, {
+          jobId,
+          jobData: jobSnap.data()!,
+          reportId,
+          cancelled: company.cancelled === true,
+          actor,
+        })
+        if (result.event) outcomeEvents.push(result.event)
+        mergeOwnerStats(statsByOwner, result.stats)
       }
       for (const jobId of releaseJobIds) {
         const jobSnap = snapById.get(jobId)!
@@ -464,11 +793,34 @@ export async function updateDailyReport(
         }
       }
     })
+    void applyDeferredOwnerStats(statsByOwner)
+    notifyJobOutcomes(outcomeEvents, actor)
     void applyCompanyCashContributionDelta(nextParts, prevParts).catch(
       () => {
         /* muhabir kasa snapshot best-effort */
       },
     )
+    const companies =
+      input.leaveDayCash === true ? [] : input.companies
+    const jobFields = reportActivityJobFields(companies)
+    writeActivityLog({
+      actor: {
+        uid: actor.uid,
+        fullName: actor.name,
+        role: actor.role,
+      },
+      category: 'report',
+      action: 'report.updated',
+      summary: reportActivitySummary(
+        input.reportDate,
+        companies,
+        input.leaveDayCash === true,
+      ),
+      jobId: jobFields.jobId,
+      jobCompanyName: jobFields.jobCompanyName,
+      entityType: 'daily_report',
+      entityId: reportId,
+    })
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(mapAppError(error, 'Günlük rapor güncellenemedi.'))
@@ -484,6 +836,9 @@ export async function softDeleteDailyReport(
   try {
     let removedParts: ReturnType<typeof reportCashParts> | null = null
     let didDelete = false
+    let deletedSummary = ''
+    let deletedJobId: string | null = null
+    let deletedCompanyName: string | null = null
     await runTransaction(db, async (transaction) => {
       const snap = await transaction.get(ref)
       if (!snap.exists()) throw new UserFacingError('Rapor bulunamadı.')
@@ -496,6 +851,16 @@ export async function softDeleteDailyReport(
       const prevCompanies = Array.isArray(current.companies) ? current.companies : []
       const jobIds = uniqueCompanyJobIds(
         prevCompanies as Array<{ jobId?: string | null }>,
+      )
+      const jobFields = reportActivityJobFields(
+        prevCompanies as Array<{ jobId?: string | null; companyName?: string }>,
+      )
+      deletedJobId = jobFields.jobId
+      deletedCompanyName = jobFields.jobCompanyName
+      deletedSummary = reportActivitySummary(
+        String(current.reportDate ?? ''),
+        prevCompanies as Array<{ companyName?: string }>,
+        current.leaveDayCash === true,
       )
       const jobSnaps = await Promise.all(
         jobIds.map((jobId) => transaction.get(doc(db, 'jobs', jobId))),
@@ -534,6 +899,20 @@ export async function softDeleteDailyReport(
     if (didDelete && removedParts) {
       void applyCompanyCashContributionDelta(null, removedParts).catch(() => {
         /* muhabir kasa snapshot best-effort */
+      })
+      writeActivityLog({
+        actor: {
+          uid: actor.uid,
+          fullName: actor.name,
+          role: actor.role,
+        },
+        category: 'report',
+        action: 'report.deleted',
+        summary: deletedSummary,
+        jobId: deletedJobId,
+        jobCompanyName: deletedCompanyName,
+        entityType: 'daily_report',
+        entityId: reportId,
       })
     }
   } catch (error) {

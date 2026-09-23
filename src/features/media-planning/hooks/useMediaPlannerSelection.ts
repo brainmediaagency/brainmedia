@@ -10,10 +10,11 @@ export function useMediaPlannerSelection() {
   const [search, setSearch] = useState('')
   const [selectedUid, setSelectedUid] = useState<string | null>(null)
 
+  const role = profile?.role
   const canSelect =
-    profile?.role === 'coordinator' ||
-    profile?.role === 'management' ||
-    profile?.role === 'human_resources'
+    role === 'coordinator' ||
+    role === 'management' ||
+    role === 'human_resources'
 
   useEffect(() => {
     if (!canSelect) return
@@ -28,6 +29,8 @@ export function useMediaPlannerSelection() {
         setLoading(false)
       },
       () => setLoading(false),
+      200,
+      { includeInactive: true },
     )
 
     return unsubscribe

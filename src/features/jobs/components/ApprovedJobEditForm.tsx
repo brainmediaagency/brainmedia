@@ -11,10 +11,6 @@ import {
   updatePendingJob,
 } from '@/features/jobs/services/jobService'
 import {
-  SHEET_SON_DURUM,
-  upsertJobRowToSheet,
-} from '@/features/jobs/services/sheetsExport'
-import {
   MAX_JOB_CONTACTS,
   emptyContact,
 } from '@/features/media-planning/schemas/jobFormSchema'
@@ -35,7 +31,6 @@ import {
 import { kurusToTry, tryToKurus } from '@/lib/currency'
 import { mapAppError } from '@/lib/errors'
 import { normalizeTurkishPhone } from '@/lib/phone'
-import { toTitleCaseTr } from '@/lib/text'
 
 export type ApprovedJobEditFormProps = {
   job: JobDocument
@@ -204,7 +199,7 @@ export function ApprovedJobEditForm({
           throw new Error('USER_Geçerli bir iş telefonu girin.')
         }
         return {
-          name: toTitleCaseTr(c.name.trim()),
+          name: c.name.trim(),
           mobilePhone: mobile,
           workPhone: work,
         }
@@ -218,16 +213,17 @@ export function ApprovedJobEditForm({
 
       const updated = await updatePendingJob({
         jobId: job.id,
-        companyName: toTitleCaseTr(values.companyName.trim()),
+        companyName: values.companyName.trim(),
         contacts,
         contactCount: toContactCount(contacts.length),
         province: values.province,
         district: values.district,
-        fullAddress: toTitleCaseTr(values.fullAddress.trim()),
+        fullAddress: values.fullAddress.trim(),
         instagram: values.instagram.trim() ? values.instagram.trim() : null,
         acquiredDate: values.acquiredDate,
         plannedExecutionDate,
         agreedAmountKurus: tryToKurus(values.agreedAmount),
+        activitySummary: 'iş bilgileri',
       })
 
       const newDay = jobPlannedDay(updated)
@@ -239,19 +235,6 @@ export function ApprovedJobEditForm({
         toast.success('İş kaydı güncellendi.')
       }
       onSuccess(updated)
-
-      try {
-        await upsertJobRowToSheet(updated, SHEET_SON_DURUM.approved, {
-          plannedExecutionDate: updated.plannedExecutionDate,
-        })
-      } catch (error) {
-        toast.warning(
-          mapAppError(
-            error,
-            'Firestore kaydı tamam. Excel (Sheets) güncellenemedi — Excel sekmesinden kontrol edin.',
-          ),
-        )
-      }
     } catch (error) {
       toast.error(mapAppError(error, 'İş kaydı güncellenemedi.'))
     } finally {
@@ -262,8 +245,7 @@ export function ApprovedJobEditForm({
   return (
     <form className="space-y-4" onSubmit={(e) => void onSubmit(e)}>
       <p className="text-sm text-text-secondary">
-        Planlanan çekim tarihi veya saati değişirse kayıt o güne / saate yerleşir;
-        gelecek bir zamana alınırsa Çekim Durumu listesinden çıkar.
+        Planlanan çekim tarihi veya saati değişirse kayıt o güne / saate yerleşir.
       </p>
 
       <FormField

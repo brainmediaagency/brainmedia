@@ -16,7 +16,6 @@ export function SefPage() {
     <div className="space-y-6">
       <PageHeader
         title="Şef"
-        subtitle="İş konfirmeleri (saat vererek onay / red), çekim takvimi ve ses kaydı."
       />
 
       <TabNav
@@ -29,8 +28,8 @@ export function SefPage() {
 
       <div key={tab} className="animate-fade-in-up">
         {tab === 'approvals' && <ReviewDashboard roleLabel="Şef" />}
-        {tab === 'schedule' && <DailyHourCalendar sectionNumber="01" />}
-        {tab === 'voice' && <VoiceRecordingsListPanel sectionNumber="01" />}
+        {tab === 'schedule' && <DailyHourCalendar />}
+        {tab === 'voice' && <VoiceRecordingsListPanel />}
       </div>
     </div>
   )

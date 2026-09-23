@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Mic } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
 import { DateInput } from '@/components/ui/DateInput'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { FormField } from '@/components/ui/FormField'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { StatusBadge } from '@/components/ui/StatusBadge'
+import { isVoiceRecordingViewerRole } from '@/config/roles'
+import { useAuth } from '@/features/auth/hooks/useAuth'
+import { ShootingCalendarJobDetail } from '@/features/jobs/components/ShootingCalendarJobDetail'
 import {
   jobPlannedDay,
   subscribeApprovedOpenJobs,
@@ -16,11 +18,23 @@ import {
 } from '@/features/jobs/services/jobService'
 import type { JobDocument } from '@/features/jobs/types/job'
 import { formatJobCreatorPrimary } from '@/features/jobs/utils/formatJobCreator'
+import { buildCalendarRows } from '@/features/jobs/utils/calendarRows'
+import {
+  isJobOnReporterShootingCalendar,
+} from '@/features/jobs/utils/shootingCalendarVisibility'
+import { filterJobsVisibleForReporterEmail } from '@/features/reporter/config/reporterJobVisibility'
+import {
+  groupVoiceRecordingsByJobId,
+  subscribeVoiceRecordings,
+} from '@/features/voice-recording/services/voiceRecordingService'
+import type { VoiceRecordingDoc } from '@/features/voice-recording/types/voiceRecording'
 import {
   formatDateOnlyLongTr,
   formatJobScheduleTr,
   normalizeJobSchedule,
+  shiftDateOnlyDays,
   todayDateOnlyIstanbul,
+  weekdayLabelTr,
 } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
 import { mapAppError } from '@/lib/errors'
@@ -73,81 +87,78 @@ function buildCalendarSlots(dayJobs: JobDocument[]): string[] {
   return slots
 }
 
-function shiftDateOnly(dateOnly: string, deltaDays: number): string {
-  const [y, m, d] = dateOnly.split('-').map(Number)
-  const date = new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1))
-  date.setUTCDate(date.getUTCDate() + deltaDays)
-  const yy = date.getUTCFullYear()
-  const mm = String(date.getUTCMonth() + 1).padStart(2, '0')
-  const dd = String(date.getUTCDate()).padStart(2, '0')
-  return `${yy}-${mm}-${dd}`
-}
-
 function JobChip({
   job,
-  showForwardStatus,
+  slot,
+  hasVoiceRecording = false,
   onSelect,
 }: {
   job: JobDocument
-  showForwardStatus: boolean
-  onSelect?: (job: JobDocument) => void
+  /** Row time label; the chip repeats the time only when it differs (e.g. 14:17). */
+  slot?: string
+  hasVoiceRecording?: boolean
+  onSelect: (job: JobDocument) => void
 }) {
   const time = normalizeJobSchedule(job.plannedExecutionDate).slice(11, 16)
-  const interactive = typeof onSelect === 'function'
+  const showTime = time !== slot
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${job.companyName} iş detayını aç`}
       className={cn(
-        'min-w-0 flex-1 rounded-[var(--radius-sm)] border border-border/80 bg-surface px-3 py-2.5 text-left shadow-[var(--shadow-xs)]',
+        'flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-[var(--radius-sm)] border border-border/80 bg-surface px-2.5 py-2 text-left shadow-[var(--shadow-xs)] transition-shadow hover:shadow-[var(--shadow-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-cyan/40 sm:px-3 sm:py-2.5',
         job.status === 'approved' && 'border-l-4 border-l-success',
         job.status === 'shot' && 'border-l-4 border-l-brand-cyan',
         job.status === 'cancelled' && 'border-l-4 border-l-text-secondary',
-        interactive &&
-          'cursor-pointer transition-shadow hover:shadow-[var(--shadow-md)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-cyan/40',
       )}
-      {...(interactive
-        ? {
-            role: 'button' as const,
-            tabIndex: 0,
-            onClick: () => onSelect(job),
-            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                onSelect(job)
-              }
-            },
-          }
-        : {})}
+      onClick={() => onSelect(job)}
+      onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onSelect(job)
+        }
+      }}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-display text-base font-semibold tabular-nums text-text-primary">
-          {time}
-        </span>
-        <StatusBadge status={job.status} />
-      </div>
-      <p className="mt-1 truncate text-base font-medium text-text-primary">{job.companyName}</p>
-      {job.fullAddress ? (
-        <p
-          className="mt-0.5 truncate text-sm text-text-primary"
-          title={job.fullAddress}
-        >
-          {job.fullAddress}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {showTime ? (
+            <span className="font-display text-sm font-semibold tabular-nums text-text-primary sm:text-base">
+              {time}
+            </span>
+          ) : null}
+          <StatusBadge status={job.status} />
+          {hasVoiceRecording ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-brand-violet/30 bg-brand-violet/10 px-2 py-0.5 text-[11px] font-medium text-[color:var(--cat-violet-text)] sm:text-xs">
+              <Mic className="size-3" aria-hidden="true" />
+              Ses kaydı
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-0.5 truncate text-sm font-medium text-text-primary sm:mt-1 sm:text-base">
+          {job.companyName}
         </p>
-      ) : null}
-      <p className="mt-0.5 truncate text-sm text-text-secondary">
-        {formatJobCreatorPrimary(job)}
-        {job.province ? ` · ${job.province}` : ''}
-      </p>
-      <p className="mt-0.5 text-sm tabular-nums text-text-secondary">
-        {formatTryFromKurus(job.agreedAmountKurus)}
-      </p>
-      {showForwardStatus ? (
-        job.forwardedToReporter ? (
-          <p className="mt-1 text-xs font-medium text-success">Muhabire iletildi</p>
-        ) : job.status === 'approved' ? (
-          <p className="mt-1 text-xs font-medium text-warning">Muhabire iletilmedi</p>
-        ) : null
-      ) : null}
+        {job.fullAddress ? (
+          <p
+            className="mt-0.5 truncate text-xs text-text-primary sm:text-sm"
+            title={job.fullAddress}
+          >
+            {job.fullAddress}
+          </p>
+        ) : null}
+        <p className="mt-0.5 truncate text-xs text-text-secondary sm:text-sm">
+          {formatJobCreatorPrimary(job)}
+          {job.province ? ` · ${job.province}` : ''}
+        </p>
+        <p className="mt-0.5 text-xs tabular-nums text-text-secondary sm:text-sm">
+          {formatTryFromKurus(job.agreedAmountKurus)}
+        </p>
+      </div>
+      <ChevronRight
+        className="mt-1 size-4 shrink-0 text-text-secondary"
+        aria-hidden="true"
+      />
     </div>
   )
 }
@@ -155,34 +166,39 @@ function JobChip({
 export type DailyHourCalendarScope = 'operations' | 'reporter'
 
 export type DailyHourCalendarProps = {
-  sectionNumber?: string
   /**
    * `operations` — yönetim/koordinatör: konfirme / çekildi / iptal (tüm şirket).
-   * `reporter` — muhabir: yalnızca muhabire iletilmiş açık konfirme işler.
+   * `reporter` — muhabir/kameraman: konfirme / çekilmiş işler (konfirme anında görünür).
    */
   scope?: DailyHourCalendarScope
   /** Compact wrapper for nested dashboards (e.g. yönetim → muhabir görünümü). */
   embedded?: boolean
-  /** Eyebrow above title when `embedded` (e.g. Kameraman görünümü). */
-  embeddedLabel?: string
   /** Override section description. */
   description?: string
-  /** Optional job select (e.g. muhabir detay drawer). */
-  onJobSelect?: (job: JobDocument) => void
   /** Override initial day (`yyyy-MM-dd`). Defaults to Istanbul today. */
   initialDay?: string
 }
 
 export function DailyHourCalendar({
-  sectionNumber = '01',
   scope = 'operations',
   embedded = false,
-  embeddedLabel = 'Muhabir görünümü',
   description: descriptionProp,
-  onJobSelect,
   initialDay,
 }: DailyHourCalendarProps) {
+  const { profile, claims, user } = useAuth()
+  const canHearVoice = isVoiceRecordingViewerRole(
+    claims?.role ?? profile?.role,
+  )
   const isReporterScope = scope === 'reporter'
+  const actorRole = claims?.role ?? profile?.role
+  /** Beste (and any configured muhabir) may only see jobs from a start date. */
+  const reporterVisibilityIdentity =
+    isReporterScope && actorRole === 'reporter'
+      ? {
+          email: user?.email ?? profile?.email ?? null,
+          uid: user?.uid ?? profile?.uid ?? null,
+        }
+      : null
   const [day, setDay] = useState(
     () => initialDay || todayDateOnlyIstanbul(),
   )
@@ -193,7 +209,22 @@ export function DailyHourCalendar({
   const [loading, setLoading] = useState(true)
   const [fetchTruncated, setFetchTruncated] = useState(false)
   const [fetchLimit, setFetchLimit] = useState(0)
+  const [selectedJob, setSelectedJob] = useState<JobDocument | null>(null)
+  const [voiceByJobId, setVoiceByJobId] = useState<
+    Map<string, VoiceRecordingDoc[]>
+  >(() => new Map())
   const didAutoJumpRef = useRef(false)
+
+  useEffect(() => {
+    if (!canHearVoice) {
+      setVoiceByJobId(new Map())
+      return
+    }
+    return subscribeVoiceRecordings(
+      (items) => setVoiceByJobId(groupVoiceRecordingsByJobId(items)),
+      () => setVoiceByJobId(new Map()),
+    )
+  }, [canHearVoice])
 
   useEffect(() => {
     if (initialDay) setDay(initialDay)
@@ -233,45 +264,69 @@ export function DailyHourCalendar({
     )
   }, [isReporterScope])
 
-  /**
-   * Reporter/İK calendar defaults to “today”. If all forwarded jobs are on
-   * another day, jump once to the nearest day that has work so the list is not
-   * mistaken for a permissions/empty bug.
-   */
-  useEffect(() => {
-    if (loading || didAutoJumpRef.current || initialDay) return
-    if (!isReporterScope || directoryJobs.length === 0) return
-
-    const today = todayDateOnlyIstanbul()
-    if (day !== today) return
-    if (directoryJobs.some((job) => jobDay(job) === today)) return
-
-    const days = [...new Set(directoryJobs.map(jobDay).filter(Boolean))].sort()
-    const upcoming = days.find((d) => d >= today)
-    const target = upcoming ?? days[days.length - 1]
-    if (target && target !== day) {
-      didAutoJumpRef.current = true
-      setDay(target)
-    }
-  }, [loading, directoryJobs, day, initialDay, isReporterScope])
+  const visibleDirectoryJobs = useMemo(() => {
+    if (!isReporterScope) return directoryJobs
+    const onCalendar = directoryJobs.filter((job) =>
+      isJobOnReporterShootingCalendar(job),
+    )
+    return filterJobsVisibleForReporterEmail(
+      onCalendar,
+      reporterVisibilityIdentity,
+    )
+  }, [directoryJobs, isReporterScope, reporterVisibilityIdentity])
 
   const dayJobs = useMemo(() => {
-    return [...dayJobsRaw].sort((a, b) => {
+    const scoped = filterJobsVisibleForReporterEmail(
+      dayJobsRaw,
+      reporterVisibilityIdentity,
+    )
+    return [...scoped].sort((a, b) => {
       const byTime = normalizeJobSchedule(a.plannedExecutionDate).localeCompare(
         normalizeJobSchedule(b.plannedExecutionDate),
       )
       if (byTime !== 0) return byTime
       return a.companyName.localeCompare(b.companyName, 'tr')
     })
-  }, [dayJobsRaw])
+  }, [dayJobsRaw, reporterVisibilityIdentity])
+
+  /**
+   * Reporter calendar defaults to “today”. Stay if today already has
+   * unlocked jobs (including çekildi). Otherwise jump once — prefer the most
+   * recent past day with work so a late-night check still shows yesterday.
+   * Uses visibility-filtered lists so Beste never jumps to pre-cutoff days.
+   */
+  useEffect(() => {
+    if (loading || didAutoJumpRef.current || initialDay) return
+    if (!isReporterScope || visibleDirectoryJobs.length === 0) return
+
+    const today = todayDateOnlyIstanbul()
+    if (day !== today) return
+    if (dayJobs.length > 0) return
+    if (visibleDirectoryJobs.some((job) => jobDay(job) === today)) return
+
+    const days = [...new Set(visibleDirectoryJobs.map(jobDay).filter(Boolean))].sort()
+    const pastOrToday = days.filter((d) => d <= today)
+    const target = pastOrToday[pastOrToday.length - 1] ?? days.find((d) => d >= today)
+    if (target && target !== day) {
+      didAutoJumpRef.current = true
+      setDay(target)
+    }
+  }, [
+    loading,
+    visibleDirectoryJobs,
+    dayJobs.length,
+    day,
+    initialDay,
+    isReporterScope,
+  ])
 
   const otherDaysWithJobs = useMemo(() => {
-    return [...new Set(directoryJobs.map(jobDay).filter(Boolean))]
+    return [...new Set(visibleDirectoryJobs.map(jobDay).filter(Boolean))]
       .filter((d) => d !== day)
       .sort()
-  }, [directoryJobs, day])
+  }, [visibleDirectoryJobs, day])
 
-  const directoryJobCount = directoryJobs.length
+  const directoryJobCount = visibleDirectoryJobs.length
 
   const slots = useMemo(() => buildCalendarSlots(dayJobs), [dayJobs])
 
@@ -300,55 +355,63 @@ export function DailyHourCalendar({
     return { bySlot: map, outside: other }
   }, [dayJobs, slots])
 
+  const rows = useMemo(() => buildCalendarRows(slots, bySlot), [slots, bySlot])
+
   const isToday = day === todayDateOnlyIstanbul()
+
+  const selectedFresh =
+    selectedJob == null
+      ? null
+      : (dayJobsRaw.find((job) => job.id === selectedJob.id) ?? selectedJob)
+  const selectedRecordings =
+    canHearVoice && selectedFresh
+      ? (voiceByJobId.get(selectedFresh.id) ?? [])
+      : []
 
   const title = isReporterScope ? 'Çekim takvimi' : 'Günlük saat takvimi'
   const description =
     descriptionProp ??
     (isReporterScope
-      ? 'Muhabire iletilmiş konfirme işler. Gün seçerek saat dilimlerine göre görüntüleyin.'
+      ? 'Konfirme edilen işler çekim takvimine hemen düşer. Çekilenler aynı saatte kalır; geçmiş günler silinmez.'
       : 'Tam saatler her zaman listelenir; buçuk dilimler yalnızca o saatte iş varsa eklenir.')
   const emptyDescription = isReporterScope
-    ? 'Seçilen tarihte muhabire iletilmiş açık iş bulunmuyor.'
+    ? 'Seçilen tarihte konfirme veya çekilmiş iş bulunmuyor.'
     : 'Seçilen tarihte planlanan konfirme / çekildi / iptal iş kaydı bulunmuyor.'
 
   const calendarBody = (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4">
       {fetchTruncated && fetchLimit > 0 ? (
         <p className="rounded-[var(--radius-md)] border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-text-secondary">
           İlk {fetchLimit} kayıt gösteriliyor. Daha eski işler listede görünmeyebilir.
         </p>
       ) : null}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex min-w-0 flex-nowrap items-end gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 flex-nowrap items-center gap-2">
           <Button
             type="button"
             size="sm"
             variant="secondary"
             aria-label="Önceki gün"
             className="shrink-0 px-2.5"
-            onClick={() => setDay((d) => shiftDateOnly(d, -1))}
+            onClick={() => setDay((d) => shiftDateOnlyDays(d, -1))}
           >
             <ChevronLeft className="size-4" aria-hidden="true" />
           </Button>
-          <FormField
-            label="Gün"
-            htmlFor={`daily-hour-calendar-day-${scope}`}
-            className="w-auto min-w-0 max-w-[14rem] flex-1 basis-[10.5rem] sm:flex-none"
-          >
+          <div className="w-auto min-w-0 max-w-[14rem] flex-1 basis-[10.5rem] sm:flex-none">
             <DateInput
               id={`daily-hour-calendar-day-${scope}`}
+              aria-label="Gün"
               value={day}
               onChange={(e) => setDay(e.target.value)}
             />
-          </FormField>
+          </div>
           <Button
             type="button"
             size="sm"
             variant="secondary"
             aria-label="Sonraki gün"
             className="shrink-0 px-2.5"
-            onClick={() => setDay((d) => shiftDateOnly(d, 1))}
+            onClick={() => setDay((d) => shiftDateOnlyDays(d, 1))}
           >
             <ChevronRight className="size-4" aria-hidden="true" />
           </Button>
@@ -364,8 +427,10 @@ export function DailyHourCalendar({
             </Button>
           ) : null}
         </div>
-        <p className="text-base text-text-secondary">
-          <span className="font-medium text-text-primary">{formatDateOnlyLongTr(day)}</span>
+        <p className="text-sm text-text-secondary sm:text-base">
+          <span className="font-medium text-text-primary">
+            {isToday ? 'Bugün' : weekdayLabelTr(day)}
+          </span>
           {' · '}
           {dayJobs.length} iş
         </p>
@@ -402,39 +467,49 @@ export function DailyHourCalendar({
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-md)] border border-border bg-surface shadow-[var(--shadow-sm)]">
           <ul className="divide-y divide-border">
-            {slots.map((slot) => {
-              const slotJobs = bySlot.get(slot) ?? []
-              const isHalf = isHalfHourSlot(slot)
+            {rows.map((row) => {
+              if (row.kind === 'empty') {
+                return (
+                  <li
+                    key={`empty-${row.from}`}
+                    className="flex items-center gap-3 bg-surface-muted/30 px-2.5 py-1.5 sm:px-3 sm:py-2"
+                  >
+                    <span className="font-display text-xs font-semibold tabular-nums text-text-secondary sm:w-[5.5rem] sm:text-sm">
+                      {row.from === row.to ? row.from : `${row.from}–${row.to}`}
+                    </span>
+                    <span className="text-xs text-text-secondary">Boş</span>
+                  </li>
+                )
+              }
+              const isHalf = isHalfHourSlot(row.slot)
               return (
                 <li
-                  key={slot}
+                  key={row.slot}
                   className={cn(
-                    'grid gap-3 px-3 py-3 sm:grid-cols-[5.5rem_1fr] sm:items-start',
-                    slotJobs.length === 0 && 'bg-surface-muted/30',
+                    'grid gap-2 px-2.5 py-2 sm:grid-cols-[5.5rem_1fr] sm:items-start sm:gap-3 sm:px-3 sm:py-3',
                     isHalf && 'bg-brand-cyan/[0.03]',
                   )}
                 >
                   <div
                     className={cn(
-                      'pt-1 font-display text-base font-semibold tabular-nums',
+                      'pt-0.5 font-display text-sm font-semibold tabular-nums sm:pt-1 sm:text-base',
                       isHalf ? 'text-text-secondary' : 'text-brand-navy',
                     )}
                   >
-                    {slot}
+                    {row.slot}
                   </div>
                   <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap">
-                    {slotJobs.length === 0 ? (
-                      <p className="py-1 text-sm text-text-secondary">—</p>
-                    ) : (
-                      slotJobs.map((job) => (
-                        <JobChip
-                          key={job.id}
-                          job={job}
-                          showForwardStatus={!isReporterScope}
-                          onSelect={onJobSelect}
-                        />
-                      ))
-                    )}
+                    {row.items.map((job) => (
+                      <JobChip
+                        key={job.id}
+                        job={job}
+                        slot={row.slot}
+                        hasVoiceRecording={
+                          canHearVoice && voiceByJobId.has(job.id)
+                        }
+                        onSelect={setSelectedJob}
+                      />
+                    ))}
                   </div>
                 </li>
               )
@@ -454,8 +529,10 @@ export function DailyHourCalendar({
                     </p>
                     <JobChip
                       job={job}
-                      showForwardStatus={!isReporterScope}
-                      onSelect={onJobSelect}
+                      hasVoiceRecording={
+                        canHearVoice && voiceByJobId.has(job.id)
+                      }
+                      onSelect={setSelectedJob}
                     />
                   </div>
                 ))}
@@ -467,31 +544,39 @@ export function DailyHourCalendar({
     </div>
   )
 
+  const detail = (
+    <ShootingCalendarJobDetail
+      job={selectedFresh}
+      open={selectedJob !== null}
+      onClose={() => setSelectedJob(null)}
+      recordings={selectedRecordings}
+    />
+  )
+
   if (embedded) {
     return (
-      <section className="rounded-[var(--radius-md)] border border-border bg-surface p-5 shadow-[var(--shadow-sm)]">
-        <div className="mb-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-brand-blue">
-            {embeddedLabel}
-          </p>
-          <h2 className="mt-1 font-display text-lg font-semibold text-text-primary">
-            {title}
-          </h2>
-          <p className="mt-1 text-sm text-text-secondary">{description}</p>
-        </div>
-        {calendarBody}
-      </section>
+      <>
+        <section
+          className="rounded-[var(--radius-md)] border border-border bg-surface p-3 shadow-[var(--shadow-sm)] sm:p-5"
+          aria-label={title}
+        >
+          {calendarBody}
+        </section>
+        {detail}
+      </>
     )
   }
 
   return (
-    <AccordionSection
-      number={sectionNumber}
-      title={title}
-      description={description}
-      defaultOpen
-    >
-      {calendarBody}
-    </AccordionSection>
+    <>
+      <AccordionSection
+        title={title}
+        description={description}
+        defaultOpen
+      >
+        {calendarBody}
+      </AccordionSection>
+      {detail}
+    </>
   )
 }

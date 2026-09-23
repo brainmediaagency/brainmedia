@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Backfill jobs missing `forwardedToReporter` fields.
- * Existing approved jobs stay NOT forwarded (muhabir takvimine düşmez)
- * until yönetim/koordinatör “Muhabire ilet” der.
+ * Backfill jobs missing `forwardedToReporter` fields (legacy schema).
+ * Shooting calendars no longer use this flag; same-day confirms are visible
+ * immediately and later days unlock at İstanbul 21:00.
  *
  * Usage:
  *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \

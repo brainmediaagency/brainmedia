@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { KeyRound, LogOut, Menu } from 'lucide-react'
+import { CircleUser, LogOut, Menu } from 'lucide-react'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { ChangePasswordModal } from '@/features/auth/components/ChangePasswordModal'
 import { NotificationBell } from '@/features/notifications/components/NotificationBell'
@@ -63,7 +63,7 @@ export function AppHeader({ onMenuClick }: AppHeaderProps) {
             aria-label="Hesap ayarları"
             className="relative z-10 shrink-0 gap-2 px-2 sm:px-3"
           >
-            <KeyRound className="size-4" aria-hidden="true" />
+            <CircleUser className="size-4" aria-hidden="true" />
             <span className="hidden sm:inline">Hesap</span>
           </Button>
           <Button

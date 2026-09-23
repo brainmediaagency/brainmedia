@@ -55,15 +55,19 @@ describe('QA · notify call-site static guards', () => {
     }
   })
 
-  it('shooting calendar evening push targets kameraman + reporter + şef', () => {
-    const file = join(
-      process.cwd(),
-      'src/features/jobs/services/shootingCalendarNotifyService.ts',
+  it('konfirme stamps forward and does not keep a 21:00 evening calendar push', () => {
+    const jobService = readSrc(
+      join(process.cwd(), 'src/features/jobs/services/jobService.ts'),
     )
-    const source = readSrc(file)
-    expect(source).toMatch(
-      /roles:\s*\[\s*'kameraman'\s*,\s*'reporter'\s*,\s*'sef'\s*\]/,
-    )
+    expect(jobService).toMatch(/stampForwardedToReporter/)
+    expect(
+      existsSync(
+        join(
+          process.cwd(),
+          'src/features/jobs/services/shootingCalendarNotifyService.ts',
+        ),
+      ),
+    ).toBe(false)
   })
 
   it('HR / hiring notify management-only pushRoles', () => {

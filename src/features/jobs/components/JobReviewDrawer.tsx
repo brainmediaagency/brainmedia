@@ -8,16 +8,18 @@ import {
   revertJobToPending,
 } from '@/features/jobs/services/jobService'
 import {
-  exportJobReviewToSheet,
-} from '@/features/jobs/services/sheetsExport'
-import {
   useJobReviewFieldEdit,
   type JobReviewEditField,
   type LocationDraft,
 } from '@/features/jobs/hooks/useJobReviewFieldEdit'
 import { EditableDetailRow } from '@/features/jobs/components/EditableDetailRow'
-import { isJobReviewerRole } from '@/config/roles'
+import { isJobReviewerRole, isUserRole } from '@/config/roles'
 import { useAuth } from '@/features/auth/hooks/useAuth'
+import {
+  JOB_DECISION_NOTE_MIN_CHARS,
+  requireJobDecisionNote,
+  roleRequiresJobDecisionNote,
+} from '@/features/jobs/utils/jobDecisionNote'
 import {
   formatJobStatusNote,
   formatJobStatusNoteLabel,
@@ -42,6 +44,8 @@ import { formatTryFromKurus, kurusToTry } from '@/lib/currency'
 import { formatPhoneDisplay, normalizeTurkishPhone } from '@/lib/phone'
 import { formatJobCreator } from '@/features/jobs/utils/formatJobCreator'
 import { VoiceRecordingPanel } from '@/features/voice-recording/components/VoiceRecordingPanel'
+import { JobCallOutcomeField } from '@/features/jobs/components/JobCallOutcomeField'
+import { jobCallOutcomeLabel } from '@/features/jobs/utils/jobCallOutcome'
 import { mapAppError } from '@/lib/errors'
 
 export type JobReviewDrawerProps = {
@@ -106,8 +110,11 @@ export function JobReviewDrawer({
   const [timeError, setTimeError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const actorRole = claims?.role ?? profile?.role
+  const actorRole = isUserRole(profile?.role)
+    ? profile.role
+    : claims?.role
   const canReview = isJobReviewerRole(actorRole)
+  const decisionNoteRequired = roleRequiresJobDecisionNote(actorRole)
 
   const canEditFields =
     mode === 'pending' && canReview && isOnline && job?.status === 'pending'
@@ -190,18 +197,6 @@ export function JobReviewDrawer({
       )
       onJobUpdated?.(updated)
       toast.success('İş konfirme edildi.')
-      void exportJobReviewToSheet(job, 'approved', {
-        plannedExecutionDate,
-        reviewedByName: actor.fullName,
-        reviewNote: reviewNote ?? null,
-      }).catch((error) => {
-        toast.warning(
-          mapAppError(
-            error,
-            'Firestore kaydı tamam. Excel (Sheets) yazılamadı — Excel sekmesinden kontrol edin veya işlemi tekrar deneyin.',
-          ),
-        )
-      })
       resetLocalState()
       onClose()
     } catch (error) {
@@ -213,13 +208,18 @@ export function JobReviewDrawer({
 
   const handleReject = async () => {
     if (!actor || !isOnline || !canReview) return
+    try {
+      requireJobDecisionNote(note, actor.role, 'reject')
+    } catch (error) {
+      toast.error(mapAppError(error, 'Açıklama gerekli.'))
+      return
+    }
     setSubmitting(true)
     try {
       const reviewNote = note.trim() || undefined
       const updated = await rejectJob(job.id, actor, reviewNote)
       onJobUpdated?.(updated)
       toast.success('İş reddedildi.')
-      // Reddedilen işler Excel/Sheets’e yazılmaz (kayıt yalnızca Firestore’da).
       resetLocalState()
       onClose()
     } catch (error) {
@@ -484,6 +484,12 @@ export function JobReviewDrawer({
             value={statusNote}
           />
         ) : null}
+        {job.callOutcome && mode !== 'pending' ? (
+          <DetailRow
+            label="Arama son durum"
+            value={jobCallOutcomeLabel(job.callOutcome)}
+          />
+        ) : null}
       </dl>
 
       {mode === 'pending' && (
@@ -524,10 +530,29 @@ export function JobReviewDrawer({
             />
           )}
 
+          {canReview && actor ? (
+            <JobCallOutcomeField
+              job={job}
+              actor={actor}
+              disabled={busy || !isOnline || editingInProgress}
+              onUpdated={onJobUpdated}
+            />
+          ) : job.callOutcome ? (
+            <DetailRow
+              label="Arama son durum"
+              value={jobCallOutcomeLabel(job.callOutcome)}
+            />
+          ) : null}
+
           <FormField
             label="İnceleme notu"
             htmlFor="reviewNote"
-            hint="İsteğe bağlıdır."
+            required={decisionNoteRequired}
+            hint={
+              decisionNoteRequired
+                ? `Reddetmek için en az ${JOB_DECISION_NOTE_MIN_CHARS} karakter zorunlu. Konfirme için isteğe bağlıdır.`
+                : 'İsteğe bağlıdır.'
+            }
           >
             <Textarea
               id="reviewNote"
@@ -536,6 +561,11 @@ export function JobReviewDrawer({
               disabled={busy || !isOnline}
               maxLength={500}
               showCounter
+              placeholder={
+                decisionNoteRequired
+                  ? `En az ${JOB_DECISION_NOTE_MIN_CHARS} karakter`
+                  : undefined
+              }
             />
           </FormField>
 

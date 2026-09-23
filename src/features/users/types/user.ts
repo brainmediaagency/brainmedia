@@ -16,6 +16,11 @@ export interface UserProfile {
   /** Soft-delete marker; null when account is not deleted. */
   deletedAt: Timestamp | null
   shiftDurationMinutes: number | null
+  /**
+   * Optional çekim muhabir payı override (0–1). Null/absent → default %8.
+   * Set only via Admin SDK — not writable from the client app.
+   */
+  shootReporterRate: number | null
   timezone: 'Europe/Istanbul'
   stats: UserStats
   createdAt: Timestamp | null

@@ -3,9 +3,11 @@ import type { JobDocument } from '@/features/jobs/types/job'
 import type { JobStatus, UserRole } from '@/config/roles'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
+import { DateInput } from '@/components/ui/DateInput'
 import { Drawer } from '@/components/ui/Drawer'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { MobileDataCard } from '@/components/ui/MobileDataCard'
+import { MonthPicker } from '@/components/ui/MonthPicker'
 import { PaginationControls } from '@/components/ui/PaginationControls'
 import { Select } from '@/components/ui/Select'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -13,7 +15,13 @@ import { StatusBadge, type StatusBadgeStatus } from '@/components/ui/StatusBadge
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/Table'
 import { useClientPagination } from '@/hooks/useClientPagination'
 import { cn } from '@/lib/classNames'
-import { formatJobScheduleTr, normalizeJobSchedule } from '@/lib/date'
+import {
+  currentYearMonthIstanbul,
+  formatJobScheduleTr,
+  isValidDateOnly,
+  normalizeJobSchedule,
+  todayDateOnlyIstanbul,
+} from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
 import { formatJobReviewer } from '@/features/jobs/utils/formatJobReviewer'
 import {
@@ -23,12 +31,25 @@ import {
 } from '@/features/jobs/utils/formatJobStatusNote'
 import { JobDetailsDrawer } from '@/features/media-planning/components/JobDetailsDrawer'
 import { NewJobForm } from '@/features/media-planning/components/NewJobForm'
+import {
+  filterJobsByPeriod,
+  PLANNER_PERIOD_MODES,
+  type PlannerPeriodMode,
+} from '@/features/media-planning/utils/plannerJobsPeriod'
 
 export type PlannerJobsPanelProps = {
   pendingJobs: JobDocument[]
   approvedJobs: JobDocument[]
   loading: boolean
   canEditPending?: boolean
+  periodMode?: PlannerPeriodMode
+  onPeriodModeChange?: (mode: PlannerPeriodMode) => void
+  yearMonth?: string
+  onYearMonthChange?: (yearMonth: string) => void
+  day?: string
+  onDayChange?: (day: string) => void
+  /** Parent already shows period toolbar (e.g. above MPU). */
+  hidePeriodControls?: boolean
 }
 
 type StatusFilter =
@@ -100,33 +121,125 @@ function plannerJobCardRows(
   return rows
 }
 
+export function PlannerPeriodToolbar({
+  periodMode,
+  onPeriodModeChange,
+  yearMonth,
+  onYearMonthChange,
+  day,
+  onDayChange,
+}: {
+  periodMode: PlannerPeriodMode
+  onPeriodModeChange: (mode: PlannerPeriodMode) => void
+  yearMonth: string
+  onYearMonthChange: (yearMonth: string) => void
+  day: string
+  onDayChange: (day: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      <div
+        className="inline-flex w-fit max-w-full flex-wrap items-center gap-0.5 rounded-[var(--radius-md)] border border-border/80 bg-surface-muted/40 p-0.5"
+        role="group"
+        aria-label="Dönem türü"
+      >
+        {PLANNER_PERIOD_MODES.map((mode) => {
+          const active = periodMode === mode.id
+          return (
+            <button
+              key={mode.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onPeriodModeChange(mode.id)}
+              className={cn(
+                'rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-cyan/40',
+                active
+                  ? 'bg-brand-blue text-white'
+                  : 'text-text-secondary hover:bg-surface hover:text-text-primary',
+              )}
+            >
+              {mode.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {periodMode === 'month' ? (
+        <MonthPicker
+          id="planner-jobs-month"
+          value={yearMonth}
+          onChange={onYearMonthChange}
+          variant="compact"
+          className="sm:ml-auto"
+        />
+      ) : periodMode === 'day' ? (
+        <DateInput
+          id="planner-jobs-day"
+          value={day}
+          max={todayDateOnlyIstanbul()}
+          onChange={(e) => {
+            const next = e.target.value
+            if (isValidDateOnly(next)) onDayChange(next)
+          }}
+          className="sm:ml-auto sm:max-w-[11rem]"
+          aria-label="Planlanan çekim günü"
+        />
+      ) : null}
+    </div>
+  )
+}
+
 export function PlannerJobsPanel({
   pendingJobs,
   approvedJobs,
   loading,
   canEditPending = false,
+  periodMode: periodModeProp,
+  onPeriodModeChange,
+  yearMonth: yearMonthProp,
+  onYearMonthChange,
+  day: dayProp,
+  onDayChange,
+  hidePeriodControls = false,
 }: PlannerJobsPanelProps) {
   const { profile, claims } = useAuth()
   const viewerRole = claims?.role ?? profile?.role
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [periodModeState, setPeriodModeState] =
+    useState<PlannerPeriodMode>('month')
+  const [yearMonthState, setYearMonthState] = useState(currentYearMonthIstanbul)
+  const [dayState, setDayState] = useState(todayDateOnlyIstanbul)
   const [pageSize, setPageSize] = useState<PageSize>(10)
   const [editingJob, setEditingJob] = useState<JobDocument | null>(null)
   const [selectedJob, setSelectedJob] = useState<JobDocument | null>(null)
+
+  const periodMode = periodModeProp ?? periodModeState
+  const yearMonth = yearMonthProp ?? yearMonthState
+  const day = dayProp ?? dayState
+  const setPeriodMode = onPeriodModeChange ?? setPeriodModeState
+  const setYearMonth = onYearMonthChange ?? setYearMonthState
+  const setDay = onDayChange ?? setDayState
 
   const allJobs = useMemo(() => {
     return [...pendingJobs, ...approvedJobs].sort(comparePlannedDateDesc)
   }, [pendingJobs, approvedJobs])
 
+  const periodJobs = useMemo(
+    () => filterJobsByPeriod(allJobs, periodMode, yearMonth, day),
+    [allJobs, day, periodMode, yearMonth],
+  )
+
   const statusCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = {
-      all: allJobs.length,
+      all: periodJobs.length,
       pending: 0,
       approved: 0,
       shot: 0,
       cancelled: 0,
       rejected: 0,
     }
-    for (const job of allJobs) {
+    for (const job of periodJobs) {
       if (job.status === 'pending') counts.pending += 1
       else if (job.status === 'approved') counts.approved += 1
       else if (job.status === 'shot') counts.shot += 1
@@ -134,12 +247,16 @@ export function PlannerJobsPanel({
       else if (job.status === 'rejected') counts.rejected += 1
     }
     return counts
-  }, [allJobs])
+  }, [periodJobs])
 
   const filteredJobs = useMemo(() => {
-    if (statusFilter === 'all') return allJobs
-    return allJobs.filter((job) => job.status === statusFilter)
-  }, [allJobs, statusFilter])
+    if (statusFilter === 'all') return periodJobs
+    return periodJobs.filter((job) => job.status === statusFilter)
+  }, [periodJobs, statusFilter])
+
+  const periodResetKey = `${periodMode}:${
+    periodMode === 'month' ? yearMonth : periodMode === 'day' ? day : 'all'
+  }`
 
   const {
     page,
@@ -152,7 +269,7 @@ export function PlannerJobsPanel({
     showControls,
   } = useClientPagination(filteredJobs, {
     pageSize,
-    resetKey: statusFilter,
+    resetKey: `${statusFilter}|${periodResetKey}`,
   })
 
   if (loading) {
@@ -167,60 +284,80 @@ export function PlannerJobsPanel({
 
   return (
     <>
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div
-          className="flex flex-wrap gap-1.5"
-          role="tablist"
-          aria-label="Durum filtresi"
-        >
-          {STATUS_FILTERS.map((filter) => {
-            const active = statusFilter === filter.id
-            const count = statusCounts[filter.id]
-            return (
-              <button
-                key={filter.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setStatusFilter(filter.id)}
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
-                  active
-                    ? 'border-brand-cyan/40 bg-brand-cyan/10 text-brand-blue'
-                    : 'border-border bg-surface text-text-secondary hover:bg-surface-muted',
-                )}
-              >
-                {filter.label}
-                <span
+      <div className="mb-4 space-y-3">
+        {hidePeriodControls ? null : (
+          <PlannerPeriodToolbar
+            periodMode={periodMode}
+            onPeriodModeChange={setPeriodMode}
+            yearMonth={yearMonth}
+            onYearMonthChange={setYearMonth}
+            day={day}
+            onDayChange={setDay}
+          />
+        )}
+
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div
+            className="flex flex-wrap gap-1.5"
+            role="tablist"
+            aria-label="Durum filtresi"
+          >
+            {STATUS_FILTERS.map((filter) => {
+              const active = statusFilter === filter.id
+              const count = statusCounts[filter.id]
+              return (
+                <button
+                  key={filter.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setStatusFilter(filter.id)}
                   className={cn(
-                    'inline-flex min-w-5 items-center justify-center rounded-full px-1 text-[11px]',
-                    active ? 'bg-brand-blue/15 text-brand-blue' : 'bg-surface-muted text-text-secondary',
+                    'inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border px-3 py-1.5 text-xs font-semibold transition-colors',
+                    active
+                      ? 'border-brand-cyan/40 bg-brand-cyan/10 text-brand-blue'
+                      : 'border-border bg-surface text-text-secondary hover:bg-surface-muted',
                   )}
                 >
-                  {count}
-                </span>
-              </button>
-            )
-          })}
-        </div>
+                  {filter.label}
+                  <span
+                    className={cn(
+                      'inline-flex min-w-5 items-center justify-center rounded-[var(--radius-sm)] px-1 text-[11px]',
+                      active
+                        ? 'bg-brand-blue/15 text-brand-blue'
+                        : 'bg-surface-muted text-text-secondary',
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
 
-        <div className="flex items-center gap-2 self-end lg:self-auto">
-          <label htmlFor="planner-jobs-page-size" className="text-sm text-text-secondary">
-            Göster
-          </label>
-          <Select
-            id="planner-jobs-page-size"
-            value={String(pageSize)}
-            onChange={(event) => setPageSize(Number(event.target.value) as PageSize)}
-            className="!min-h-10 w-[88px]"
-            aria-label="Sayfa başına iş sayısı"
-          >
-            {PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </Select>
+          <div className="flex items-center gap-2 self-end lg:self-auto">
+            <label
+              htmlFor="planner-jobs-page-size"
+              className="text-sm text-text-secondary"
+            >
+              Göster
+            </label>
+            <Select
+              id="planner-jobs-page-size"
+              value={String(pageSize)}
+              onChange={(event) =>
+                setPageSize(Number(event.target.value) as PageSize)
+              }
+              className="!min-h-10 w-[88px]"
+              aria-label="Sayfa başına iş sayısı"
+            >
+              {PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -229,8 +366,10 @@ export function PlannerJobsPanel({
           title="İş kaydı yok"
           description={
             statusFilter === 'all'
-              ? 'Henüz gönderilmiş iş kaydı bulunmuyor.'
-              : 'Bu durumda gösterilecek iş kaydı yok.'
+              ? periodMode === 'month'
+                ? 'Bu ay için planlanan çekim kaydı bulunmuyor.'
+                : 'Bu gün için planlanan çekim kaydı bulunmuyor.'
+              : 'Seçilen dönem ve durumda gösterilecek iş kaydı yok.'
           }
         />
       ) : (
@@ -255,57 +394,61 @@ export function PlannerJobsPanel({
                     ? formatJobStatusNote(job)
                     : null
                   return (
-                  <TableRow
-                    key={job.id}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedJob(job)}
-                  >
-                    <TableCell className="font-medium">{job.companyName}</TableCell>
-                    <TableCell>
-                      {job.province} / {job.district}
-                    </TableCell>
-                    <TableCell>
-                      {formatJobScheduleTr(job.plannedExecutionDate)}
-                    </TableCell>
-                    <TableCell>{formatTryFromKurus(job.agreedAmountKurus)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={toBadgeStatus(job.status)} />
-                    </TableCell>
-                    <TableCell>
-                      {formatJobReviewer(job, viewerRole)}
-                    </TableCell>
-                    <TableCell className="max-w-[220px]">
-                      {statusNote ? (
-                        <span
-                          className="line-clamp-2 text-sm text-text-primary"
-                          title={statusNote}
-                        >
-                          {statusNote}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-text-secondary">—</span>
-                      )}
-                    </TableCell>
-                    {canEditPending ? (
+                    <TableRow
+                      key={job.id}
+                      className="cursor-pointer"
+                      onClick={() => setSelectedJob(job)}
+                    >
+                      <TableCell className="font-medium">
+                        {job.companyName}
+                      </TableCell>
                       <TableCell>
-                        {job.status === 'pending' ? (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setEditingJob(job)
-                            }}
+                        {job.province} / {job.district}
+                      </TableCell>
+                      <TableCell>
+                        {formatJobScheduleTr(job.plannedExecutionDate)}
+                      </TableCell>
+                      <TableCell>
+                        {formatTryFromKurus(job.agreedAmountKurus)}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={toBadgeStatus(job.status)} />
+                      </TableCell>
+                      <TableCell>
+                        {formatJobReviewer(job, viewerRole)}
+                      </TableCell>
+                      <TableCell className="max-w-[220px]">
+                        {statusNote ? (
+                          <span
+                            className="line-clamp-2 text-sm text-text-primary"
+                            title={statusNote}
                           >
-                            Düzenle
-                          </Button>
+                            {statusNote}
+                          </span>
                         ) : (
                           <span className="text-sm text-text-secondary">—</span>
                         )}
                       </TableCell>
-                    ) : null}
-                  </TableRow>
+                      {canEditPending ? (
+                        <TableCell>
+                          {job.status === 'pending' ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setEditingJob(job)
+                              }}
+                            >
+                              Düzenle
+                            </Button>
+                          ) : (
+                            <span className="text-sm text-text-secondary">—</span>
+                          )}
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
                   )
                 })}
               </TableBody>

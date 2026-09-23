@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FocusEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -35,24 +35,13 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { formatDateTimeTr } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
-import { toTitleCaseTr } from '@/lib/text'
 
 const DEFAULT_CLOCK_IN = '10:00'
 const DEFAULT_CLOCK_OUT = '18:30'
 
 const schema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(2, 'Başlık en az 2 karakter.')
-    .max(200)
-    .transform(toTitleCaseTr),
-  body: z
-    .string()
-    .trim()
-    .min(1, 'Rapor metni zorunlu.')
-    .max(10000)
-    .transform(toTitleCaseTr),
+  title: z.string().trim().min(2, 'Başlık en az 2 karakter.').max(200),
+  body: z.string().trim().min(1, 'Rapor metni zorunlu.').max(10000),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -108,12 +97,10 @@ function OptionalTimeField({
 }
 
 export type HrReportsPanelProps = {
-  sectionNumber?: string
   defaultOpen?: boolean
 }
 
 export function HrReportsPanel({
-  sectionNumber = '04',
   defaultOpen = false,
 }: HrReportsPanelProps) {
   const { profile } = useAuth()
@@ -137,7 +124,6 @@ export function HrReportsPanel({
     register,
     handleSubmit,
     reset,
-    setValue,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -153,14 +139,6 @@ export function HrReportsPanel({
     if (!wizardOpen || wizardPlanners.length === 0) return null
     return `${wizardIndex + 1} / ${wizardPlanners.length}`
   }, [wizardOpen, wizardIndex, wizardPlanners.length])
-
-  const titleCaseOnBlur =
-    (field: 'title' | 'body') => (e: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      setValue(field, toTitleCaseTr(e.target.value), {
-        shouldValidate: true,
-        shouldDirty: true,
-      })
-    }
 
   useEffect(() => {
     if (!profile?.uid) return
@@ -360,7 +338,6 @@ export function HrReportsPanel({
 
   return (
     <AccordionSection
-      number={sectionNumber}
       title="Rapor Girişi"
       description="Yöneticiye rapor gönderin. Mesai gir ile MPU’ları sırayla işaretleyebilirsiniz."
       defaultOpen={defaultOpen}
@@ -370,7 +347,10 @@ export function HrReportsPanel({
           <Input
             id="hr-report-title"
             disabled={submitting || wizardOpen}
-            {...register('title', { onBlur: titleCaseOnBlur('title') })}
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            {...register('title')}
           />
         </FormField>
         <FormField label="Rapor" htmlFor="hr-report-body" error={errors.body?.message}>
@@ -380,7 +360,10 @@ export function HrReportsPanel({
             disabled={submitting || wizardOpen}
             showCounter
             maxLength={10000}
-            {...register('body', { onBlur: titleCaseOnBlur('body') })}
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            {...register('body')}
           />
         </FormField>
 

@@ -35,12 +35,10 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>
 
 export type HiringNotesPanelProps = {
-  sectionNumber?: string
   defaultOpen?: boolean
 }
 
 export function HiringNotesPanel({
-  sectionNumber = '05',
   defaultOpen = false,
 }: HiringNotesPanelProps) {
   const { profile } = useAuth()
@@ -189,7 +187,6 @@ export function HiringNotesPanel({
 
   return (
     <AccordionSection
-      number={sectionNumber}
       title="İşe Alım Görüşme Notları"
       description="Görüşülen adaylar için canlı not gönderin. Notlarınızı düzenleyebilirsiniz."
       defaultOpen={defaultOpen}

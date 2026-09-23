@@ -26,18 +26,16 @@ import type {
 } from '@/features/game/types/hoop'
 import type { UserRole } from '@/config/roles'
 
-/**
- * Public product cap after test (not enforced while {@link HOOP_PUBLIC_TEST_MODE}).
- */
+/** Daily shot cap for every signed-in role. */
 export const MAX_DAILY_SHOTS = 6
 
 /**
- * Soft-launch: only management + coordinator + şef play; daily shot cap is off for them.
- * Flip to false and reintroduce caps when opening to all roles.
+ * When true, only yönetim / koordinatör / şef play and the daily cap is off.
+ * Public launch keeps this false.
  */
-export const HOOP_PUBLIC_TEST_MODE = true
+export const HOOP_PUBLIC_TEST_MODE = false
 
-/** Hard ceiling so client/spam cannot explode list size while testing. */
+/** Safety ceiling if a role is uncapped (test mode). */
 export const HOOP_TEST_MAX_SHOTS = 200
 
 export function canPlayHoopGame(
@@ -52,7 +50,8 @@ export function canPlayHoopGame(
 export function hoopShotLimitForRole(
   role: UserRole | string | null | undefined,
 ): number | null {
-  if (HOOP_PUBLIC_TEST_MODE && canPlayHoopGame(role)) return null
+  if (!canPlayHoopGame(role)) return MAX_DAILY_SHOTS
+  if (HOOP_PUBLIC_TEST_MODE) return null
   return MAX_DAILY_SHOTS
 }
 
@@ -138,7 +137,7 @@ export async function submitShot(input: {
   uid: string
   fullName: string
   hit: boolean
-  /** Caller role; test mode players are uncapped (within safety max). */
+  /** Caller role; used for play gate + daily cap. */
   role?: UserRole | string | null
 }): Promise<HoopDailyScore> {
   const uid = input.uid.trim()
@@ -147,9 +146,7 @@ export async function submitShot(input: {
     throw new UserFacingError('Oturum veya isim eksik.')
   }
   if (!canPlayHoopGame(input.role)) {
-    throw new UserFacingError(
-      'Oyun şu an test aşamasında; yalnızca yönetim ve koordinatör oynayabilir.',
-    )
+    throw new UserFacingError('Bu oyunu oynamak için geçerli bir hesap gerekli.')
   }
   const shot = input.hit ? 1 : 0
   const date = todayDateOnlyIstanbul()

@@ -9,6 +9,7 @@ function report(
   return {
     companyCount: 0,
     companies: [],
+    leaveDayCash: false,
     note: '',
     hotelExpenseKurus: 0,
     stationeryExpenseKurus: 0,
@@ -50,6 +51,7 @@ describe('aggregateReporterSummary', () => {
           {
             jobId: 'j1',
             companyName: 'A',
+            cancelled: false,
             hasNews: true,
             newsTotalKurus: 100_00,
             newsReporterFeeKurus: 15_00,
@@ -65,6 +67,7 @@ describe('aggregateReporterSummary', () => {
           {
             jobId: 'j2',
             companyName: 'B',
+            cancelled: false,
             hasNews: false,
             newsTotalKurus: null,
             newsReporterFeeKurus: null,
@@ -97,6 +100,7 @@ describe('aggregateReporterSummary', () => {
           {
             jobId: 'j3',
             companyName: 'C',
+            cancelled: false,
             hasNews: true,
             newsTotalKurus: 50_00,
             newsReporterFeeKurus: 7_50,

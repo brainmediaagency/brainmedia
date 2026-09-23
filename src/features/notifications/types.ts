@@ -4,11 +4,13 @@ import type { UserRole } from '@/config/roles'
 export type ManagementNotificationType =
   | 'job_created'
   | 'job_approved'
+  | 'job_call_status'
   | 'daily_report'
   | 'z_report'
   | 'hr_report'
   | 'hiring_note'
   | 'odometer_report'
+  | 'job_clock_report'
 
 export type BroadcastNotificationType = 'region_created'
 
@@ -16,6 +18,7 @@ export type UserNotificationType =
   | 'job_approved'
   | 'job_rejected'
   | 'job_shot'
+  | 'job_call_status'
 
 export type AppNotificationType =
   | ManagementNotificationType

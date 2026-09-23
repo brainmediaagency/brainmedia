@@ -9,6 +9,11 @@ import { LoginPage } from '@/pages/LoginPage'
 import { UnauthorizedPage } from '@/pages/UnauthorizedPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { MediaPlanningPage } from '@/pages/MediaPlanningPage'
+import { ShootingCalendarPage } from '@/pages/ShootingCalendarPage'
+import { JobApprovalsPage } from '@/pages/JobApprovalsPage'
+import { RegionPlanningPage } from '@/pages/RegionPlanningPage'
+import { OpsLedgerPage } from '@/pages/OpsLedgerPage'
+import { CoordinatorSharePage } from '@/pages/CoordinatorSharePage'
 import { CoordinatorPage } from '@/pages/CoordinatorPage'
 import { HumanResourcesPage } from '@/pages/HumanResourcesPage'
 import { ManagementPage } from '@/pages/ManagementPage'
@@ -48,6 +53,61 @@ export function AppRouter() {
           <ProtectedRoute>
             <AuthenticatedLayout>
               <UnauthorizedPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.shootingCalendar}
+        element={
+          <ProtectedRoute routeKey="shooting-calendar">
+            <AuthenticatedLayout>
+              <ShootingCalendarPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.jobApprovals}
+        element={
+          <ProtectedRoute routeKey="job-approvals">
+            <AuthenticatedLayout>
+              <JobApprovalsPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.regionPlanning}
+        element={
+          <ProtectedRoute routeKey="region-planning">
+            <AuthenticatedLayout>
+              <RegionPlanningPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.opsLedger}
+        element={
+          <ProtectedRoute routeKey="ops-ledger">
+            <AuthenticatedLayout>
+              <OpsLedgerPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path={APP_ROUTES.coordinatorShare}
+        element={
+          <ProtectedRoute routeKey="coordinator-share">
+            <AuthenticatedLayout>
+              <CoordinatorSharePage />
             </AuthenticatedLayout>
           </ProtectedRoute>
         }

@@ -37,7 +37,7 @@ export function MobileNavigation({ open, onClose }: MobileNavigationProps) {
       />
       <div className="absolute inset-y-0 left-0 flex w-[min(85vw,320px)] max-w-full flex-col bg-[image:var(--gradient-sidebar)] pt-[var(--safe-top)] pb-[var(--safe-bottom)] pl-[var(--safe-left)] text-white shadow-[var(--shadow-lg)]">
         <div className="flex h-[var(--header-height)] items-center justify-between gap-3 border-b border-white/10 px-4">
-          <BrandLogo variant="white" className="h-6 w-auto max-w-[132px]" alt="B'RAIN menü" />
+          <BrandLogo variant="white" themeAdaptive={false} className="h-6 w-auto max-w-[132px]" alt="B'RAIN menü" />
           <button
             type="button"
             onClick={onClose}
@@ -49,7 +49,7 @@ export function MobileNavigation({ open, onClose }: MobileNavigationProps) {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-3">
-          <NavMenu onNavigate={onClose} subItemClassName="py-2.5 text-sm" />
+          <NavMenu onNavigate={onClose} subItemClassName="py-2" />
         </nav>
       </div>
     </div>

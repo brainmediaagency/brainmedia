@@ -21,6 +21,24 @@ export function todayDateOnlyIstanbul(now: Date = new Date()): string {
   return formatInTimeZone(now, COMPANY_TIMEZONE, 'yyyy-MM-dd')
 }
 
+export function shiftDateOnlyDays(dateOnly: string, days: number): string {
+  const [y, m, d] = dateOnly.split('-').map(Number)
+  const utc = new Date(Date.UTC(y!, m! - 1, d! + days))
+  const yy = utc.getUTCFullYear()
+  const mm = String(utc.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(utc.getUTCDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+const WEEKDAY_LABELS_TR = ['', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar']
+
+export function weekdayLabelTr(dateOnly: string): string {
+  if (!isValidDateOnly(dateOnly)) return ''
+  const noon = fromZonedTime(`${dateOnly}T12:00:00`, COMPANY_TIMEZONE)
+  const iso = Number(formatInTimeZone(noon, COMPANY_TIMEZONE, 'i'))
+  return WEEKDAY_LABELS_TR[iso] ?? ''
+}
+
 /** 1-based day of year in Istanbul (1–365/366). */
 export function dayOfYearIstanbul(now: Date = new Date()): number {
   const dateOnly = todayDateOnlyIstanbul(now)
@@ -77,8 +95,8 @@ export function formatYearMonthLongTr(yearMonth: string): string {
 }
 
 /**
- * Human range label for the ops/stats month window (ayın son günü sonraki aya):
- * "28 Şubat – 30 Mart 2026" for 2026-03.
+ * Human range label for the calendar month window:
+ * "1 – 31 Mart 2026" for 2026-03.
  */
 export function formatYearMonthRangeTr(yearMonth: string): string {
   if (!isValidYearMonth(yearMonth)) return yearMonth
@@ -128,19 +146,18 @@ export function addDaysDateOnly(dateOnly: string, days: number): string {
 }
 
 /**
- * List/stat attribution: ayın son takvim günü bir sonraki aya sayılır.
- * Örn. 2026-03-31 → 2026-04-01, 2026-03-30 → 2026-03-30.
+ * List/stat attribution date for a calendar day.
+ * Kasa / gider / aylık özet: rapor (çekim) günü kendi takvim ayına aittir;
+ * ayın son günü de o aya dahildir (31 Ağustos → Ağustos).
  */
 export function statsAttributionDateOnly(dateOnly: string): string {
   if (!isValidDateOnly(dateOnly)) return dateOnly
-  return isLastCalendarDayOfMonth(dateOnly)
-    ? addDaysDateOnly(dateOnly, 1)
-    : dateOnly
+  return dateOnly
 }
 
 /**
- * Inclusive raw calendar window for ops month `yyyy-MM`.
- * Mart 2026 → 28 (veya 29) Şubat … 30 Mart; 31 Mart nisan ayına düşer.
+ * Inclusive calendar month window for ops / kasa / aylık özet `yyyy-MM`.
+ * Ağustos 2026 → 2026-08-01 … 2026-08-31.
  */
 export function statsMonthDateBounds(yearMonth: string): {
   startDate: string
@@ -149,15 +166,15 @@ export function statsMonthDateBounds(yearMonth: string): {
   if (!isValidYearMonth(yearMonth)) {
     throw new Error('Geçersiz ay')
   }
-  const startDate = lastDayOfMonthDateOnly(shiftYearMonth(yearMonth, -1))
-  const endDate = addDaysDateOnly(lastDayOfMonthDateOnly(yearMonth), -1)
-  return { startDate, endDate }
+  return {
+    startDate: `${yearMonth}-01`,
+    endDate: lastDayOfMonthDateOnly(yearMonth),
+  }
 }
 
 /**
- * UI aralığını (attribution) Firestore sorgusu için ham takvim aralığına çevirir.
- * Örn. 01.03–31.03 → önceki ayın son günü … 30.03.
- * Boş sonuç (yalnızca ayın son günü seçildiyse) `null`.
+ * UI tarih aralığını Firestore sorgusu için saklar.
+ * Takvim ayı modeli: başlangıç/bitiş aynen kullanılır.
  */
 export function expandStatsQueryDateRange(
   startDate: string,
@@ -165,27 +182,10 @@ export function expandStatsQueryDateRange(
 ): { startDate: string; endDate: string } | null {
   if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate)) return null
   if (startDate > endDate) return null
-
-  let queryStart = startDate
-  const dayBeforeStart = addDaysDateOnly(startDate, -1)
-  if (
-    isLastCalendarDayOfMonth(dayBeforeStart) &&
-    statsAttributionDateOnly(dayBeforeStart) >= startDate &&
-    statsAttributionDateOnly(dayBeforeStart) <= endDate
-  ) {
-    queryStart = dayBeforeStart
-  }
-
-  let queryEnd = endDate
-  if (isLastCalendarDayOfMonth(endDate)) {
-    queryEnd = addDaysDateOnly(endDate, -1)
-  }
-
-  if (queryStart > queryEnd) return null
-  return { startDate: queryStart, endDate: queryEnd }
+  return { startDate, endDate }
 }
 
-/** `dateOnly` attribution'ı [startDate, endDate] içinde mi? */
+/** `dateOnly` [startDate, endDate] içinde mi? */
 export function isDateOnlyInStatsRange(
   dateOnly: string,
   startDate: string,
@@ -194,8 +194,7 @@ export function isDateOnlyInStatsRange(
   if (!isValidDateOnly(dateOnly) || !isValidDateOnly(startDate) || !isValidDateOnly(endDate)) {
     return false
   }
-  const attr = statsAttributionDateOnly(dateOnly)
-  return attr >= startDate && attr <= endDate
+  return dateOnly >= startDate && dateOnly <= endDate
 }
 
 /** Timestamp'in İstanbul gününün attribution'ı aralıkta mı? */

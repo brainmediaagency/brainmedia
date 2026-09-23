@@ -20,13 +20,17 @@ import {
   formatDateOnlyLongTr,
   formatDateOnlyShortTr,
   isValidDateOnly,
+  shiftDateOnlyDays,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
+
+export { shiftDateOnlyDays, weekdayLabelTr } from '@/lib/date'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import type { DailyRegion } from '@/features/media-planning/types/dailyRegion'
 import { COMPANY_TIMEZONE } from '@/config/roles'
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz'
 import { notifyBroadcast } from '@/features/notifications/services/notificationService'
+import { writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
 
 const REGION_NOTIFY_META_PATH = ['appMeta', 'dailyRegionNotify'] as const
 
@@ -73,35 +77,9 @@ export function mondayOfWeekIstanbul(dateOnly: string): string {
   return shiftDateOnlyDays(day, -offset)
 }
 
-export function shiftDateOnlyDays(dateOnly: string, days: number): string {
-  const [y, m, d] = dateOnly.split('-').map(Number)
-  const utc = new Date(Date.UTC(y!, m! - 1, d! + days))
-  const yy = utc.getUTCFullYear()
-  const mm = String(utc.getUTCMonth() + 1).padStart(2, '0')
-  const dd = String(utc.getUTCDate()).padStart(2, '0')
-  return `${yy}-${mm}-${dd}`
-}
-
 /** Mon→Sun for the week starting at mondayDateOnly. */
 export function weekDatesFromMonday(mondayDateOnly: string): string[] {
   return Array.from({ length: 7 }, (_, i) => shiftDateOnlyDays(mondayDateOnly, i))
-}
-
-export function weekdayLabelTr(dateOnly: string): string {
-  if (!isValidDateOnly(dateOnly)) return ''
-  const noon = fromZonedTime(`${dateOnly}T12:00:00`, COMPANY_TIMEZONE)
-  const iso = Number(formatInTimeZone(noon, COMPANY_TIMEZONE, 'i'))
-  const labels = [
-    '',
-    'Pazartesi',
-    'Salı',
-    'Çarşamba',
-    'Perşembe',
-    'Cuma',
-    'Cumartesi',
-    'Pazar',
-  ]
-  return labels[iso] ?? ''
 }
 
 export function weekRangeLabelTr(monday: string): string {
@@ -148,6 +126,14 @@ export async function upsertDailyRegion(
         },
         { merge: true },
       )
+      writeActivityLogForCurrentUser({
+        category: 'job',
+        action: 'job.region_updated',
+        summary: `${formatDateOnlyShortTr(date)} — ${trimmed}`,
+        entityType: 'daily_region',
+        entityId: date,
+        actorNameFallback: actor.fullName,
+      })
       return
     }
 
@@ -158,6 +144,14 @@ export async function upsertDailyRegion(
       updatedByNameSnapshot: actor.fullName,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+    })
+    writeActivityLogForCurrentUser({
+      category: 'job',
+      action: 'job.region_updated',
+      summary: `${formatDateOnlyShortTr(date)} — ${trimmed}`,
+      entityType: 'daily_region',
+      entityId: date,
+      actorNameFallback: actor.fullName,
     })
     // Bildirim kaydetmede değil; İstanbul’da yeni güne girerken
     // `runDueDailyRegionDayNotify` ile gönderilir.
@@ -254,6 +248,13 @@ export async function deleteDailyRegion(date: string): Promise<void> {
   }
   try {
     await deleteDoc(doc(getDb(), 'dailyRegions', date))
+    writeActivityLogForCurrentUser({
+      category: 'job',
+      action: 'job.region_deleted',
+      summary: formatDateOnlyShortTr(date),
+      entityType: 'daily_region',
+      entityId: date,
+    })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Bölge silinemedi.'))
   }

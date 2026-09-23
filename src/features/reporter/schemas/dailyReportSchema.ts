@@ -25,22 +25,42 @@ const companySchema = z
     jobId: z.string().trim().min(1, 'Firma seçin.'),
     /** Seçilen işten snapshot; kullanıcı yazmaz. */
     companyName: z.string().trim().min(1, 'Firma seçin.').max(120),
+    /** Günlük rapordan iptal — kasa/ücret yok. */
+    cancelled: z.boolean(),
     hasNews: z.boolean(),
     newsTotalTry: z.string(),
     /** +KDV = KDV hesapla; Nakit = KDV yok. */
     chargeMode: z.enum(['vat', 'cash']),
-    shootMinutes: z
-      .string()
-      .trim()
-      .min(1, 'Çekim dakikası zorunlu.')
-      .refine((v) => /^\d+$/.test(v), 'Çekim dakikası tam sayı olmalı.')
-      .refine((v) => {
-        const n = Number(v)
-        return n >= 0 && n <= 24 * 60
-      }, 'Dakika 0–1440 arasında olmalı.'),
+    shootMinutes: z.string(),
     vatRate: z.union([z.literal(14), z.literal(17), z.literal(20)]),
   })
   .superRefine((value, ctx) => {
+    if (value.cancelled) return
+
+    const minutes = value.shootMinutes.trim()
+    if (minutes === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['shootMinutes'],
+        message: 'Çekim dakikası zorunlu.',
+      })
+    } else if (!/^\d+$/.test(minutes)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['shootMinutes'],
+        message: 'Çekim dakikası tam sayı olmalı.',
+      })
+    } else {
+      const n = Number(minutes)
+      if (n < 0 || n > 24 * 60) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['shootMinutes'],
+          message: 'Dakika 0–1440 arasında olmalı.',
+        })
+      }
+    }
+
     if (value.hasNews) {
       const trimmed = value.newsTotalTry.trim()
       if (trimmed === '') {
@@ -75,39 +95,48 @@ const companySchema = z
     }
   })
 
-export const dailyReportSchema = z.object({
-  reportDate: z
-    .string()
-    .trim()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Rapor tarihi seçin.'),
-  companies: z
-    .array(companySchema)
-    .min(1, 'En az bir firma gerekli.')
-    .max(10)
-    .superRefine((companies, ctx) => {
-      const seen = new Map<string, number>()
-      companies.forEach((company, index) => {
-        const jobId = company.jobId.trim()
-        if (!jobId) return
-        if (seen.has(jobId)) {
-          ctx.addIssue({
-            code: 'custom',
-            path: [index, 'jobId'],
-            message: 'Aynı firma bir raporda yalnızca bir kez seçilebilir.',
-          })
-        } else {
-          seen.set(jobId, index)
-        }
+export const dailyReportSchema = z
+  .object({
+    reportDate: z
+      .string()
+      .trim()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Rapor tarihi seçin.'),
+    /** İş seçmeden kasa/gider. */
+    leaveDayCash: z.boolean(),
+    companies: z.array(companySchema).max(10),
+    note: z.string().trim().max(10000),
+    hotelExpenseTry: optionalMoneyTryField(),
+    stationeryExpenseTry: optionalMoneyTryField(),
+    fuelExpenseTry: optionalMoneyTryField(),
+    mealExpenseTry: optionalMoneyTryField(),
+    extraExpenseTry: optionalMoneyTryField(),
+    /** Create: empty → 0. Update: empty preserves previous (see resolveFieldPaidKurusForWrite). */
+    fieldPaidTry: optionalMoneyTryField(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.leaveDayCash) return
+    if (value.companies.length < 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['companies'],
+        message: 'Bu günün işlerini seçin (veya izin günü kasası işaretleyin).',
       })
-    }),
-  note: z.string().trim().max(10000),
-  hotelExpenseTry: optionalMoneyTryField(),
-  stationeryExpenseTry: optionalMoneyTryField(),
-  fuelExpenseTry: optionalMoneyTryField(),
-  mealExpenseTry: optionalMoneyTryField(),
-  extraExpenseTry: optionalMoneyTryField(),
-  /** Boş bırakılırsa 0 kabul edilir. */
-  fieldPaidTry: optionalMoneyTryField(),
-})
+      return
+    }
+    const seen = new Map<string, number>()
+    value.companies.forEach((company, index) => {
+      const jobId = company.jobId.trim()
+      if (!jobId) return
+      if (seen.has(jobId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['companies', index, 'jobId'],
+          message: 'Aynı firma bir raporda yalnızca bir kez seçilebilir.',
+        })
+      } else {
+        seen.set(jobId, index)
+      }
+    })
+  })
 
 export type DailyReportFormValues = z.infer<typeof dailyReportSchema>

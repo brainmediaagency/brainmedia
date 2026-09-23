@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  fetchAllApprovedJobsPage,
   fetchAllPendingJobsPage,
   fetchRecentlyRejectedJobsPage,
+  fetchTodayConfirmedApprovedJobsPage,
   type JobQueueCursor,
 } from '@/features/jobs/services/jobService'
 import type { JobDocument } from '@/features/jobs/types/job'
-import { withoutJob, upsertFront } from '@/features/jobs/utils/approvalQueueSync'
+import {
+  isApprovedReviewedOnDay,
+  sortJobsByDecisionTimeDesc,
+  withoutJob,
+  upsertFront,
+} from '@/features/jobs/utils/approvalQueueSync'
 import { mapAppError } from '@/lib/errors'
 
 type QueueState = {
@@ -28,7 +33,8 @@ const emptyQueue = (): QueueState => ({
 
 export function useApprovalQueues(enabled = true) {
   const [pending, setPending] = useState<QueueState>(emptyQueue)
-  const [approved, setApproved] = useState<QueueState>(emptyQueue)
+  /** Konfirme İşler — confirmed today (reviewedAt). */
+  const [todayConfirmed, setTodayConfirmed] = useState<QueueState>(emptyQueue)
   const [rejected, setRejected] = useState<QueueState>(emptyQueue)
   const aliveRef = useRef(true)
 
@@ -42,20 +48,20 @@ export function useApprovalQueues(enabled = true) {
   useEffect(() => {
     if (!enabled) {
       setPending({ ...emptyQueue(), loading: false })
-      setApproved({ ...emptyQueue(), loading: false })
+      setTodayConfirmed({ ...emptyQueue(), loading: false })
       setRejected({ ...emptyQueue(), loading: false })
       return
     }
 
     setPending(emptyQueue())
-    setApproved(emptyQueue())
+    setTodayConfirmed(emptyQueue())
     setRejected(emptyQueue())
 
     void (async () => {
       try {
-        const [pendingPage, approvedPage, rejectedPage] = await Promise.all([
+        const [pendingPage, todayPage, rejectedPage] = await Promise.all([
           fetchAllPendingJobsPage(),
-          fetchAllApprovedJobsPage(),
+          fetchTodayConfirmedApprovedJobsPage(),
           fetchRecentlyRejectedJobsPage(),
         ])
         if (!aliveRef.current) return
@@ -66,15 +72,15 @@ export function useApprovalQueues(enabled = true) {
           loading: false,
           loadingMore: false,
         })
-        setApproved({
-          jobs: approvedPage.jobs,
-          cursor: approvedPage.cursor,
-          hasMore: approvedPage.hasMore,
+        setTodayConfirmed({
+          jobs: todayPage.jobs,
+          cursor: todayPage.cursor,
+          hasMore: todayPage.hasMore,
           loading: false,
           loadingMore: false,
         })
         setRejected({
-          jobs: rejectedPage.jobs,
+          jobs: sortJobsByDecisionTimeDesc(rejectedPage.jobs),
           cursor: rejectedPage.cursor,
           hasMore: rejectedPage.hasMore,
           loading: false,
@@ -83,7 +89,7 @@ export function useApprovalQueues(enabled = true) {
       } catch (error) {
         if (!aliveRef.current) return
         setPending((s) => ({ ...s, loading: false }))
-        setApproved((s) => ({ ...s, loading: false }))
+        setTodayConfirmed((s) => ({ ...s, loading: false }))
         setRejected((s) => ({ ...s, loading: false }))
         toast.error(mapAppError(error, 'İş kuyrukları yüklenemedi.'))
       }
@@ -110,13 +116,21 @@ export function useApprovalQueues(enabled = true) {
     }
   }, [pending.hasMore, pending.loadingMore, pending.cursor])
 
-  const loadMoreApproved = useCallback(async () => {
-    if (!approved.hasMore || approved.loadingMore || !approved.cursor) return
-    setApproved((s) => ({ ...s, loadingMore: true }))
+  const loadMoreTodayConfirmed = useCallback(async () => {
+    if (
+      !todayConfirmed.hasMore ||
+      todayConfirmed.loadingMore ||
+      !todayConfirmed.cursor
+    ) {
+      return
+    }
+    setTodayConfirmed((s) => ({ ...s, loadingMore: true }))
     try {
-      const page = await fetchAllApprovedJobsPage(approved.cursor)
+      const page = await fetchTodayConfirmedApprovedJobsPage(
+        todayConfirmed.cursor,
+      )
       if (!aliveRef.current) return
-      setApproved((s) => ({
+      setTodayConfirmed((s) => ({
         jobs: [...s.jobs, ...page.jobs],
         cursor: page.cursor,
         hasMore: page.hasMore,
@@ -125,10 +139,14 @@ export function useApprovalQueues(enabled = true) {
       }))
     } catch (error) {
       if (!aliveRef.current) return
-      setApproved((s) => ({ ...s, loadingMore: false }))
+      setTodayConfirmed((s) => ({ ...s, loadingMore: false }))
       toast.error(mapAppError(error, 'Konfirme işler yüklenemedi.'))
     }
-  }, [approved.hasMore, approved.loadingMore, approved.cursor])
+  }, [
+    todayConfirmed.hasMore,
+    todayConfirmed.loadingMore,
+    todayConfirmed.cursor,
+  ])
 
   const loadMoreRejected = useCallback(async () => {
     if (!rejected.hasMore || rejected.loadingMore || !rejected.cursor) return
@@ -137,7 +155,7 @@ export function useApprovalQueues(enabled = true) {
       const page = await fetchRecentlyRejectedJobsPage(rejected.cursor)
       if (!aliveRef.current) return
       setRejected((s) => ({
-        jobs: [...s.jobs, ...page.jobs],
+        jobs: sortJobsByDecisionTimeDesc([...s.jobs, ...page.jobs]),
         cursor: page.cursor,
         hasMore: page.hasMore,
         loading: false,
@@ -150,58 +168,56 @@ export function useApprovalQueues(enabled = true) {
     }
   }, [rejected.hasMore, rejected.loadingMore, rejected.cursor])
 
-  /**
-   * Keep pending / approved / rejected lists aligned with Firestore after
-   * any mutation on this page (status moves included).
-   * Routing rules are unit-tested via `syncJobIntoQueues`.
-   */
   const syncJob = useCallback((job: JobDocument) => {
     const id = job.id
     if (job.status === 'pending') {
       setPending((s) => ({ ...s, jobs: upsertFront(s.jobs, job) }))
-      setApproved((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+      setTodayConfirmed((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
       setRejected((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
       return
     }
     if (job.status === 'rejected') {
-      setRejected((s) => ({ ...s, jobs: upsertFront(s.jobs, job) }))
+      setRejected((s) => ({
+        ...s,
+        jobs: sortJobsByDecisionTimeDesc(upsertFront(s.jobs, job)),
+      }))
       setPending((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
-      setApproved((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+      setTodayConfirmed((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
       return
     }
-    if (
-      job.status === 'approved' ||
-      job.status === 'shot' ||
-      job.status === 'cancelled'
-    ) {
-      setApproved((s) => ({ ...s, jobs: upsertFront(s.jobs, job) }))
+    if (job.status === 'approved') {
+      setTodayConfirmed((s) => ({
+        ...s,
+        jobs: isApprovedReviewedOnDay(job)
+          ? upsertFront(s.jobs, job)
+          : withoutJob(s.jobs, id),
+      }))
       setPending((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
       setRejected((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
       return
     }
     setPending((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
-    setApproved((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
+    setTodayConfirmed((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
     setRejected((s) => ({ ...s, jobs: withoutJob(s.jobs, id) }))
   }, [])
 
   return {
     pendingJobs: pending.jobs,
-    approvedJobs: approved.jobs,
+    todayConfirmedJobs: todayConfirmed.jobs,
     rejectedJobs: rejected.jobs,
     pendingLoading: pending.loading,
-    approvedLoading: approved.loading,
+    todayConfirmedLoading: todayConfirmed.loading,
     rejectedLoading: rejected.loading,
     pendingHasMore: pending.hasMore,
-    approvedHasMore: approved.hasMore,
+    todayConfirmedHasMore: todayConfirmed.hasMore,
     rejectedHasMore: rejected.hasMore,
     pendingLoadingMore: pending.loadingMore,
-    approvedLoadingMore: approved.loadingMore,
+    todayConfirmedLoadingMore: todayConfirmed.loadingMore,
     rejectedLoadingMore: rejected.loadingMore,
     loadMorePending,
-    loadMoreApproved,
+    loadMoreTodayConfirmed,
     loadMoreRejected,
     syncJob,
-    /** @deprecated Prefer syncJob — same behavior for in-place field edits. */
     replaceJob: syncJob,
   }
 }

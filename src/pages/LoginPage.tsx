@@ -19,14 +19,14 @@ function BrandPanel() {
       </div>
 
       <div className="relative z-10">
-        <BrandLogo variant="white" className="h-9 w-auto max-w-[200px] sm:h-10 sm:max-w-[240px]" />
+        <BrandLogo variant="white" themeAdaptive={false} className="h-9 w-auto max-w-[200px] sm:h-10 sm:max-w-[240px]" />
         <p className="mt-2 text-sm text-white/65">{brandConfig.companyName}</p>
       </div>
 
       <div className="relative z-10 mt-10 max-w-md">
-        <h1 className="text-3xl font-semibold leading-tight lg:text-4xl">
+        <p className="text-3xl font-semibold leading-tight lg:text-4xl">
           Operasyonlarınızı tek merkezden yönetin
-        </h1>
+        </p>
         <p className="mt-4 text-base text-white/75">{brandConfig.tagline}</p>
       </div>
     </div>
@@ -53,17 +53,10 @@ export function LoginPage() {
           <ThemeToggle />
         </div>
         <div className="w-full max-w-md">
-          <div className="mb-8 lg:hidden">
+          <div>
             <h1 className="text-2xl font-semibold text-text-primary">Giriş Yap</h1>
             <p className="mt-2 text-sm text-text-secondary">
-              {brandConfig.productName} hesabınızla devam edin.
-            </p>
-          </div>
-
-          <div className="hidden lg:block">
-            <h1 className="text-2xl font-semibold text-text-primary">Giriş Yap</h1>
-            <p className="mt-2 text-sm text-text-secondary">
-              Kurumsal hesabınızla oturum açın.
+              {brandConfig.productName} hesabınızla oturum açın.
             </p>
           </div>
 

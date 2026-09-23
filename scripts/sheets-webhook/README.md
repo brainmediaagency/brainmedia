@@ -15,7 +15,7 @@ Same Apps Script Web App handles:
 4. **OneSignal push** → all subscribed roles / optional externalIds (`action: "pushNotify"`) — see [`../onesignal/README.md`](../onesignal/README.md)
 5. **Large voice (30 dk max)** → **v28** `uploadDirectInit` + `uploadDirectFinish`: webhook opens a Drive resumable session with the browser's `origin`, the client PUTs the raw binary **directly to googleapis.com** (no base64, no chunk hops), webhook then sets link sharing. Fastest + most reliable path. Legacy `uploadFileInit` + `uploadFileChunk` (v24–v27) kept as automatic fallback for old deployments.
 
-> **v28 deploy required for fast voice upload:** paste latest `Code.gs` → **Deploy → Manage deployments → Edit → New version → Deploy**. Old webhook keeps working (client falls back to chunked path), only slower.
+> **v38:** paste latest `Code.gs` → **New version**. `updateDkHaber` çekim ayı için `plannedTarih` öncelikli (iş alım `tarih` yanlış sekmeye bakıp DK boş bırakıyordu). **v37:** Reddet/silme tarih olmadan da **içinde bulunulan ay** sekmesini tarar. v36: aylık sekmeler **Eylül 2026**.
 
 ## Wipe BrainUploads (admin)
 
@@ -80,6 +80,7 @@ In the app: **Hesaplar → Şifre sıfırla**. Webhook generates a random tempor
 |--------|----------------|
 | Sheet upsert / son durum / dk haber | reporter, media_planning, coordinator, management |
 | Drive upload / uploadResult / storage | + human_resources, kameraman (KM kadran) |
+| getDriveFile (in-page voice) | management, coordinator, sef, reporter, human_resources (not kameraman) |
 | pushNotify | all of the above (callers of notify*; default audience = all five role tags; optional `externalIds`) |
 | resetUserPassword | human_resources, coordinator, management (+ manageable target role) |
 
@@ -97,7 +98,7 @@ Columns (exact order):
 
 | # | Header | App source |
 |---|--------|------------|
-| 1 | TARİH | `acquiredDate` → `DD.MM.YYYY` |
+| 1 | TARİH | çekim günü (`plannedExecutionDate`) → `DD.MM.YYYY` (saat yok; gerçek Date hücresi) |
 | 2 | FİRMA ADI | `companyName` |
 | 3 | FİRMA SAHİBİ | `contactPersonName` |
 | 4 | TEL NO | phone display |
@@ -109,26 +110,38 @@ Columns (exact order):
 | 10 | KAZANÇ | empty on insert; daily reporter → firma **toplam gelir** (matrah+KDV) |
 | 11 | *(unused)* | **app never writes** (legacy “MERVE HANIM” header may remain in live sheets) |
 | 12 | *(empty / fatura)* | **manual only** — app never writes |
-| 13 | **JOB ID** | Firestore `job.id` (v13+) — stable row identity |
+| 22 | **JOB ID** (V) | Firestore `job.id` (v35+) — stable row identity |
+| 13 | *(legacy JOB ID / M)* | Pre-v35 values may remain; matched on read only |
 
-Row identity for updates: **JOB ID** when present; else **FİRMA ADI + TARİH** for legacy rows without col 13 filled.
+Row identity for updates: **JOB ID** when present (V first, then legacy M; search target month ±2 months + `IslemLogu`); else **FİRMA ADI + TARİH** only on legacy rows whose JOB ID cells (V and M) are empty (never overwrite another job’s row).
 
-### Existing workbooks (v13 header)
+### Monthly tabs (v36+)
+
+- Sekme adı = çekim ayı: **`Eylül 2026`**, **`Ağustos 2026`**, …
+- Ay anahtarı: Excel `TARİH` / `plannedTarih` (çekim). Yoksa bugünün Istanbul ayı.
+- Yeni satırlar ilgili ay sekmesine yazılır (yoksa oluşturulur + header + V1 `JOB ID`).
+- Çekim ayı değişirse satır yeni ay sekmesine **taşınır** (eski silinir).
+- Eski tek sekme **`IslemLogu`** arşiv olarak kalır; JOB ID orada da aranır.
+- Toplu migration yok — eski satırlar `IslemLogu` / eski ayda kalabilir.
+
+### Existing workbooks (v35 JOB ID → V)
 
 - `ensureHeaderRow_` still runs **only on empty sheets** (never overwrites A1–L1 ops template).
-- On first upsert / status / DK patch, `ensureJobIdHeader_` writes **`JOB ID` into M1 only if M1 is empty**.
-- One-time optional: type `JOB ID` in M1 yourself; new rows get col 13 from the client automatically.
+- On first upsert / status / DK patch, `ensureJobIdHeader_` writes **`JOB ID` into V1** if empty, and clears **M1** when it is exactly `JOB ID` (data cells in column M are not moved/deleted).
+- New rows get JOB ID in **column V** only.
 
 ## SON DURUM (only these three — written from app)
 
 | App event | SON DURUM |
 |-----------|-----------|
+| MPU iş oluşturur | `Onay bekliyor` |
 | Konfirme | `Konfirme` |
-| İptal | `İptal edildi` |
+| İptal (konfirme veya 48s otomatik pending) | `İptal edildi` |
 | Çekildi | `Çekildi` |
 
-**Reddet** Excel’e yazılmaz (yalnızca app / Firestore).
-**Muhabire ilet** Excel’e yazmaz (SON DURUM değişmez).
+**Reddet** Excel satırını siler (`deleteJobRow`); “Reddedildi” yazılmaz.
+**48 saat otomatik pending iptal** satırı silmez — `İptal edildi` yazar (manuel iptal ile aynı).
+**Konfirme beklemeye geri al** satırı `Onay bekliyor` yapar.
 
 ## Fresh install (new Google account / Drive)
 
@@ -202,9 +215,9 @@ Then rebuild + deploy hosting. Share the Google Sheet with each coordinator’s 
 
 ## Notes
 
-- Script **never overwrites** an existing header row (cols 1–12); M1 may get `JOB ID` only when empty.
+- Script **never overwrites** an existing header row (cols 1–12); V1 may get `JOB ID` when empty; M1 `JOB ID` label is cleared on first touch after v35.
 - On row update (`upsertJobRow`), the fatura, unused col 11, **DK**, **HABER** and **KAZANÇ** cells are **preserved** — status upserts never wipe the minutes/haber/kazanç written by the daily reporter report.
-- `updateDkHaber` payload: `{ idToken, action: 'updateDkHaber', jobId, firmaAdi, tarih, dk, haber, kazanc, sonDurum? }`; `tarih` is the job's `acquiredDate` (`DD.MM.YYYY`). `kazanc` is the per-firma toplam gelir (matrah+KDV), formatted like `12.500 TL`. Optional `sonDurum` (e.g. `Çekildi`) is written in the same request (v10+). Returns 404-style `{ ok:false, error:'Row not found …' }` if no row matches.
+- `updateDkHaber` payload: `{ idToken, action: 'updateDkHaber', jobId, firmaAdi, tarih, plannedTarih, acquiredTarih, dk, haber, kazanc, sonDurum? }`. `plannedTarih` is the shoot day (`DD.MM.YYYY`); `tarih`/`acquiredTarih` remain match keys for legacy rows. Optional `sonDurum` (e.g. `Çekildi`) is written in the same request (v10+). Returns 404-style `{ ok:false, error:'Row not found …' }` if no row matches.
 - **KAZANÇ empty while DK/HABER fill?** Live webhook is almost certainly stale (`curl` ping shows `v6`/`v9` instead of `v14`). Paste repo `Code.gs` → **Deploy → Manage deployments → Edit → New version → Deploy**, then re-submit the daily report (or re-save).
 - After pasting this `Code.gs`, publish via **Deploy → Manage deployments → Edit → New version** (same URL).
 - Until `.env` webhook URL is set, Sheets/Drive calls **no-op** (safe while migrating accounts).

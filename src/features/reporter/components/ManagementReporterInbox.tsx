@@ -7,7 +7,7 @@ import {
   backfillDailyReportJobClaims,
 } from '@/features/reporter/services/dailyReportService'
 import { fetchZReportsInRange } from '@/features/reporter/services/zReportService'
-import { hasZReportForDaily } from '@/features/reporter/utils/zReportMatch'
+import { findZReportForDaily, hasZReportForDaily } from '@/features/reporter/utils/zReportMatch'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -34,13 +34,11 @@ function toDateInputValue(date: Date): string {
 }
 
 export type ManagementReporterInboxProps = {
-  startNumber?: number
   /** Which inbox panels to show. Defaults to both. */
   view?: 'daily' | 'z' | 'both'
 }
 
 export function ManagementReporterInbox({
-  startNumber = 10,
   view = 'both',
 }: ManagementReporterInboxProps) {
   const { user, profile } = useAuth()
@@ -115,8 +113,6 @@ export function ManagementReporterInbox({
     }
   }, [loadZ, view])
 
-  const dailySection = String(startNumber).padStart(2, '0')
-  const zSection = String(startNumber + 1).padStart(2, '0')
 
   async function confirmDeleteReport() {
     if (!user || !profile || !deletingReport) return
@@ -173,12 +169,14 @@ export function ManagementReporterInbox({
       ) : (
         <ul className="space-y-3 stagger-children">
           {dailyReports.map((report) => {
-            const zEntered = hasZReportForDaily(report, dailyZReports)
+            const matchedZ = findZReportForDaily(report, dailyZReports)
+            const zEntered = matchedZ != null
             return (
               <DailyReportReadableCard
                 key={report.id}
                 report={report}
                 zReportEntered={zEntered}
+                zReportPhotoUrl={matchedZ?.photoDownloadUrl ?? null}
                 actions={
                   <div className="flex gap-1.5 sm:gap-2">
                     <Button
@@ -303,7 +301,6 @@ export function ManagementReporterInbox({
       {view === 'both' && (
         <>
           <AccordionSection
-            number={dailySection}
             title="Muhabir Günlük Raporları"
             description="Seçilen tarih aralığında muhabirlerin gönderdiği günlük raporlar."
             defaultOpen
@@ -312,7 +309,6 @@ export function ManagementReporterInbox({
           </AccordionSection>
 
           <AccordionSection
-            number={zSection}
             title="Z Raporları"
             description="Muhabirlerin Z raporu alındı bildirimleri."
           >
@@ -355,6 +351,10 @@ export function ManagementReporterInbox({
           <DailyReportDetailBody
             report={detailReport}
             zReportEntered={hasZReportForDaily(detailReport, dailyZReports)}
+            zReportPhotoUrl={
+              findZReportForDaily(detailReport, dailyZReports)?.photoDownloadUrl
+              ?? null
+            }
           />
         ) : null}
       </Drawer>

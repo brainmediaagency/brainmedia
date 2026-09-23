@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, Pencil, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
-import { isJobReviewerRole } from '@/config/roles'
+import { isJobReviewerRole, isUserRole } from '@/config/roles'
 import type { JobDocument } from '@/features/jobs/types/job'
 import { ApprovedJobEditForm } from '@/features/jobs/components/ApprovedJobEditForm'
 import { cancelJob, markJobAsShot } from '@/features/jobs/services/jobService'
 import {
-  exportJobReviewToSheet,
-  SHEET_SON_DURUM,
-  updateJobSonDurumInSheet,
-} from '@/features/jobs/services/sheetsExport'
+  JOB_CANCEL_NOTE_MIN_CHARS,
+  JOB_DECISION_NOTE_MIN_CHARS,
+  requireJobDecisionNote,
+  roleRequiresJobDecisionNote,
+} from '@/features/jobs/utils/jobDecisionNote'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -56,7 +57,12 @@ export function OverdueJobsConfirmationPanel({
   const actionLockRef = useRef(false)
 
   const canAct = mode === 'actions'
-  const role = claims?.role ?? profile?.role
+  const role = isUserRole(profile?.role)
+    ? profile.role
+    : claims?.role
+  const cancelNoteMin = roleRequiresJobDecisionNote(role)
+    ? JOB_DECISION_NOTE_MIN_CHARS
+    : JOB_CANCEL_NOTE_MIN_CHARS
   const actor =
     canAct && profile && isJobReviewerRole(role)
       ? {
@@ -110,16 +116,6 @@ export function OverdueJobsConfirmationPanel({
       onJobUpdated?.(updated)
       setConfirming(null)
       toast.success('İş çekildi olarak işaretlendi.')
-      try {
-        await updateJobSonDurumInSheet(updated, SHEET_SON_DURUM.shot)
-      } catch (error) {
-        toast.warning(
-          mapAppError(
-            error,
-            'Firestore kaydı tamam. Excel (Sheets) durumu güncellenemedi — Excel sekmesinden kontrol edin veya işlemi tekrar deneyin.',
-          ),
-        )
-      }
     } catch (error) {
       toast.error(mapAppError(error, 'İş çekildi olarak işaretlenemedi.'))
     } finally {
@@ -130,11 +126,13 @@ export function OverdueJobsConfirmationPanel({
 
   const handleCancel = async () => {
     if (!cancelling || !actor || !isOnline || actionLockRef.current) return
-    const reason = cancelReason.trim()
-    if (reason.length < 3) {
-      toast.error('İptal için en az 3 karakterlik bir neden girin.')
+    try {
+      requireJobDecisionNote(cancelReason, actor.role, 'cancel')
+    } catch (error) {
+      toast.error(mapAppError(error, 'İptal nedeni gerekli.'))
       return
     }
+    const reason = cancelReason.trim()
     actionLockRef.current = true
     setSubmitting(true)
     try {
@@ -143,20 +141,6 @@ export function OverdueJobsConfirmationPanel({
       setCancelling(null)
       setCancelReason('')
       toast.success('İş iptal edildi.')
-      // Sheets is separate from Firestore — await so failures are never silent.
-      try {
-        await exportJobReviewToSheet(updated, 'cancelled', {
-          reviewedByName: actor.fullName,
-          reviewNote: reason,
-        })
-      } catch (error) {
-        toast.warning(
-          mapAppError(
-            error,
-            'Firestore kaydı tamam. Excel (Sheets) yazılamadı — Excel sekmesinden kontrol edin veya işlemi tekrar deneyin.',
-          ),
-        )
-      }
     } catch (error) {
       toast.error(mapAppError(error, 'İş iptal edilemedi.'))
     } finally {
@@ -361,7 +345,7 @@ export function OverdueJobsConfirmationPanel({
             title="İşi iptal et"
             description={
               cancelling
-                ? `"${cancelling.companyName}" işi iptal edilecek. Denetim kaydı için iptal nedeni zorunludur (en az 3 karakter).`
+                ? `"${cancelling.companyName}" işi iptal edilecek. Denetim kaydı için iptal nedeni zorunludur (en az ${cancelNoteMin} karakter).`
                 : undefined
             }
           >
@@ -377,7 +361,7 @@ export function OverdueJobsConfirmationPanel({
                   value={cancelReason}
                   onChange={(event) => setCancelReason(event.target.value)}
                   disabled={submitting}
-                  placeholder="En az 3 karakter"
+                  placeholder={`En az ${cancelNoteMin} karakter`}
                 />
               </FormField>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

@@ -26,6 +26,7 @@ import { DEFAULT_LIST_LIMIT } from '@/config/roles'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { uploadFileToDrive, type DriveUploadProgress } from '@/lib/driveUpload'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
+import { writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
 
 export const MAX_HIRING_NOTE_FILES = 10
 export const MAX_HIRING_NOTE_FILE_BYTES = 20 * 1024 * 1024
@@ -300,6 +301,15 @@ export async function createHiringNote(input: {
       pushRoles: ['management'],
     })
 
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.hiring_created',
+      summary: input.candidateName.trim(),
+      entityType: 'hiring_note',
+      entityId: noteRef.id,
+      actorNameFallback: input.createdByNameSnapshot,
+    })
+
     return noteRef.id
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'İşe alım notu gönderilemedi.'))
@@ -332,6 +342,13 @@ export async function updateHiringNote(input: {
       note: input.note.trim(),
       attachments: [...input.existingAttachments, ...addedAttachments],
       updatedAt: serverTimestamp(),
+    })
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.hiring_updated',
+      summary: input.candidateName.trim(),
+      entityType: 'hiring_note',
+      entityId: input.id,
     })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'İşe alım notu güncellenemedi.'))

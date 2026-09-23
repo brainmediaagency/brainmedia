@@ -6,6 +6,9 @@ import {
   calcCompanyVatBaseKurus,
   buildReporterCompany,
   buildDailyReportFees,
+  formatShootReporterRatePercent,
+  inferShootReporterRateFromFee,
+  resolveFieldPaidKurusForWrite,
 } from '@/features/reporter/utils/feeCalc'
 
 describe('feeCalc', () => {
@@ -31,6 +34,31 @@ describe('feeCalc', () => {
     expect(fees.grossTotalKurus).toBe(1_500_000)
     expect(fees.reporterFeeKurus).toBe(80_000)
     expect(fees.cameramanFeeKurus).toBe(20_000)
+  })
+
+  it('shoot: per-reporter override uses 10% without changing default', () => {
+    const overridden = calcShootFeesFromMinutes(3, 0.1)
+    expect(overridden.reporterFeeKurus).toBe(100_000)
+    expect(calcShootFeesFromMinutes(3).reporterFeeKurus).toBe(80_000)
+
+    const company = buildReporterCompany({
+      companyName: 'Beste',
+      hasNews: false,
+      newsTotalKurus: null,
+      shootMinutes: 3,
+      vatRate: 20,
+      shootReporterRate: 0.1,
+    })
+    expect(company.shootReporterFeeKurus).toBe(100_000)
+  })
+
+  it('infers stored shoot muhabir % from fee (8 vs 10)', () => {
+    expect(inferShootReporterRateFromFee(3, 80_000)).toBeCloseTo(0.08)
+    expect(inferShootReporterRateFromFee(3, 100_000)).toBeCloseTo(0.1)
+    expect(inferShootReporterRateFromFee(1, 0)).toBeNull()
+    expect(formatShootReporterRatePercent(inferShootReporterRateFromFee(3, 100_000))).toBe(
+      '10',
+    )
   })
 
   it('vat base: shoot only vs shoot + news', () => {
@@ -112,5 +140,49 @@ describe('feeCalc', () => {
     expect(summary.totalVatKurus).toBe(0)
     expect(summary.totalVatBaseKurus).toBe(2_500_000)
     expect(summary.totalIncomeKurus).toBe(2_500_000)
+  })
+
+  it('cancelled company contributes zero fees and income', () => {
+    const company = buildReporterCompany({
+      companyName: 'İptal Firma',
+      cancelled: true,
+      hasNews: true,
+      newsTotalKurus: 1_000_000,
+      shootMinutes: 10,
+      vatRate: 20,
+    })
+    expect(company.cancelled).toBe(true)
+    expect(company.vatBaseKurus).toBe(0)
+    expect(company.vatKurus).toBe(0)
+    expect(company.shootMinutes).toBe(0)
+
+    const summary = buildDailyReportFees([
+      {
+        companyName: 'İptal Firma',
+        cancelled: true,
+        hasNews: false,
+        newsTotalKurus: null,
+        shootMinutes: 0,
+        vatRate: 20,
+      },
+      {
+        companyName: 'Aktif Firma',
+        hasNews: false,
+        newsTotalKurus: null,
+        shootMinutes: 3,
+        vatRate: 20,
+        chargeMode: 'cash',
+      },
+    ])
+    expect(summary.totalIncomeKurus).toBe(1_500_000)
+    expect(summary.totalReporterEarningsKurus).toBe(80_000)
+  })
+
+  it('resolveFieldPaidKurusForWrite: empty create → 0, empty edit keeps previous, explicit 0 clears', () => {
+    expect(resolveFieldPaidKurusForWrite('', null)).toBe(0)
+    expect(resolveFieldPaidKurusForWrite('', undefined)).toBe(0)
+    expect(resolveFieldPaidKurusForWrite('', 5_900_000)).toBe(5_900_000)
+    expect(resolveFieldPaidKurusForWrite('0', 5_900_000)).toBe(0)
+    expect(resolveFieldPaidKurusForWrite('59.000', 0)).toBe(5_900_000)
   })
 })

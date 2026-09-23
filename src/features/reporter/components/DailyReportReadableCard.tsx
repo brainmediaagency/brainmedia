@@ -4,7 +4,10 @@ import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatDateOnlyLongTr, formatDateTimeTr } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
 import { cn } from '@/lib/classNames'
-import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
+import {
+  isLeaveDayCashReport,
+  type ReporterDailyReport,
+} from '@/features/reporter/types/reporter'
 import { sumCompanyFees } from '@/features/reporter/utils/feeCalc'
 import {
   DailyReportDetailBody,
@@ -22,6 +25,8 @@ export type DailyReportReadableCardProps = {
   defaultOpen?: boolean
   /** `true` / `false` Z durumu; `null` gizler */
   zReportEntered?: boolean | null
+  /** Girilmiş Z raporu fotoğrafı */
+  zReportPhotoUrl?: string | null
   className?: string
 }
 
@@ -33,9 +38,15 @@ export function DailyReportReadableCard({
   actions,
   defaultOpen = false,
   zReportEntered = null,
+  zReportPhotoUrl = null,
   className,
 }: DailyReportReadableCardProps) {
-  const feeTotals = sumCompanyFees(report.companies)
+  const feeTotals = sumCompanyFees(
+    report.companies.map((company) => ({
+      ...company,
+      cancelled: company.cancelled === true,
+    })),
+  )
   const totalIncomeKurus =
     feeTotals.totalIncomeKurus ||
     (Array.isArray(report.companies)
@@ -45,7 +56,9 @@ export function DailyReportReadableCard({
   const subtitleText = [
     report.createdByNameSnapshot || null,
     report.createdByEmailSnapshot || null,
-    `${report.companyCount} firma`,
+    isLeaveDayCashReport(report)
+      ? 'İzin günü kasası'
+      : `${report.companyCount} firma`,
     report.createdAt ? `gönderim ${formatDateTimeTr(report.createdAt.toDate())}` : null,
   ]
     .filter(Boolean)
@@ -74,7 +87,11 @@ export function DailyReportReadableCard({
       defaultOpen={defaultOpen}
       className={cn('interactive-lift overflow-hidden bg-surface', className)}
     >
-      <DailyReportDetailBody report={report} zReportEntered={zReportEntered} />
+      <DailyReportDetailBody
+        report={report}
+        zReportEntered={zReportEntered}
+        zReportPhotoUrl={zReportPhotoUrl}
+      />
     </CollapsibleListItem>
   )
 }

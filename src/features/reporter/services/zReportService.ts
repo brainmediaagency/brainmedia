@@ -29,6 +29,7 @@ import {
 import { uploadFileToDrive, type DriveUploadProgress } from '@/lib/driveUpload'
 import { DEFAULT_LIST_LIMIT } from '@/config/roles'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
+import { writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
 
 const converter: FirestoreDataConverter<ReporterZReport> = {
   toFirestore(report: ReporterZReport): DocumentData {
@@ -152,6 +153,15 @@ export async function createZReport(input: {
       pushRoles: ['management', 'coordinator'],
     })
 
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.z_created',
+      summary: input.createdByNameSnapshot.trim(),
+      entityType: 'z_report',
+      entityId: reportRef.id,
+      actorNameFallback: input.createdByNameSnapshot,
+    })
+
     return reportRef.id
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Z raporu gönderilemedi.'))
@@ -191,6 +201,12 @@ export async function updateOwnZReport(input: {
       photoDownloadUrl,
       updatedAt: serverTimestamp(),
     })
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.z_updated',
+      entityType: 'z_report',
+      entityId: input.id,
+    })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Z raporu güncellenemedi.'))
   }
@@ -199,6 +215,12 @@ export async function updateOwnZReport(input: {
 export async function deleteOwnZReport(id: string): Promise<void> {
   try {
     await deleteDoc(doc(getDb(), 'reporterZReports', id))
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.z_deleted',
+      entityType: 'z_report',
+      entityId: id,
+    })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Z raporu silinemedi.'))
   }

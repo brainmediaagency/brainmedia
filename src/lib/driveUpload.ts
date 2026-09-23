@@ -7,6 +7,8 @@ import {
   getSheetsWebhookUrl,
   getWebhookIdToken,
   isSheetsWebhookConfigured,
+  webhookSupportsKameramanDrive,
+  webhookVersionNumber,
 } from '@/lib/sheetsWebhook'
 
 export type DriveUploadResult = {
@@ -20,6 +22,8 @@ export type DriveUploadFolder =
   | 'z-reports'
   | 'voice-recordings'
   | 'hr-reports'
+  | 'odometer'
+  /** @deprecated Existing clients may still use this alias. */
   | 'kameraman-km'
 
 export type DriveUploadProgress = {
@@ -36,20 +40,21 @@ export type DriveUploadProgress = {
 export const DRIVE_SINGLE_SHOT_MAX_BYTES = 1.5 * 1024 * 1024
 
 /**
- * Raw binary per resumable chunk (~256 KB).
+ * Raw binary per resumable chunk (~512 KB).
  * Fallback path only (webhook uploadFileInit/Chunk) when the direct
  * browser → Drive PUT is unavailable (blocked CORS).
  */
-export const DRIVE_CHUNK_BYTES = 256 * 1024
+export const DRIVE_CHUNK_BYTES = 512 * 1024
 
 /** Hard ceiling: protects tab memory + Apps Script / Drive sessions. */
-export const DRIVE_HARD_MAX_BYTES = 80 * 1024 * 1024
+export const DRIVE_HARD_MAX_BYTES = 100 * 1024 * 1024
 
 /**
  * Browser → Drive binary slice size for v28 direct path.
- * Small enough that progress ticks often and a failed slice can re-start quickly.
+ * Larger slices = fewer round-trips on LTE when compression cannot
+ * shrink under single-shot (voice / rare image fallback).
  */
-export const DRIVE_DIRECT_CHUNK_BYTES = 512 * 1024
+export const DRIVE_DIRECT_CHUNK_BYTES = 2 * 1024 * 1024
 
 /** Full re-init of resumable when session drops mid long voice. */
 const RESUMABLE_FULL_RESTARTS = 3
@@ -96,6 +101,13 @@ export function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
+export function base64ToUint8Array(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i)
+  return out
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
@@ -107,14 +119,26 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
   const detail = String(parsed.detail ?? '').trim()
   const combined = [raw, detail].filter(Boolean).join(' — ')
   if (!raw && !detail) return fallback
-  if (/is not valid JSON/i.test(combined) || /Unexpected token/i.test(combined)) {
+
+  const version = webhookVersionNumber({
+    version: parsed.version != null ? String(parsed.version) : undefined,
+    service: parsed.service != null ? String(parsed.service) : undefined,
+  })
+  const kameramanReady = webhookSupportsKameramanDrive({
+    version: parsed.version != null ? String(parsed.version) : undefined,
+    service: parsed.service != null ? String(parsed.service) : undefined,
+  })
+
+  // Live v20+ already allows kameraman Drive uploads — never ask to paste Code.gs.
+  if (
+    !kameramanReady &&
+    (/is not valid JSON/i.test(combined) ||
+      /Unexpected token/i.test(combined) ||
+      /invalid islem/i.test(combined) ||
+      /unknown action/i.test(combined))
+  ) {
     return (
       'Drive webhook eski sürümde. Apps Script’e güncel Code.gs yapıştırıp New version yayınlayın.'
-    )
-  }
-  if (/invalid islem/i.test(combined)) {
-    return (
-      'Drive webhook action desteklemiyor. Apps Script’e güncel Code.gs yapıştırıp New version yayınlayın.'
     )
   }
   if (/FIREBASE_WEB_API_KEY/i.test(combined)) {
@@ -123,18 +147,21 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
     )
   }
   if (/unauthorized|forbidden/i.test(combined)) {
-    return (
-      'Drive webhook yetkisiz. Çıkış yapıp tekrar giriş edin; sürmezse Apps Script’te FIREBASE_WEB_API_KEY ve rol claim’lerini kontrol edin.'
-    )
+    return kameramanReady
+      ? 'Drive yükleme yetkisiz. Çıkış yapıp tekrar giriş edin (kameraman rolü token’da olmalı).'
+      : 'Drive webhook yetkisiz. Çıkış yapıp tekrar giriş edin; sürmezse Apps Script’te FIREBASE_WEB_API_KEY ve rol claim’lerini kontrol edin.'
   }
   if (/Content-Length|Header:Content-Length|invalid value: Header/i.test(combined)) {
+    if (version > 0 && version < 25) {
+      return 'Drive yükleme (webhook) Content-Length hatası. Apps Script Code.gs v25+ yayınlayın (Deploy → New version).'
+    }
     return (
-      'Drive yükleme (webhook) Content-Length hatası. Apps Script Code.gs v25+ yayınlayın (Deploy → New version).'
+      'Drive yükleme başlığı reddedildi. Bağlantıyı kontrol edip tekrar deneyin; sürmezse Yönetime bildirin.'
     )
   }
-  if (/session expired|chunk order|resumable|too large|Invalid size|payload/i.test(combined)) {
+  if (/session expired|chunk order|too large|Invalid size|payload/i.test(combined)) {
     return (
-      'Dosya çok büyük veya yükleme oturumu düştü. Kayıt hâlâ bu cihazda; İndir ile bilgisayara alın, sonra tekrar yükleyin. Apps Script v24+ (uploadFileInit) gerekir.'
+      'Dosya çok büyük veya yükleme oturumu düştü. Daha küçük bir görsel seçip tekrar deneyin.'
     )
   }
   if (/Chunk failed HTTP|Drive resumable|No resumable|Drive direct session/i.test(combined)) {
@@ -144,6 +171,14 @@ function webhookErrorMessage(parsed: Record<string, unknown>, fallback: string):
     )
   }
   return raw || detail || fallback
+}
+
+/** Exported for tests — maps Apps Script JSON errors to user-facing copy. */
+export function formatDriveWebhookError(
+  parsed: Record<string, unknown>,
+  fallback: string,
+): string {
+  return webhookErrorMessage(parsed, fallback)
 }
 
 function looksLikeJson_(text: string): boolean {
@@ -206,8 +241,8 @@ function unreadableWebhookMessage(text: string, httpStatus: number): string {
     )
   }
   return (
-    'Webhook yanıtı okunamadı. Uzun ses kayıtlarında ağ/Apps Script kesintisi olabilir — ' +
-    'İndir ile yedekleyip tekrar kaydedin. Sürmezse Apps Script New version yayınlayın.'
+    'Webhook yanıtı okunamadı. Ağ veya uzun yükleme kesintisi olabilir — ' +
+    'daha küçük bir görsel seçip tekrar deneyin. Sürmezse Yönetime bildirin.'
   )
 }
 
@@ -358,7 +393,7 @@ async function pollUploadResult(
   }
 
   throw new UserFacingError(
-    'Yükleme zaman aşımına uğradı. Apps Script’i güncelleyip tekrar deneyin.',
+    'Yükleme zaman aşımına uğradı. Bağlantıyı kontrol edip tekrar deneyin.',
   )
 }
 
@@ -522,7 +557,7 @@ async function uploadFileResumableOnce(input: {
     throw new UserFacingError(
       webhookErrorMessage(
         init,
-        'Büyük dosya yükleme oturumu açılamadı. Apps Script v27+ (uploadFileInit) yayınlayın.',
+        'Drive yükleme oturumu açılamadı. Bağlantıyı kontrol edip tekrar deneyin.',
       ),
     )
   }
@@ -630,7 +665,7 @@ async function uploadFileResumableOnce(input: {
   }
 
   throw new UserFacingError(
-    'Yükleme tamamlanamadı (son parça yanıtı yok). Apps Script v27+ kontrol edin.',
+    'Yükleme tamamlanamadı (son parça yanıtı yok). Bağlantıyı kontrol edip tekrar deneyin.',
   )
 }
 
@@ -998,6 +1033,15 @@ export async function uploadFileToDrive(input: {
    */
   folderPath?: string
   onProgress?: (progress: DriveUploadProgress) => void
+  /**
+   * Image re-encode before upload. Default: on for images.
+   * `fast` uses fewer encode passes (kadran / camera roll).
+   */
+  compress?: boolean | {
+    maxBytes?: number
+    maxEdge?: number
+    fast?: boolean
+  }
 }): Promise<DriveUploadResult> {
   const url = getSheetsWebhookUrl()
   if (!url) {
@@ -1024,8 +1068,16 @@ export async function uploadFileToDrive(input: {
     mimeType.startsWith('image/')
     || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(fileName)
 
-  // Phone camera originals (2–5 MB) often fail multi-chunk on LTE. Shrink first.
-  if (looksImage && file.size > Math.floor(DRIVE_SINGLE_SHOT_MAX_BYTES * 0.75)) {
+  const compressOpt = input.compress
+  const shouldCompress =
+    looksImage
+    && compressOpt !== false
+    && file.size > Math.floor(DRIVE_SINGLE_SHOT_MAX_BYTES * 0.75)
+
+  // Phone camera originals often fail multi-chunk on LTE. Shrink first.
+  if (shouldCompress) {
+    const compressOpts =
+      typeof compressOpt === 'object' && compressOpt != null ? compressOpt : {}
     input.onProgress?.({
       phase: 'encoding',
       ratio: 0.04,
@@ -1033,8 +1085,11 @@ export async function uploadFileToDrive(input: {
     })
     try {
       const compressed = await compressImageForDrive(file, {
-        maxBytes: Math.floor(DRIVE_SINGLE_SHOT_MAX_BYTES * 0.92),
-        maxEdge: 1920,
+        maxBytes:
+          compressOpts.maxBytes
+          ?? Math.floor(DRIVE_SINGLE_SHOT_MAX_BYTES * 0.92),
+        maxEdge: compressOpts.maxEdge,
+        fast: compressOpts.fast === true,
         onProgress: (ratio) => {
           input.onProgress?.({
             phase: 'encoding',

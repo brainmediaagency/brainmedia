@@ -25,12 +25,10 @@ function toDateInputValue(date: Date): string {
 type JobStatsTab = 'entered' | 'received' | 'shot' | 'rejected'
 
 export type HrJobStatsPanelProps = {
-  sectionNumber?: string
   defaultOpen?: boolean
 }
 
 export function HrJobStatsPanel({
-  sectionNumber = '03',
   defaultOpen = false,
 }: HrJobStatsPanelProps) {
   const defaultEnd = useMemo(() => new Date(), [])
@@ -82,7 +80,6 @@ export function HrJobStatsPanel({
 
   return (
     <AccordionSection
-      number={sectionNumber}
       title="İş Özeti"
       description="Seçilen tarih aralığında girilen, alınan, çekilen ve reddedilen işler."
       defaultOpen={defaultOpen}
@@ -171,7 +168,6 @@ export function HrJobStatsPanel({
                   <TableCell header>Firma</TableCell>
                   <TableCell header>Durum</TableCell>
                   <TableCell header>Ekleyen</TableCell>
-                  <TableCell header>Muhabir iletimi</TableCell>
                   <TableCell header>Tarih</TableCell>
                 </TableRow>
               </TableHead>
@@ -183,9 +179,6 @@ export function HrJobStatsPanel({
                       <StatusBadge status={job.status} />
                     </TableCell>
                     <TableCell>{job.createdByNameSnapshot}</TableCell>
-                    <TableCell>
-                      {job.forwardedToReporter ? 'İletildi' : 'İletilmedi'}
-                    </TableCell>
                     <TableCell>
                       {activeTab === 'entered'
                         ? job.createdAt

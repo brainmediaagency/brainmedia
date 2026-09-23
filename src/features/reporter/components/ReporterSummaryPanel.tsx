@@ -42,7 +42,6 @@ function toDateInputValue(date: Date): string {
 }
 
 export type ReporterSummaryPanelProps = {
-  sectionNumber?: string
   defaultOpen?: boolean
   /** When set, picker is locked to this reporter (own stats). */
   lockedReporterUid?: string | null
@@ -52,7 +51,6 @@ export type ReporterSummaryPanelProps = {
 }
 
 export function ReporterSummaryPanel({
-  sectionNumber = '01',
   defaultOpen = true,
   lockedReporterUid = null,
   lockedReporterName = null,
@@ -154,7 +152,6 @@ export function ReporterSummaryPanel({
 
   return (
     <AccordionSection
-      number={sectionNumber}
       title="Muhabir Özet"
       description="Günlük raporlara göre çekim dakikası, haber ve çekildi iş özeti."
       defaultOpen={defaultOpen}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
-import { BrandLogo } from '@/components/brand/BrandLogo'
+import { BrandPreloaderMark } from '@/components/brand/BrandPreloaderMark'
 
 /** Matches brainmedya.com route overlay timing. */
 const ROUTE_HOLD_MS = 600
@@ -72,17 +72,10 @@ export function RouteTransitionPreloader() {
       aria-live="polite"
       aria-busy="true"
       aria-label="Sayfa yükleniyor"
+      // CSS also sets pointer-events:none — keep in sync so nav stays clickable.
+      style={{ pointerEvents: 'none' }}
     >
-      <div className="route-preloader__spinner-wrap">
-        <div className="route-preloader__logo">
-          <BrandLogo
-            variant="white"
-            themeAdaptive={false}
-            className="h-auto w-[75%] max-w-[140px]"
-          />
-        </div>
-        <div className="route-preloader__spinner" aria-hidden="true" />
-      </div>
+      <BrandPreloaderMark />
     </div>,
     document.body,
   )

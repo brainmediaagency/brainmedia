@@ -36,14 +36,16 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       loading = false,
       disabled,
       children,
+      type = 'button',
       ...props
     },
     ref,
   ) => (
     <button
       ref={ref}
-      type="button"
-      disabled={disabled ?? loading}
+      {...props}
+      type={type}
+      disabled={Boolean(disabled) || loading}
       aria-busy={loading}
       className={cn(
         'inline-flex touch-target items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none',
@@ -51,7 +53,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         sizeClasses[size],
         className,
       )}
-      {...props}
     >
       {loading ? (
         <>

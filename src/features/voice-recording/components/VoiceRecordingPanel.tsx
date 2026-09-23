@@ -32,7 +32,6 @@ import { formatTimer } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
 
 export type VoiceRecordingPanelProps = {
-  sectionNumber?: string
   /** Dense layout for drawers (no accordion/card chrome). */
   compact?: boolean
   /** Firma adı — sisteme kaydetmek için gerekli. */
@@ -75,7 +74,6 @@ function recordingDedupeKey(recording: {
 }
 
 export function VoiceRecordingPanel({
-  sectionNumber = '01',
   compact = false,
   companyName = '',
   jobId = null,
@@ -460,7 +458,6 @@ export function VoiceRecordingPanel({
 
   return (
     <AccordionSection
-      number={sectionNumber}
       title="Ses kaydı"
       description={
         autoSaveOnStop

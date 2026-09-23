@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore'
 import {
   reportExpenseKurus,
-  reportIncomeKurus,
+  reportIncomeParts,
   resolveReportDate,
 } from '@/features/cash/services/cashService'
 import { jobsCollection } from '@/features/jobs/services/jobService'
@@ -31,7 +31,10 @@ export type MonthlyOrgStats = {
   shootMinutes: number
   /** Muhabir formlarındaki haber (newsTotalKurus) toplamı */
   totalNewsIncomeKurus: number
+  /** Matrah + KDV */
   totalIncomeKurus: number
+  /** Yalnızca matrah (KDV hariç) */
+  totalVatBaseKurus: number
   totalExpenseKurus: number
   totalFieldPaidKurus: number
   cashBalanceKurus: number
@@ -60,7 +63,7 @@ export function currentYearMonthIstanbul(now: Date = new Date()): YearMonth {
 
 /**
  * Ops/stats window for a named month.
- * Ayın son takvim günü sonraki aya sayılır (önceki ayın son günü dahil, seçilen ayın son günü hariç).
+ * Takvim ayı: 1 … son gün (ayın son günü o aya dahildir).
  */
 export function monthDateBounds(yearMonth: YearMonth): {
   startDate: string
@@ -214,13 +217,16 @@ export async function fetchMonthlyStats(
   let shootMinutes = 0
   let totalNewsIncomeKurus = 0
   let totalIncomeKurus = 0
+  let totalVatBaseKurus = 0
   let totalExpenseKurus = 0
   let totalFieldPaidKurus = 0
 
   for (const report of reports) {
     shootMinutes += reportShootMinutes(report)
     totalNewsIncomeKurus += reportNewsIncomeKurus(report)
-    totalIncomeKurus += reportIncomeKurus(report)
+    const income = reportIncomeParts(report)
+    totalIncomeKurus += income.incomeKurus
+    totalVatBaseKurus += income.vatBaseKurus
     totalExpenseKurus += reportExpenseKurus(report)
     totalFieldPaidKurus += Math.max(0, Number(report.fieldPaidKurus ?? 0))
   }
@@ -282,6 +288,7 @@ export async function fetchMonthlyStats(
       shootMinutes,
       totalNewsIncomeKurus,
       totalIncomeKurus,
+      totalVatBaseKurus,
       totalExpenseKurus,
       totalFieldPaidKurus,
       cashBalanceKurus: totalFieldPaidKurus - totalExpenseKurus,

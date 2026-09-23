@@ -5,6 +5,11 @@ export type ReporterDailyCompany = {
   /** Seçilen işin `jobs` doc id'si; eski raporlarda boş string olabilir. */
   jobId: string
   companyName: string
+  /**
+   * Günlük rapordan iptal: kasa/ücret yok.
+   * Eski kayıtlarda yoksa `false`.
+   */
+  cancelled: boolean
   hasNews: boolean
   newsTotalKurus: number | null
   newsReporterFeeKurus: number | null
@@ -23,6 +28,11 @@ export type ReporterDailyReport = {
   id: string
   /** Rapor günü `yyyy-MM-dd` (İstanbul). */
   reportDate: string
+  /**
+   * İzin günü kasası: iş seçilmez.
+   * Eski kayıtlarda yoksa `false`.
+   */
+  leaveDayCash: boolean
   companyCount: number
   companies: ReporterDailyCompany[]
   note: string
@@ -59,6 +69,12 @@ export type ReporterDailyReport = {
 }
 
 export type ReporterDailyReportHistoryAction = 'create' | 'update' | 'soft_delete'
+
+export function isLeaveDayCashReport(
+  report: Pick<ReporterDailyReport, 'leaveDayCash'>,
+): boolean {
+  return report.leaveDayCash === true
+}
 
 export type ReporterDailyReportHistory = {
   id: string

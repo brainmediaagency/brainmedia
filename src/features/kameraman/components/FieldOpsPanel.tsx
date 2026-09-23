@@ -9,7 +9,6 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { FileUploadStatus } from '@/components/ui/FileUploadStatus'
 import { FormField } from '@/components/ui/FormField'
 import { Input } from '@/components/ui/Input'
-import { MonthPicker } from '@/components/ui/MonthPicker'
 import { Modal } from '@/components/ui/Modal'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Textarea } from '@/components/ui/Textarea'
@@ -25,6 +24,10 @@ import type {
   KameramanOdometerReading,
 } from '@/features/kameraman/types/odometer'
 import {
+  ODOMETER_PHOTO_MAX_BYTES,
+  ODOMETER_PHOTO_MAX_MB,
+} from '@/features/kameraman/types/odometer'
+import {
   pairReadingsIntoDays,
   slotLabelTr,
   sumDayKm,
@@ -34,10 +37,7 @@ import {
   currentYearMonthIstanbul,
   formatDateOnlyLongTr,
   formatDateOnlyShortTr,
-  formatYearMonthLongTr,
-  formatYearMonthRangeTr,
   isValidDateOnly,
-  statsMonthDateBounds,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { formatTryFromKurus } from '@/lib/currency'
@@ -54,13 +54,13 @@ function shiftDateOnly(dateOnly: string, deltaDays: number): string {
   return `${yy}-${mm}-${dd}`
 }
 
-function monthBounds(yearMonth: string): { start: string; end: string } {
-  const { startDate, endDate } = statsMonthDateBounds(yearMonth)
-  return { start: startDate, end: endDate }
+/** First calendar day of the Istanbul month for `yyyy-MM`. */
+function firstDayOfYearMonth(yearMonth: string): string {
+  return `${yearMonth}-01`
 }
 
-function currentYearMonth(): string {
-  return currentYearMonthIstanbul()
+function defaultRangeStart(): string {
+  return firstDayOfYearMonth(currentYearMonthIstanbul())
 }
 
 function weekStartIstanbul(dateOnly: string): string {
@@ -107,9 +107,10 @@ export function FieldOpsPanel() {
   >([])
   const [loadingDayReports, setLoadingDayReports] = useState(true)
   const [dayRefreshKey, setDayRefreshKey] = useState(0)
-  const [yearMonth, setYearMonth] = useState(currentYearMonth)
-  const [monthDays, setMonthDays] = useState<KameramanDayKm[]>([])
-  const [loadingMonthKm, setLoadingMonthKm] = useState(true)
+  const [rangeStart, setRangeStart] = useState(defaultRangeStart)
+  const [rangeEnd, setRangeEnd] = useState(todayDateOnlyIstanbul)
+  const [rangeDays, setRangeDays] = useState<KameramanDayKm[]>([])
+  const [loadingRangeKm, setLoadingRangeKm] = useState(true)
   const [expenseTotals, setExpenseTotals] = useState<{
     hotelExpenseKurus: number
     stationeryExpenseKurus: number
@@ -182,18 +183,32 @@ export function FieldOpsPanel() {
 
   useEffect(() => {
     let cancelled = false
-    const { start, end } = monthBounds(yearMonth)
-    setLoadingMonthKm(true)
+    if (!isValidDateOnly(rangeStart) || !isValidDateOnly(rangeEnd)) return
+    if (rangeStart > rangeEnd) {
+      setRangeDays([])
+      setExpenseTotals(null)
+      setLoadingRangeKm(false)
+      setLoadingExpenses(false)
+      return
+    }
+
+    setLoadingRangeKm(true)
     setLoadingExpenses(true)
 
     void (async () => {
       try {
         const [odometer, summary] = await Promise.all([
-          fetchOdometerReadingsInRange({ startDate: start, endDate: end }),
-          fetchReporterSummary({ startDate: start, endDate: end }),
+          fetchOdometerReadingsInRange({
+            startDate: rangeStart,
+            endDate: rangeEnd,
+          }),
+          fetchReporterSummary({
+            startDate: rangeStart,
+            endDate: rangeEnd,
+          }),
         ])
         if (cancelled) return
-        setMonthDays(pairReadingsIntoDays(odometer))
+        setRangeDays(pairReadingsIntoDays(odometer))
         setExpenseTotals({
           hotelExpenseKurus: summary.totals.hotelExpenseKurus,
           stationeryExpenseKurus: summary.totals.stationeryExpenseKurus,
@@ -208,10 +223,12 @@ export function FieldOpsPanel() {
       } catch (error) {
         if (!cancelled) {
           toast.error(mapAppError(error, 'Saha özeti yüklenemedi.'))
+          setRangeDays([])
+          setExpenseTotals(null)
         }
       } finally {
         if (!cancelled) {
-          setLoadingMonthKm(false)
+          setLoadingRangeKm(false)
           setLoadingExpenses(false)
         }
       }
@@ -220,7 +237,7 @@ export function FieldOpsPanel() {
     return () => {
       cancelled = true
     }
-  }, [yearMonth])
+  }, [rangeStart, rangeEnd])
 
   const dayPairs = useMemo(
     () => pairReadingsIntoDays(allReadings),
@@ -237,6 +254,14 @@ export function FieldOpsPanel() {
   const weekEnd = shiftDateOnly(weekStart, 6)
   const isReportToday = reportDay === today
   const canGoNextDay = reportDay < today
+  const rangeLabel =
+    isValidDateOnly(rangeStart) && isValidDateOnly(rangeEnd)
+      ? `${formatDateOnlyShortTr(rangeStart)} – ${formatDateOnlyShortTr(rangeEnd)}`
+      : '—'
+  const cashBalanceKurus =
+    expenseTotals == null
+      ? null
+      : expenseTotals.fieldPaidKurus - expenseTotals.totalExpenseKurus
 
   const kmToday = useMemo(
     () => sumDayKm(dayPairs.filter((d) => d.reportDate === today)),
@@ -251,7 +276,7 @@ export function FieldOpsPanel() {
       ),
     [dayPairs, weekStart, weekEnd],
   )
-  const kmMonth = useMemo(() => sumDayKm(monthDays), [monthDays])
+  const kmRange = useMemo(() => sumDayKm(rangeDays), [rangeDays])
   const kmReportDay = useMemo(
     () => sumDayKm(reportDayPairs),
     [reportDayPairs],
@@ -291,8 +316,8 @@ export function FieldOpsPanel() {
       toast.error('Yalnızca görsel dosyaları yüklenebilir (PNG/JPG).')
       return
     }
-    if (file.size > 8 * 1024 * 1024) {
-      toast.error('Görsel en fazla 8 MB olabilir.')
+    if (file.size > ODOMETER_PHOTO_MAX_BYTES) {
+      toast.error(`Görsel en fazla ${ODOMETER_PHOTO_MAX_MB} MB olabilir.`)
       return
     }
     setEditFile(file)
@@ -363,18 +388,71 @@ export function FieldOpsPanel() {
   return (
     <div className="space-y-8">
       <AccordionSection
-        number="01"
         title="Km ve saha giderleri"
         description="Saha km (kameraman kadran farkı) ve muhabir günlük raporlarından saha gider kalemleri. Genel kasaya karışmaz."
         defaultOpen
       >
-        <div className="mb-5">
-          <MonthPicker
-            id="field-ops-month"
-            value={yearMonth}
-            onChange={setYearMonth}
-          />
+        <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+          <FormField label="Başlangıç" htmlFor="field-ops-range-start">
+            <DateInput
+              id="field-ops-range-start"
+              value={rangeStart}
+              max={rangeEnd || today}
+              onChange={(e) => {
+                const next = e.target.value
+                setRangeStart(next)
+                if (isValidDateOnly(next) && isValidDateOnly(rangeEnd) && next > rangeEnd) {
+                  setRangeEnd(next)
+                }
+              }}
+            />
+          </FormField>
+          <FormField label="Bitiş" htmlFor="field-ops-range-end">
+            <DateInput
+              id="field-ops-range-end"
+              value={rangeEnd}
+              min={rangeStart || undefined}
+              max={today}
+              onChange={(e) => {
+                const next = e.target.value
+                setRangeEnd(next)
+                if (isValidDateOnly(next) && isValidDateOnly(rangeStart) && next < rangeStart) {
+                  setRangeStart(next)
+                }
+              }}
+            />
+          </FormField>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setRangeStart(weekStart)
+                setRangeEnd(today < weekEnd ? today : weekEnd)
+              }}
+            >
+              Bu hafta
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setRangeStart(defaultRangeStart())
+                setRangeEnd(today)
+              }}
+            >
+              Bu ay
+            </Button>
+          </div>
         </div>
+
+        {rangeStart > rangeEnd ? (
+          <p className="mb-4 text-sm text-danger" role="alert">
+            Başlangıç tarihi bitişten sonra olamaz.
+          </p>
+        ) : null}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <StatBox
@@ -388,13 +466,13 @@ export function FieldOpsPanel() {
             hint={`${formatDateOnlyShortTr(weekStart)} – ${formatDateOnlyShortTr(weekEnd)}`}
           />
           <StatBox
-            label={`${formatYearMonthLongTr(yearMonth)} saha km`}
+            label="Seçilen aralık saha km"
             value={
-              loadingMonthKm
+              loadingRangeKm
                 ? '…'
-                : `${kmMonth.toLocaleString('tr-TR')} km`
+                : `${kmRange.toLocaleString('tr-TR')} km`
             }
-            hint={formatYearMonthRangeTr(yearMonth)}
+            hint={rangeLabel}
           />
         </div>
 
@@ -409,44 +487,58 @@ export function FieldOpsPanel() {
           ) : (
             <>
               <StatBox
-                label="Otel ödemesi (ay)"
+                label="Otel ödemesi"
                 value={formatTryFromKurus(expenseTotals.hotelExpenseKurus)}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Muhabir ücreti (ay)"
+                label="Muhabir ücreti"
                 value={formatTryFromKurus(expenseTotals.reporterEarningsKurus)}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Kameraman ücreti (ay)"
+                label="Kameraman ücreti"
                 value={formatTryFromKurus(
                   expenseTotals.cameramanEarningsKurus,
                 )}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Sahaya ödenen (ay)"
+                label="Sahaya ödenen"
                 value={formatTryFromKurus(expenseTotals.fieldPaidKurus)}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Benzin (ay)"
+                label="Benzin"
                 value={formatTryFromKurus(expenseTotals.fuelExpenseKurus)}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Yemek (ay)"
+                label="Yemek"
                 value={formatTryFromKurus(expenseTotals.mealExpenseKurus)}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Kırtasiye (ay)"
+                label="Kırtasiye"
                 value={formatTryFromKurus(
                   expenseTotals.stationeryExpenseKurus,
                 )}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Ekstra gider (ay)"
+                label="Ekstra gider"
                 value={formatTryFromKurus(expenseTotals.extraExpenseKurus)}
+                hint={rangeLabel}
               />
               <StatBox
-                label="Toplam gider (ay)"
+                label="Toplam gider"
                 value={formatTryFromKurus(expenseTotals.totalExpenseKurus)}
+                hint={rangeLabel}
+              />
+              <StatBox
+                label="Kasa (aralık)"
+                value={formatTryFromKurus(cashBalanceKurus ?? 0)}
+                hint="Sahaya ödenen − toplam gider"
               />
             </>
           )}
@@ -454,7 +546,6 @@ export function FieldOpsPanel() {
       </AccordionSection>
 
       <AccordionSection
-        number="02"
         title="Kameraman raporları"
         description="Tarihe göre sabah / akşam kadran görselleri ve günlük km farkı. Yönetim ve koordinatör düzenleyip silebilir."
         defaultOpen

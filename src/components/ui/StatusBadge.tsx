@@ -29,7 +29,7 @@ const statusClasses: Record<StatusBadgeStatus, string> = {
   pending: 'border-warning/30 bg-warning/10 text-warning',
   approved: 'border-success/30 bg-success/10 text-success',
   shot: 'border-brand-cyan/30 bg-brand-cyan/10 text-brand-blue',
-  cancelled: 'border-border bg-surface-muted text-text-secondary',
+  cancelled: 'border-danger/30 bg-danger/10 text-danger',
   rejected: 'border-danger/30 bg-danger/10 text-danger',
   active: 'border-brand-cyan/30 bg-brand-cyan/10 text-brand-blue',
   completed: 'border-success/30 bg-success/10 text-success',

@@ -27,7 +27,6 @@ import { kurusToTry, tryToKurus } from '@/lib/currency'
 import { nextWorkdayAfter } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
 import { normalizeTurkishPhone } from '@/lib/phone'
-import { toTitleCaseTr } from '@/lib/text'
 import { cn } from '@/lib/classNames'
 
 export type NewJobFormProps = {
@@ -200,6 +199,7 @@ export function NewJobForm({
           acquiredDate: dates.acquiredDate,
           plannedExecutionDate: dates.plannedExecutionDate,
           agreedAmountKurus: tryToKurus(values.agreedAmount),
+          activitySummary: 'iş bilgileri',
         })
         toast.success('İş kaydı güncellendi.')
         onSuccess?.()
@@ -256,14 +256,7 @@ export function NewJobForm({
           id="companyName"
           hasError={Boolean(errors.companyName)}
           disabled={submitting || !isOnline}
-          {...register('companyName', {
-            onBlur: (e) => {
-              setValue('companyName', toTitleCaseTr(e.target.value), {
-                shouldValidate: true,
-                shouldDirty: true,
-              })
-            },
-          })}
+          {...register('companyName')}
         />
       </FormField>
 
@@ -326,15 +319,7 @@ export function NewJobForm({
                   id={`contacts.${index}.name`}
                   hasError={Boolean(errors.contacts?.[index]?.name)}
                   disabled={submitting || !isOnline}
-                  {...register(`contacts.${index}.name`, {
-                    onBlur: (e) => {
-                      setValue(
-                        `contacts.${index}.name`,
-                        toTitleCaseTr(e.target.value),
-                        { shouldValidate: true, shouldDirty: true },
-                      )
-                    },
-                  })}
+                  {...register(`contacts.${index}.name`)}
                 />
               </FormField>
 
@@ -436,14 +421,7 @@ export function NewJobForm({
           value={fullAddress}
           error={Boolean(errors.fullAddress)}
           disabled={submitting || !isOnline}
-          {...register('fullAddress', {
-            onBlur: (e) => {
-              setValue('fullAddress', toTitleCaseTr(e.target.value), {
-                shouldValidate: true,
-                shouldDirty: true,
-              })
-            },
-          })}
+          {...register('fullAddress')}
         />
       </FormField>
 

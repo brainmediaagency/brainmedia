@@ -8,6 +8,11 @@ export type CompressImageOptions = {
   maxBytes?: number
   /** Longest edge after resize. */
   maxEdge?: number
+  /**
+   * Fewer encode passes — preferred for kadran / camera roll where speed matters
+   * more than maximizing quality.
+   */
+  fast?: boolean
   onProgress?: (ratio: number) => void
 }
 
@@ -25,9 +30,31 @@ function isProbablyImage(blob: Blob, mimeHint?: string): boolean {
   return mime === '' || mime === 'application/octet-stream'
 }
 
-async function loadBitmap(blob: Blob): Promise<ImageBitmap | HTMLImageElement> {
+/**
+ * Decode already near `maxEdge` when the browser supports ImageBitmap resize
+ * (avoids loading a 50–100 MB full-res bitmap into memory).
+ */
+async function loadBitmap(
+  blob: Blob,
+  maxEdge?: number,
+): Promise<ImageBitmap | HTMLImageElement> {
   if (typeof createImageBitmap === 'function') {
     try {
+      if (maxEdge && maxEdge > 0) {
+        // Constrain longest edge without knowing orientation: try width, then height.
+        let bitmap = await createImageBitmap(blob, {
+          resizeWidth: maxEdge,
+          resizeQuality: 'medium',
+        })
+        if (bitmap.height > maxEdge) {
+          bitmap.close()
+          bitmap = await createImageBitmap(blob, {
+            resizeHeight: maxEdge,
+            resizeQuality: 'medium',
+          })
+        }
+        return bitmap
+      }
       return await createImageBitmap(blob)
     } catch {
       /* fall through */
@@ -77,7 +104,7 @@ function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<B
   })
 }
 
-function scaleSize(
+export function scaleSize(
   width: number,
   height: number,
   maxEdge: number,
@@ -102,7 +129,11 @@ export async function compressImageForDrive(
   options: CompressImageOptions = {},
 ): Promise<CompressedImage | null> {
   const maxBytes = options.maxBytes ?? Math.floor(1.2 * 1024 * 1024)
-  const maxEdge = options.maxEdge ?? 1920
+  const fast = options.fast === true
+  // Huge camera originals: start smaller so first encode already fits single-shot.
+  const defaultEdge =
+    file.size > 12 * 1024 * 1024 ? 1600 : 1920
+  const maxEdge = options.maxEdge ?? (fast ? Math.min(1600, defaultEdge) : defaultEdge)
   const mimeHint = file.type
 
   if (!isProbablyImage(file, mimeHint)) return null
@@ -115,7 +146,7 @@ export async function compressImageForDrive(
 
   let bitmap: ImageBitmap | HTMLImageElement
   try {
-    bitmap = await loadBitmap(file)
+    bitmap = await loadBitmap(file, maxEdge)
   } catch {
     return null
   }
@@ -136,17 +167,19 @@ export async function compressImageForDrive(
     return null
   }
 
-  let edge = maxEdge
+  let edge = Math.min(maxEdge, Math.max(naturalW, naturalH))
   let best: CompressedImage | null = null
+  const maxPasses = fast ? 3 : 5
+  const qualities = fast
+    ? [0.8, 0.68, 0.55]
+    : [0.88, 0.8, 0.72, 0.62, 0.52]
 
   try {
-    for (let pass = 0; pass < 5; pass += 1) {
+    for (let pass = 0; pass < maxPasses; pass += 1) {
       const { width, height } = scaleSize(naturalW, naturalH, edge)
       const canvas = drawToCanvas(bitmap, width, height)
-      options.onProgress?.(0.25 + pass * 0.12)
+      options.onProgress?.(0.25 + pass * (fast ? 0.2 : 0.12))
 
-      // Quality ladder: prefer readable Z-report / kadran digits
-      const qualities = [0.88, 0.8, 0.72, 0.62, 0.52]
       for (const q of qualities) {
         const blob = await canvasToJpegBlob(canvas, q)
         best = {

@@ -1,12 +1,11 @@
 import { AccordionSection } from '@/components/ui/AccordionSection'
-import { Button } from '@/components/ui/Button'
+import { CountBadge } from '@/components/ui/CountBadge'
 import { useApprovalQueues } from '@/features/jobs/hooks/useApprovalQueues'
 import {
   JobApprovalQueue,
   ReviewedJobsQueue,
 } from '@/features/jobs/components/JobApprovalQueue'
 import { JobCompanySearchPanel } from '@/features/jobs/components/JobCompanySearchPanel'
-import { OverdueJobsConfirmationPanel } from '@/features/media-planning/components/OverdueJobsConfirmationPanel'
 
 export type ReviewDashboardProps = {
   /** Shown in section copy — e.g. Koordinatör / Yönetim */
@@ -16,19 +15,19 @@ export type ReviewDashboardProps = {
 export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
   const {
     pendingJobs,
-    approvedJobs,
+    todayConfirmedJobs,
     rejectedJobs,
     pendingLoading,
-    approvedLoading,
+    todayConfirmedLoading,
     rejectedLoading,
     pendingHasMore,
-    approvedHasMore,
+    todayConfirmedHasMore,
     rejectedHasMore,
     pendingLoadingMore,
-    approvedLoadingMore,
+    todayConfirmedLoadingMore,
     rejectedLoadingMore,
     loadMorePending,
-    loadMoreApproved,
+    loadMoreTodayConfirmed,
     loadMoreRejected,
     syncJob,
   } = useApprovalQueues(true)
@@ -36,9 +35,17 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
   return (
     <div className="space-y-8">
       <AccordionSection
-        number="01"
         title="Konfirme Bekleyen İşler"
         description={`${roleLabel} olarak medya planlama uzmanlarının gönderdiği işleri inceleyin. Her kayıtta işi ekleyen kullanıcı görünür.`}
+        badge={
+          <CountBadge
+            count={pendingJobs.length}
+            hasMore={pendingHasMore}
+            loading={pendingLoading}
+            tone="warning"
+            label="iş"
+          />
+        }
         defaultOpen
       >
         <JobApprovalQueue
@@ -52,53 +59,41 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
       </AccordionSection>
 
       <AccordionSection
-        number="02"
         title="Konfirme İşler"
-        description="Konfirme, çekilmiş veya iptal edilmiş iş kayıtları. Muhabire ilet ile takvime düşer; 09:00–21:00 (Türkiye saati) arasında iletilmeyenler tüm bölgeler için otomatik iletilir."
+        description="Yalnızca bugün konfirme edilen işler. Çekim günü bugün olsa bile dün konfirme edilenler burada listelenmez."
+        badge={
+          <CountBadge
+            count={todayConfirmedJobs.length}
+            hasMore={todayConfirmedHasMore}
+            loading={todayConfirmedLoading}
+            tone="success"
+            label="iş"
+          />
+        }
       >
         <ReviewedJobsQueue
-          jobs={approvedJobs}
-          loading={approvedLoading}
-          emptyTitle="Konfirme iş yok"
-          emptyDescription="Henüz konfirme iş kaydı bulunmuyor."
-          hasMore={approvedHasMore}
-          loadingMore={approvedLoadingMore}
-          onLoadMore={() => void loadMoreApproved()}
+          jobs={todayConfirmedJobs}
+          loading={todayConfirmedLoading}
+          emptyTitle="Bugün konfirme iş yok"
+          emptyDescription="Bugün konfirme edilen iş kaydı bulunmuyor."
+          hasMore={todayConfirmedHasMore}
+          loadingMore={todayConfirmedLoadingMore}
+          onLoadMore={() => void loadMoreTodayConfirmed()}
           onJobUpdated={syncJob}
         />
       </AccordionSection>
 
       <AccordionSection
-        number="03"
-        title="Çekim Durumu"
-        description="Zamanı gelen konfirme işler burada listelenir; durum otomatik değişmez. Çekildi veya iptal için manuel onay gerekir."
-        defaultOpen
-      >
-        <OverdueJobsConfirmationPanel
-          jobs={approvedJobs}
-          loading={approvedLoading}
-          mode="actions"
-          onJobUpdated={syncJob}
-        />
-        {approvedHasMore ? (
-          <div className="mt-3 flex justify-center">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={approvedLoadingMore}
-              onClick={() => void loadMoreApproved()}
-            >
-              {approvedLoadingMore ? 'Yükleniyor…' : 'Daha fazla yükle'}
-            </Button>
-          </div>
-        ) : null}
-      </AccordionSection>
-
-      <AccordionSection
-        number="04"
         title="Reddedilen İşler"
-        description="Reddedilmiş iş kayıtları."
+        description="Reddedilmiş iş kayıtları; en yeni red en üstte."
+        badge={
+          <CountBadge
+            count={rejectedJobs.length}
+            hasMore={rejectedHasMore}
+            loading={rejectedLoading}
+            label="iş"
+          />
+        }
       >
         <ReviewedJobsQueue
           jobs={rejectedJobs}
@@ -109,11 +104,11 @@ export function ReviewDashboard({ roleLabel }: ReviewDashboardProps) {
           loadingMore={rejectedLoadingMore}
           onLoadMore={() => void loadMoreRejected()}
           onJobUpdated={syncJob}
+          showDecisionTime
         />
       </AccordionSection>
 
       <AccordionSection
-        number="05"
         title="Firma Arama"
         description="Firma adına göre tüm iş kayıtlarını arayın. Eşleşen işler kart olarak listelenir; karta tıklayınca detay açılır."
         defaultOpen

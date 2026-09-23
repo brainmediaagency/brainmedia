@@ -11,6 +11,7 @@ import {
   isSheetsWebhookVersionStale,
 } from '@/lib/sheetsWebhook'
 import { UserFacingError, mapAppError } from '@/lib/errors'
+import { writeActivityLogForActor } from '@/features/activity-log/services/activityLogService'
 
 export type ResetManagedPasswordResult = {
   targetUid: string
@@ -85,6 +86,13 @@ export async function resetManagedAccountPassword(
           'Webhook geçici şifre döndürmedi. Apps Script v19+ ve FIREBASE_SERVICE_ACCOUNT_JSON kontrol edin.',
         )
       }
+      writeActivityLogForActor(actor, {
+        category: 'account',
+        action: 'account.password_reset',
+        summary: `${target.fullName} · ${target.email}`,
+        entityType: 'user',
+        entityId: targetUid,
+      })
       return {
         targetUid: String(parsed.targetUid ?? targetUid),
         email: String(parsed.email ?? target.email),

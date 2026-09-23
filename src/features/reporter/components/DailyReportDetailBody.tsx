@@ -10,8 +10,16 @@ import {
 import { CategoryPanel } from '@/components/ui/CategoryPanel'
 import { formatTryFromKurus } from '@/lib/currency'
 import { cn } from '@/lib/classNames'
-import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
-import { shootGrossTotalKurus, sumCompanyFees } from '@/features/reporter/utils/feeCalc'
+import {
+  isLeaveDayCashReport,
+  type ReporterDailyReport,
+} from '@/features/reporter/types/reporter'
+import {
+  formatShootReporterRatePercent,
+  inferShootReporterRateFromFee,
+  shootGrossTotalKurus,
+  sumCompanyFees,
+} from '@/features/reporter/utils/feeCalc'
 
 export type MoneyLineProps = {
   label: string
@@ -61,6 +69,8 @@ export type DailyReportDetailBodyProps = {
   report: ReporterDailyReport
   /** `true` = o gün Z raporu var; `false` = yok; `null` = henüz bilinmiyor */
   zReportEntered?: boolean | null
+  /** Girilmiş Z raporu fotoğrafı (yoksa yalnızca durum metni). */
+  zReportPhotoUrl?: string | null
   className?: string
 }
 
@@ -70,9 +80,15 @@ export type DailyReportDetailBodyProps = {
 export function DailyReportDetailBody({
   report,
   zReportEntered = null,
+  zReportPhotoUrl = null,
   className,
 }: DailyReportDetailBodyProps) {
-  const feeTotals = sumCompanyFees(report.companies)
+  const feeTotals = sumCompanyFees(
+    report.companies.map((company) => ({
+      ...company,
+      cancelled: company.cancelled === true,
+    })),
+  )
   const totals = {
     totalReporterEarningsKurus:
       report.totalReporterEarningsKurus || feeTotals.totalReporterEarningsKurus,
@@ -114,9 +130,11 @@ export function DailyReportDetailBody({
       </div>
 
       <CategoryPanel
-        title="Firmalar"
+        title={isLeaveDayCashReport(report) ? 'İzin günü kasası' : 'Firmalar'}
         description={
-          allCash
+          isLeaveDayCashReport(report)
+            ? 'İş seçilmedi — yalnız kasa'
+            : allCash
             ? 'Haber, çekim ve nakit kırılımı'
             : 'Haber, çekim ve KDV kırılımı'
         }
@@ -125,7 +143,13 @@ export function DailyReportDetailBody({
         compact
       >
         <div className="space-y-3">
-          {report.companies.map((company, index) => {
+          {isLeaveDayCashReport(report) ? (
+            <p className="text-sm text-text-secondary">
+              Bu kayıt izin günü kasasıdır. Firma/çekim yoktur; yalnızca gider ve sahaya ödenen kasaya işler.
+            </p>
+          ) : (
+          report.companies.map((company, index) => {
+            const isCancelled = company.cancelled === true
             const isCash = company.chargeMode === 'cash'
             return (
             <div
@@ -139,14 +163,25 @@ export function DailyReportDetailBody({
                 <span
                   className={cn(
                     'rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                    isCash
-                      ? 'bg-surface-muted text-text-secondary'
-                      : 'bg-brand-cyan/12 text-brand-blue',
+                    isCancelled
+                      ? 'bg-warning/15 text-warning'
+                      : isCash
+                        ? 'bg-surface-muted text-text-secondary'
+                        : 'bg-brand-cyan/12 text-brand-blue',
                   )}
                 >
-                  {isCash ? 'Nakit' : `KDV %${company.vatRate}`}
+                  {isCancelled
+                    ? 'İptal edildi'
+                    : isCash
+                      ? 'Nakit'
+                      : `KDV %${company.vatRate}`}
                 </span>
               </div>
+              {isCancelled ? (
+                <p className="mt-2 text-sm text-text-secondary">
+                  Kasaya girmedi · İptal edildi
+                </p>
+              ) : (
               <dl className="mt-2">
                 {company.hasNews ? (
                   <>
@@ -171,7 +206,12 @@ export function DailyReportDetailBody({
                   valueKurus={shootGrossTotalKurus(company.shootMinutes)}
                 />
                 <MoneyLine
-                  label="Çekim · muhabir (%8)"
+                  label={`Çekim · muhabir (%${formatShootReporterRatePercent(
+                    inferShootReporterRateFromFee(
+                      company.shootMinutes,
+                      company.shootReporterFeeKurus,
+                    ),
+                  )})`}
                   valueKurus={company.shootReporterFeeKurus}
                 />
                 <MoneyLine
@@ -191,9 +231,11 @@ export function DailyReportDetailBody({
                   </>
                 )}
               </dl>
+              )}
             </div>
             )
-          })}
+          })
+          )}
         </div>
       </CategoryPanel>
 
@@ -304,19 +346,42 @@ export function DailyReportDetailBody({
       )}
 
       {zReportEntered !== null ? (
-        <div
-          className={cn(
-            'rounded-[var(--radius-md)] border px-3 py-3 text-sm font-medium',
-            zReportEntered
-              ? 'border-[color:var(--cat-success-border)] bg-[color:var(--cat-success-bg)] text-[color:var(--cat-success-text)]'
-              : 'border-warning/30 bg-warning/5 text-warning',
-          )}
-          role="status"
-        >
-          {zReportEntered
-            ? 'Z raporu girildi'
-            : 'Z raporu girilmedi — o güne özel Z raporu paylaşılmadı'}
-        </div>
+        zReportEntered ? (
+          <div
+            className="space-y-2 rounded-[var(--radius-md)] border border-[color:var(--cat-success-border)] bg-[color:var(--cat-success-bg)] p-3"
+            role="status"
+          >
+            <p className="text-sm font-medium text-[color:var(--cat-success-text)]">
+              Z raporu girildi
+            </p>
+            {zReportPhotoUrl ? (
+              <a
+                href={zReportPhotoUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="block overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--cat-success-border)] bg-surface"
+                aria-label="Z raporu fotoğrafını büyüt"
+              >
+                <img
+                  src={zReportPhotoUrl}
+                  alt="Z raporu"
+                  className="max-h-72 w-full object-contain"
+                />
+              </a>
+            ) : (
+              <p className="text-xs text-text-secondary">
+                Bu Z raporu için fotoğraf yüklenmemiş.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div
+            className="rounded-[var(--radius-md)] border border-warning/30 bg-warning/5 px-3 py-3 text-sm font-medium text-warning"
+            role="status"
+          >
+            Z raporu girilmedi — o güne özel Z raporu paylaşılmadı
+          </div>
+        )
       ) : null}
     </div>
   )

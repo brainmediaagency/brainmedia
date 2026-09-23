@@ -1,5 +1,5 @@
 rules_version = '2';
-// rules-rev: sef-notify-five-35
+// rules-rev: decision-note-min-10-41
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -112,6 +112,28 @@ service cloud.firestore {
         && request.resource.data.reviewedAt == request.time;
     }
 
+    /** Şef / koordinatör red ve iptalde en az 10 karakter açıklama zorunlu. */
+    function isSefOrCoordinator() {
+      return role() == 'coordinator' || role() == 'sef';
+    }
+
+    function jobRejectNoteOk() {
+      return isSefOrCoordinator()
+        ? isValidString(request.resource.data.reviewNote, 10, 500)
+        : (request.resource.data.reviewNote == null
+          || isValidString(request.resource.data.reviewNote, 1, 500));
+    }
+
+    function jobCancelNoteOk() {
+      return isSefOrCoordinator()
+        ? isValidString(request.resource.data.reviewNote, 10, 500)
+        : isValidString(request.resource.data.reviewNote, 3, 500);
+    }
+
+    function isManualJobCallOutcome() {
+      return request.resource.data.callOutcome in ['busy', 'unreachable', 'unanswered'];
+    }
+
     // Single role() lookup — nested isManagement/isCoordinator/isHumanResources
     // ORs were ERROR-denying İK account-admin reads/updates (evaluation budget).
     function isAccountAdmin() {
@@ -191,6 +213,13 @@ service cloud.firestore {
         && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
     }
 
+    /** Wall-clock `HH:mm` (00:00–23:59). */
+    function isTimeHHmm(value) {
+      return value is string
+        && value.size() == 5
+        && value.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+    }
+
     /** Job schedule: legacy date-only or datetime-local `yyyy-MM-ddTHH:mm`. */
     function isJobSchedule(value) {
       return value is string && (
@@ -219,7 +248,6 @@ service cloud.firestore {
     function isAllowedJobTransition(fromStatus, toStatus) {
       return (fromStatus == 'pending' && toStatus == 'approved')
         || (fromStatus == 'pending' && toStatus == 'rejected')
-        || (fromStatus == 'pending' && toStatus == 'cancelled')
         || (fromStatus == 'approved' && toStatus == 'pending')
         || (fromStatus == 'approved' && toStatus == 'shot')
         || (fromStatus == 'approved' && toStatus == 'cancelled');
@@ -507,7 +535,7 @@ service cloud.firestore {
 
     // ---------- managementNotifications (Spark in-app inbox; no Cloud Functions) ----------
     match /managementNotifications/{notificationId} {
-      allow read: if isManagement() || isSef();
+      allow read: if isManagement() || isSef() || isCoordinator();
 
       allow create: if isAuthenticated()
         && request.resource.data.keys().hasOnly([
@@ -527,7 +555,9 @@ service cloud.firestore {
           'z_report',
           'hr_report',
           'hiring_note',
-          'odometer_report'
+          'odometer_report',
+          'job_clock_report',
+          'job_call_status'
         ]
         && isValidString(request.resource.data.title, 1, 120)
         && isValidString(request.resource.data.body, 0, 300)
@@ -539,7 +569,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.readByUids == [];
 
-      allow update: if (isManagement() || isSef())
+      allow update: if (isManagement() || isSef() || isCoordinator())
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readByUids'])
         && request.resource.data.type == resource.data.type
         && request.resource.data.title == resource.data.title
@@ -616,7 +646,8 @@ service cloud.firestore {
         && request.resource.data.type in [
           'job_approved',
           'job_rejected',
-          'job_shot'
+          'job_shot',
+          'job_call_status'
         ]
         && isValidString(request.resource.data.title, 1, 120)
         && isValidString(request.resource.data.body, 0, 300)
@@ -780,6 +811,29 @@ service cloud.firestore {
         && isDateOnly(request.resource.data.plannedExecutionDate)
         && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
 
+      // Media planner completes own approved job → shot / cancelled.
+      // FIRST update allow (budget): must beat pending/approved content-edit chains.
+      // İnceleyen konfirme anındaki değer olarak kalır — MPU ezemez.
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status in ['shot', 'cancelled']
+        && isMediaPlanning()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.statusVersion == resource.data.statusVersion + 1
+        && (
+          (
+            request.resource.data.status == 'shot'
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'statusVersion', 'updatedAt'])
+          )
+          || (
+            request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['status', 'statusVersion', 'updatedAt', 'reviewNote'])
+            && isValidString(request.resource.data.reviewNote, 3, 500)
+          )
+        )
+        && request.resource.data.updatedAt == request.time;
+
       // Pending content edit FIRST (budget): own MPU / coord / mgmt.
       // Must stay ahead of reviewer allows; status-first short-circuits below.
       allow update: if resource.data.status == 'pending'
@@ -815,6 +869,16 @@ service cloud.firestore {
         && isJobSchedule(request.resource.data.acquiredDate)
         && isJobSchedule(request.resource.data.plannedExecutionDate)
         && request.resource.data.plannedExecutionDate >= request.resource.data.acquiredDate;
+
+      // Pending call outcome (Meşgul / Ulaşılamıyor / Cevapsız) — reviewers only.
+      allow update: if resource.data.status == 'pending'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.statusVersion == resource.data.statusVersion
+        && isJobReviewer()
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['callOutcome', 'updatedAt'])
+        && isManualJobCallOutcome();
 
       // Approved content edit — job reviewers (Çekim Durumu reschedule).
       // Keeps status approved; plannedExecutionDate may move the job to another day/time.
@@ -865,8 +929,7 @@ service cloud.firestore {
             'reviewNote'
           ])
         && jobReviewerStamp()
-        && (request.resource.data.reviewNote == null
-          || isValidString(request.resource.data.reviewNote, 1, 500));
+        && jobRejectNoteOk();
 
       // approved → cancelled (iptal)
       allow update: if resource.data.status == 'approved'
@@ -883,30 +946,9 @@ service cloud.firestore {
             'reviewNote'
           ])
         && jobReviewerStamp()
-        && (request.resource.data.reviewNote == null
-          || isValidString(request.resource.data.reviewNote, 1, 500));
+        && jobCancelNoteOk();
 
-      // pending → cancelled (48 saat otomatik / manuel iptal)
-      // Cheap status checks FIRST: non-matching writes short-circuit before the
-      // role-lookup chain, keeping total evaluation under the 1000-expr budget.
-      allow update: if resource.data.status == 'pending'
-        && request.resource.data.status == 'cancelled'
-        && jobReviewerStatusBump()
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly([
-            'status',
-            'statusVersion',
-            'updatedAt',
-            'reviewedByUid',
-            'reviewedByNameSnapshot',
-            'reviewedAt',
-            'reviewNote'
-          ])
-        && jobReviewerStamp()
-        && (request.resource.data.reviewNote == null
-          || isValidString(request.resource.data.reviewNote, 1, 500));
-
-      // approved → shot (çekildi) — coordinator / management
+      // approved → shot (çekildi) — coordinator / management / şef
       allow update: if resource.data.status == 'approved'
         && request.resource.data.status == 'shot'
         && jobReviewerStatusBump()
@@ -923,28 +965,68 @@ service cloud.firestore {
         && jobReviewerStamp()
         && request.resource.data.reviewNote == null;
 
-      // approved → shot (çekildi) — reporter via daily report
-      // Keep this branch cheap: no users/{owner} get/getAfter (stats are deferred
-      // client-side). Name stamp must match callerProfile().fullName.
+      // approved → shot via daily report (reporter / coord / mgmt).
+      // May claim dailyReportId in the same write so report + outcome stay atomic.
+      // İnceleyen (reviewedBy*) konfirme anındaki değer olarak kalır — muhabir ezemez.
       allow update: if resource.data.status == 'approved'
         && request.resource.data.status == 'shot'
-        && isReporter()
+        && (isReporter() || isCoordinatorOrManagement())
         && request.resource.data.statusVersion == resource.data.statusVersion + 1
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly([
-            'status',
-            'statusVersion',
-            'updatedAt',
-            'reviewedByUid',
-            'reviewedByNameSnapshot',
-            'reviewedAt',
-            'reviewNote'
-          ])
-        && request.resource.data.reviewedByUid == request.auth.uid
-        && request.resource.data.reviewedByNameSnapshot == callerProfile().fullName
-        && request.resource.data.reviewedAt == request.time
-        && request.resource.data.reviewNote == null
-        && request.resource.data.updatedAt == request.time;
+        && (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'status',
+              'statusVersion',
+              'updatedAt'
+            ])
+          || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'status',
+              'statusVersion',
+              'updatedAt',
+              'dailyReportId'
+            ])
+        )
+        && request.resource.data.updatedAt == request.time
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['dailyReportId'])
+          || (
+            (!('dailyReportId' in resource.data) || resource.data.dailyReportId == null)
+            && isValidString(request.resource.data.dailyReportId, 1, 128)
+          )
+        );
+
+      // approved → cancelled via daily report (İptal edildi)
+      allow update: if resource.data.status == 'approved'
+        && request.resource.data.status == 'cancelled'
+        && (isReporter() || isCoordinatorOrManagement())
+        && request.resource.data.statusVersion == resource.data.statusVersion + 1
+        && (
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'status',
+              'statusVersion',
+              'updatedAt',
+              'reviewNote'
+            ])
+          || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'status',
+              'statusVersion',
+              'updatedAt',
+              'reviewNote',
+              'dailyReportId'
+            ])
+        )
+        && isValidString(request.resource.data.reviewNote, 3, 500)
+        && request.resource.data.updatedAt == request.time
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['dailyReportId'])
+          || (
+            (!('dailyReportId' in resource.data) || resource.data.dailyReportId == null)
+            && isValidString(request.resource.data.dailyReportId, 1, 128)
+          )
+        );
 
       // Claim / release job for daily-report uniqueness (reporter / coord / mgmt).
       // Only touches dailyReportId + updatedAt — race-safe claim in report transactions.
@@ -980,13 +1062,18 @@ service cloud.firestore {
             'reviewedByNameSnapshot',
             'reviewedAt',
             'reviewNote',
-            'plannedExecutionDate'
+            'plannedExecutionDate',
+            'callOutcome'
           ])
         && isJobScheduleDateTime(request.resource.data.plannedExecutionDate)
         && request.resource.data.plannedExecutionDate >= resource.data.acquiredDate
         && jobReviewerStamp()
         && (request.resource.data.reviewNote == null
-          || isValidString(request.resource.data.reviewNote, 1, 500));
+          || isValidString(request.resource.data.reviewNote, 1, 500))
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['callOutcome'])
+          || request.resource.data.callOutcome == 'reached'
+        );
 
       // approved → pending (geri al)
       allow update: if resource.data.status == 'approved'
@@ -1035,34 +1122,6 @@ service cloud.firestore {
             'updatedAt'
           ]);
 
-      // Media planner completes own approved job → shot / cancelled
-      allow update: if resource.data.status == 'approved'
-        && isMediaPlanning()
-        && resource.data.createdByUid == request.auth.uid
-        && request.resource.data.status in ['shot', 'cancelled']
-        && isAllowedJobTransition(resource.data.status, request.resource.data.status)
-        && request.resource.data.statusVersion == resource.data.statusVersion + 1
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly([
-            'status',
-            'statusVersion',
-            'updatedAt',
-            'reviewedByUid',
-            'reviewedByNameSnapshot',
-            'reviewedAt',
-            'reviewNote'
-          ])
-        && request.resource.data.reviewedByUid == request.auth.uid
-        && request.resource.data.reviewedByNameSnapshot == callerProfile().fullName
-        && request.resource.data.reviewedAt == request.time
-        && (
-          (request.resource.data.status == 'shot' && request.resource.data.reviewNote == null)
-          || (request.resource.data.status == 'cancelled'
-            && isValidString(request.resource.data.reviewNote, 3, 500))
-        )
-        && request.resource.data.updatedAt == request.time
-        && statsUpdatedForJobTransition(resource.data, request.resource.data);
-
       allow delete: if false;
 
       match /history/{historyId} {
@@ -1090,6 +1149,20 @@ service cloud.firestore {
               && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion == 1
             )
             ||
+            // Owner completion history (approved → shot/cancelled) — early for budget
+            (
+              isMediaPlanning()
+              && request.resource.data.actorRole == 'media_planning'
+              && request.resource.data.fromStatus == 'approved'
+              && request.resource.data.toStatus in ['shot', 'cancelled']
+              && request.resource.data.actorUid == request.auth.uid
+              && existsAfter(/databases/$(database)/documents/jobs/$(jobId))
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.createdByUid == request.auth.uid
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status == request.resource.data.toStatus
+              && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
+              && request.resource.data.actorNameSnapshot == callerProfile().fullName
+            )
+            ||
             // Status transition history by job reviewers (coord/mgmt/şef)
             (
               isJobReviewer()
@@ -1101,9 +1174,9 @@ service cloud.firestore {
               && request.resource.data.actorRole == role()
             )
             ||
-            // Reporter marks approved → shot via daily report
+            // Daily-report marks approved → shot (reporter / coord / mgmt)
             (
-              isReporter()
+              (isReporter() || isCoordinatorOrManagement())
               && exists(/databases/$(database)/documents/jobs/$(jobId))
               && get(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'approved'
               && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'shot'
@@ -1111,23 +1184,24 @@ service cloud.firestore {
               && request.resource.data.toStatus == 'shot'
               && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
               && request.resource.data.actorUid == request.auth.uid
-              && request.resource.data.actorRole == 'reporter'
+              && request.resource.data.actorRole == role()
               && request.resource.data.actorNameSnapshot == callerProfile().fullName
               && request.resource.data.note == null
             )
             ||
-            // Owner completion history (approved → shot/cancelled)
+            // Daily-report marks approved → cancelled
             (
-              isMediaPlanning()
-              && existsAfter(/databases/$(database)/documents/jobs/$(jobId))
-              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.createdByUid == request.auth.uid
-              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status in ['shot', 'cancelled']
+              (isReporter() || isCoordinatorOrManagement())
+              && exists(/databases/$(database)/documents/jobs/$(jobId))
+              && get(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'approved'
+              && getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status == 'cancelled'
               && request.resource.data.fromStatus == 'approved'
-              && request.resource.data.toStatus == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.status
+              && request.resource.data.toStatus == 'cancelled'
               && request.resource.data.version == getAfter(/databases/$(database)/documents/jobs/$(jobId)).data.statusVersion
               && request.resource.data.actorUid == request.auth.uid
-              && request.resource.data.actorRole == 'media_planning'
+              && request.resource.data.actorRole == role()
               && request.resource.data.actorNameSnapshot == callerProfile().fullName
+              && isValidString(request.resource.data.note, 3, 500)
             )
           )
           && request.resource.data.keys().hasOnly([
@@ -1371,10 +1445,12 @@ service cloud.firestore {
     match /appMeta/{docId} {
       allow read: if isHumanResources() || isManagement()
         || (docId == 'zReportRetention' && isCoordinatorOrManagement())
+        || (docId == 'odometerRetention' && isCoordinatorOrManagement())
         || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement())
         || (docId == 'shootingCalendarNotify' && isCoordinatorOrManagement());
       allow create, update: if isHumanResources() || isManagement()
         || (docId == 'zReportRetention' && isCoordinatorOrManagement())
+        || (docId == 'odometerRetention' && isCoordinatorOrManagement())
         || (docId == 'dailyRegionNotify' && isCoordinatorOrManagement())
         || (docId == 'shootingCalendarNotify' && isCoordinatorOrManagement());
       allow delete: if false;
@@ -1473,11 +1549,21 @@ service cloud.firestore {
         && request.resource.data.deletedByUid == null
         && request.resource.data.deletedByNameSnapshot == null
         && isNonNegWhole(request.resource.data.companyCount)
-        && request.resource.data.companyCount >= 1
-        && request.resource.data.companyCount <= 10
         && request.resource.data.companies is list
         && request.resource.data.companies.size() == request.resource.data.companyCount
-        && isValidReporterCompaniesLiteAll(request.resource.data.companies);
+        && (
+          (
+            request.resource.data.leaveDayCash == true
+            && request.resource.data.companyCount == 0
+          )
+          ||
+          (
+            request.resource.data.leaveDayCash != true
+            && request.resource.data.companyCount >= 1
+            && request.resource.data.companyCount <= 10
+            && isValidReporterCompaniesLiteAll(request.resource.data.companies)
+          )
+        );
 
       // Soft-delete + content update. editVersion==0 is owned by allow create —
       // guard with >= 1 so create-shaped writes never touch resource.data (ERROR)
@@ -1531,6 +1617,7 @@ service cloud.firestore {
             && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'reportDate',
+              'leaveDayCash',
               'companyCount',
               'companies',
               'note',
@@ -1640,11 +1727,35 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
-    // ---------- hoopDailyScores (test: reviewer roles; limit yok) ----------
+    // ---------- mpuCelebrations (3. çekilen iş → 24s kutlama) ----------
+    match /mpuCelebrations/{uid} {
+      allow read: if isAuthenticated()
+        && (
+          request.auth.uid == uid
+          || isJobReviewer()
+          || isReporter()
+        );
+
+      allow create: if isAuthenticated()
+        && (
+          isJobReviewer()
+          || isReporter()
+          || (isMediaPlanning() && request.auth.uid == uid)
+        )
+        && request.resource.data.keys().hasOnly(['uid', 'startedAtMs', 'untilMs'])
+        && request.resource.data.uid == uid
+        && request.resource.data.startedAtMs is int
+        && request.resource.data.untilMs is int
+        && request.resource.data.untilMs == request.resource.data.startedAtMs + 86400000;
+
+      allow update, delete: if false;
+    }
+
+    // ---------- hoopDailyScores (all active roles; 6 şut / gün) ----------
     match /hoopDailyScores/{scoreId} {
       allow read: if isAuthenticated();
 
-      allow create: if isJobReviewer()
+      allow create: if isAuthenticated()
         && request.resource.data.keys().hasOnly([
           'date',
           'uid',
@@ -1667,7 +1778,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
-      allow update: if isJobReviewer()
+      allow update: if isAuthenticated()
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.date == resource.data.date
@@ -1678,7 +1789,7 @@ service cloud.firestore {
         && request.resource.data.attempts is list
         && request.resource.data.attempts.size()
           == resource.data.attempts.size() + 1
-        && request.resource.data.attempts.size() <= 200
+        && request.resource.data.attempts.size() <= 6
         && request.resource.data.attempts[
              request.resource.data.attempts.size() - 1
            ] is int
@@ -1692,7 +1803,7 @@ service cloud.firestore {
         )
         && request.resource.data.makes is int
         && request.resource.data.makes >= 0
-        && request.resource.data.makes <= 200
+        && request.resource.data.makes <= 6
         && request.resource.data.makes
           == resource.data.makes
             + request.resource.data.attempts[
@@ -1856,10 +1967,16 @@ service cloud.firestore {
       allow list: if isAuthenticated()
         && (
           isCoordinatorOrManagement()
-          || isKameraman()
+          // Kameraman list queries must constrain createdByUid to own uid.
+          || (isKameraman()
+            && resource.data.createdByUid == request.auth.uid)
         );
 
       allow create: if isKameraman()
+        // Stable id enforces one row per owner + day + slot.
+        && readingId == request.auth.uid
+          + '_' + request.resource.data.reportDate
+          + '_' + request.resource.data.slot
         && request.resource.data.keys().hasOnly([
           'reportDate',
           'slot',
@@ -1896,6 +2013,9 @@ service cloud.firestore {
 
       allow update: if (
           isKameraman()
+          && readingId == resource.data.createdByUid
+            + '_' + resource.data.reportDate
+            + '_' + resource.data.slot
           && resource.data.createdByUid == request.auth.uid
           && request.resource.data.createdByUid == resource.data.createdByUid
           && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
@@ -1926,6 +2046,9 @@ service cloud.firestore {
         )
         || (
           isCoordinatorOrManagement()
+          && readingId == resource.data.createdByUid
+            + '_' + resource.data.reportDate
+            + '_' + resource.data.slot
           && request.resource.data.createdByUid == resource.data.createdByUid
           && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
           && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
@@ -1959,9 +2082,158 @@ service cloud.firestore {
         || isCoordinatorOrManagement();
     }
 
+    // ---------- kameramanJobClocks (per-job giriş/çıkış HH:mm) ----------
+    match /kameramanJobClocks/{clockId} {
+      allow get: if isAuthenticated()
+        && (
+          isJobReviewer()
+          || (resource != null
+            && resource.data.createdByUid == request.auth.uid)
+          || (isKameraman()
+            && resource == null
+            && clockId.matches('^.*_' + request.auth.uid + '$'))
+        );
+
+      allow list: if isAuthenticated()
+        && (
+          isJobReviewer()
+          // Kameraman yalnızca kendi kayıtlarını listeleyebilir (query: createdByUid == uid).
+          || (isKameraman()
+            && resource.data.createdByUid == request.auth.uid)
+        );
+
+      allow create: if isKameraman()
+        && request.resource.data.keys().hasOnly([
+          'jobId',
+          'jobCompanyNameSnapshot',
+          'jobProvinceSnapshot',
+          'jobDistrictSnapshot',
+          'plannedExecutionDateSnapshot',
+          'clockInTime',
+          'clockOutTime',
+          'clockInSubmittedAtHHmm',
+          'clockOutSubmittedAtHHmm',
+          'note',
+          'createdByUid',
+          'createdByNameSnapshot',
+          'createdByEmailSnapshot',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByNameSnapshot == userDoc(request.auth.uid).fullName
+        && request.resource.data.createdByEmailSnapshot == userDoc(request.auth.uid).email
+        && isValidString(request.resource.data.jobId, 1, 120)
+        && isValidString(request.resource.data.jobCompanyNameSnapshot, 1, 200)
+        && isValidString(request.resource.data.jobProvinceSnapshot, 0, 80)
+        && isValidString(request.resource.data.jobDistrictSnapshot, 0, 80)
+        && isDateOnly(request.resource.data.plannedExecutionDateSnapshot)
+        && (
+          request.resource.data.clockInTime == null
+          || isTimeHHmm(request.resource.data.clockInTime)
+        )
+        && (
+          request.resource.data.clockOutTime == null
+          || isTimeHHmm(request.resource.data.clockOutTime)
+        )
+        && (
+          request.resource.data.clockInSubmittedAtHHmm == null
+          || isTimeHHmm(request.resource.data.clockInSubmittedAtHHmm)
+        )
+        && (
+          request.resource.data.clockOutSubmittedAtHHmm == null
+          || isTimeHHmm(request.resource.data.clockOutSubmittedAtHHmm)
+        )
+        && (
+          request.resource.data.clockInTime != null
+          || request.resource.data.clockOutTime != null
+        )
+        && (
+          (request.resource.data.clockInTime == null)
+            == (request.resource.data.clockInSubmittedAtHHmm == null)
+        )
+        && (
+          (request.resource.data.clockOutTime == null)
+            == (request.resource.data.clockOutSubmittedAtHHmm == null)
+        )
+        && (
+          request.resource.data.note == null
+          || isValidString(request.resource.data.note, 1, 500)
+        )
+        && isValidString(request.resource.data.createdByNameSnapshot, 1, 120)
+        && isValidString(request.resource.data.createdByEmailSnapshot, 3, 254)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && clockId == request.resource.data.jobId + '_' + request.auth.uid;
+
+      allow update: if isKameraman()
+        && resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.createdByNameSnapshot == resource.data.createdByNameSnapshot
+        && request.resource.data.createdByEmailSnapshot == resource.data.createdByEmailSnapshot
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.jobId == resource.data.jobId
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'clockInTime',
+            'clockOutTime',
+            'clockInSubmittedAtHHmm',
+            'clockOutSubmittedAtHHmm',
+            'note',
+            'jobCompanyNameSnapshot',
+            'jobProvinceSnapshot',
+            'jobDistrictSnapshot',
+            'plannedExecutionDateSnapshot',
+            'updatedAt'
+          ])
+        && isValidString(request.resource.data.jobCompanyNameSnapshot, 1, 200)
+        && isValidString(request.resource.data.jobProvinceSnapshot, 0, 80)
+        && isValidString(request.resource.data.jobDistrictSnapshot, 0, 80)
+        && isDateOnly(request.resource.data.plannedExecutionDateSnapshot)
+        && (
+          request.resource.data.clockInTime == null
+          || isTimeHHmm(request.resource.data.clockInTime)
+        )
+        && (
+          request.resource.data.clockOutTime == null
+          || isTimeHHmm(request.resource.data.clockOutTime)
+        )
+        && (
+          request.resource.data.clockInSubmittedAtHHmm == null
+          || isTimeHHmm(request.resource.data.clockInSubmittedAtHHmm)
+        )
+        && (
+          request.resource.data.clockOutSubmittedAtHHmm == null
+          || isTimeHHmm(request.resource.data.clockOutSubmittedAtHHmm)
+        )
+        && (
+          request.resource.data.clockInTime != null
+          || request.resource.data.clockOutTime != null
+        )
+        && (
+          (request.resource.data.clockInTime == null)
+            == (request.resource.data.clockInSubmittedAtHHmm == null)
+        )
+        && (
+          (request.resource.data.clockOutTime == null)
+            == (request.resource.data.clockOutSubmittedAtHHmm == null)
+        )
+        && (
+          request.resource.data.note == null
+          || isValidString(request.resource.data.note, 1, 500)
+        )
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if (isKameraman()
+          && resource.data.createdByUid == request.auth.uid)
+        || isJobReviewer();
+    }
+
     // ---------- voiceRecordings (Drive-backed via Apps Script; Spark) ----------
     match /voiceRecordings/{recordingId} {
-      allow read: if isJobReviewer();
+      // Reviewers + muhabir/İK (çekim takviminde dinleme). Kameraman cannot read.
+      allow read: if isAuthenticated()
+        && role() in ['coordinator', 'management', 'sef', 'reporter', 'human_resources'];
 
       allow create: if isJobReviewer()
         && request.resource.data.keys().hasOnly([
@@ -2004,6 +2276,130 @@ service cloud.firestore {
       allow delete: if isCoordinatorOrManagement();
     }
 
+    // ---------- activityLogs (append-only ops trail; management read) ----------
+    match /activityLogs/{logId} {
+      allow read: if isManagement();
+
+      allow create: if isAuthenticated()
+        && request.resource.data.keys().hasOnly([
+          'actorUid',
+          'actorNameSnapshot',
+          'actorRole',
+          'category',
+          'action',
+          'title',
+          'summary',
+          'jobId',
+          'jobCompanyName',
+          'entityType',
+          'entityId',
+          'createdAt'
+        ])
+        && request.resource.data.actorUid == request.auth.uid
+        && isValidString(request.resource.data.actorNameSnapshot, 1, 120)
+        && request.resource.data.actorRole == role()
+        && request.resource.data.actorRole in [
+          'media_planning',
+          'reporter',
+          'human_resources',
+          'coordinator',
+          'management',
+          'kameraman',
+          'sef'
+        ]
+        && request.resource.data.category in [
+          'job',
+          'report',
+          'field',
+          'account',
+          'system'
+        ]
+        && request.resource.data.action in [
+          'job.created',
+          'job.updated',
+          'job.approved',
+          'job.rejected',
+          'job.cancelled',
+          'job.reverted',
+          'job.shot',
+          'job.forwarded',
+          'job.auto_forwarded',
+          'job.auto_cancelled',
+          'job.auto_rejected',
+          'job.region_updated',
+          'job.region_deleted',
+          'report.created',
+          'report.updated',
+          'report.deleted',
+          'report.z_created',
+          'report.z_updated',
+          'report.z_deleted',
+          'report.note_updated',
+          'report.note_deleted',
+          'report.hr_created',
+          'report.hr_updated',
+          'report.hiring_created',
+          'report.hiring_updated',
+          'field.voice_created',
+          'field.voice_deleted',
+          'field.odometer_created',
+          'field.odometer_updated',
+          'field.odometer_deleted',
+          'field.job_clock_created',
+          'field.job_clock_updated',
+          'field.job_clock_deleted',
+          'field.attendance_updated',
+          'account.created',
+          'account.frozen',
+          'account.unfrozen',
+          'account.deleted',
+          'account.password_reset'
+        ]
+        && isValidString(request.resource.data.title, 1, 120)
+        && isValidString(request.resource.data.summary, 0, 300)
+        && (
+          request.resource.data.jobId == null
+          || isValidString(request.resource.data.jobId, 1, 120)
+        )
+        && (
+          request.resource.data.jobCompanyName == null
+          || isValidString(request.resource.data.jobCompanyName, 1, 200)
+        )
+        && (
+          request.resource.data.entityType == null
+          || isValidString(request.resource.data.entityType, 1, 40)
+        )
+        && (
+          request.resource.data.entityId == null
+          || isValidString(request.resource.data.entityId, 1, 120)
+        )
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // ---------- jobLedgerMeta (ops ledger fatura notes) ----------
+    match /jobLedgerMeta/{jobId} {
+      allow read: if isCoordinatorOrManagement();
+
+      allow create, update: if isCoordinatorOrManagement()
+        && request.resource.data.keys().hasOnly([
+          'invoiceNote',
+          'updatedAt',
+          'updatedByUid',
+          'updatedByNameSnapshot'
+        ])
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedByUid == request.auth.uid
+        && request.resource.data.updatedByNameSnapshot == callerProfile().fullName
+        && (
+          request.resource.data.invoiceNote == ''
+          || isValidString(request.resource.data.invoiceNote, 1, 500)
+        );
+
+      allow delete: if isManagement();
+    }
+
     /**
      * FUNC-04 — companies[0..9] lite on create.
      * chargeMode + hasNews + cash⇒vatKurus==0 (keeps 10-firm creates under expr budget).
@@ -2011,7 +2407,8 @@ service cloud.firestore {
     function isValidReporterCompanyLite(company) {
       return company.hasNews is bool
         && company.chargeMode in ['vat', 'cash']
-        && (company.chargeMode != 'cash' || company.vatKurus == 0);
+        && (company.chargeMode != 'cash' || company.vatKurus == 0)
+        && (!('cancelled' in company) || company.cancelled is bool);
     }
 
     function isValidReporterCompaniesLiteAll(companies) {

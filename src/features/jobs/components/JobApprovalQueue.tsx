@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Pencil } from 'lucide-react'
-import { toast } from 'sonner'
-import { isJobReviewerRole } from '@/config/roles'
+import { isJobReviewerRole, isUserRole } from '@/config/roles'
 import type { JobDocument } from '@/features/jobs/types/job'
-import {
-  forwardJobToReporter,
-  getJob,
-} from '@/features/jobs/services/jobService'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Drawer } from '@/components/ui/Drawer'
@@ -22,7 +17,32 @@ import { formatTryFromKurus } from '@/lib/currency'
 import { formatJobCreator, formatJobCreatorPrimary, formatJobCreatorSecondary } from '@/features/jobs/utils/formatJobCreator'
 import { ApprovedJobEditForm } from '@/features/jobs/components/ApprovedJobEditForm'
 import { JobReviewDrawer } from '@/features/jobs/components/JobReviewDrawer'
-import { mapAppError } from '@/lib/errors'
+import {
+  PENDING_JOB_URGENCY_LABEL,
+  pendingJobUrgency,
+  type PendingJobUrgency,
+} from '@/features/jobs/utils/pendingJobUrgency'
+import { cn } from '@/lib/classNames'
+
+const URGENCY_CLASS: Record<PendingJobUrgency, string> = {
+  overdue: 'border-brand-orange/40 bg-brand-orange/12 text-brand-orange',
+  today: 'border-warning/40 bg-warning/12 text-warning',
+  tomorrow: 'border-brand-cyan/30 bg-brand-cyan/10 text-brand-blue',
+}
+
+function UrgencyTag({ urgency }: { urgency: PendingJobUrgency | null }) {
+  if (!urgency) return null
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+        URGENCY_CLASS[urgency],
+      )}
+    >
+      {PENDING_JOB_URGENCY_LABEL[urgency]}
+    </span>
+  )
+}
 
 export type JobApprovalQueueProps = {
   jobs: JobDocument[]
@@ -99,8 +119,16 @@ export function JobApprovalQueue({
             </TableRow>
           </TableHead>
           <TableBody>
-            {pageItems.map((job) => (
-              <TableRow key={job.id}>
+            {pageItems.map((job) => {
+              const urgency = pendingJobUrgency(job.plannedExecutionDate)
+              return (
+              <TableRow
+                key={job.id}
+                className={cn(
+                  urgency === 'today' && 'shadow-[inset_3px_0_0_0_var(--warning)]',
+                  urgency === 'overdue' && 'shadow-[inset_3px_0_0_0_var(--brand-orange)]',
+                )}
+              >
                 <TableCell>{job.companyName}</TableCell>
                 <TableCell>
                   <div className="flex flex-col">
@@ -117,7 +145,12 @@ export function JobApprovalQueue({
                 <TableCell>
                   {job.province} / {job.district}
                 </TableCell>
-                <TableCell>{formatJobScheduleTr(job.plannedExecutionDate)}</TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span>{formatJobScheduleTr(job.plannedExecutionDate)}</span>
+                    <UrgencyTag urgency={urgency} />
+                  </div>
+                </TableCell>
                 <TableCell>{formatTryFromKurus(job.agreedAmountKurus)}</TableCell>
                 <TableCell>
                   {job.createdAt ? formatDateTimeTr(job.createdAt.toDate()) : '—'}
@@ -127,13 +160,15 @@ export function JobApprovalQueue({
                     type="button"
                     size="sm"
                     variant="secondary"
+                    aria-label={`${job.companyName} işini incele`}
                     onClick={() => setSelectedJobId(job.id)}
                   >
                     İncele
                   </Button>
                 </TableCell>
               </TableRow>
-            ))}
+              )
+            })}
           </TableBody>
         </Table>
       </div>
@@ -152,7 +187,12 @@ export function JobApprovalQueue({
               },
               {
                 label: 'Planlanan Çekim',
-                value: formatJobScheduleTr(job.plannedExecutionDate),
+                value: (
+                  <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                    {formatJobScheduleTr(job.plannedExecutionDate)}
+                    <UrgencyTag urgency={pendingJobUrgency(job.plannedExecutionDate)} />
+                  </span>
+                ),
               },
               {
                 label: 'Tutar',
@@ -164,6 +204,7 @@ export function JobApprovalQueue({
                 type="button"
                 size="sm"
                 className="w-full"
+                aria-label={`${job.companyName} işini incele`}
                 onClick={() => setSelectedJobId(job.id)}
               >
                 İncele
@@ -217,6 +258,8 @@ export type ReviewedJobsQueueProps = {
   loadingMore?: boolean
   onLoadMore?: () => void
   onJobUpdated?: (job: JobDocument) => void
+  /** Show decision timestamp column (e.g. rejection time). */
+  showDecisionTime?: boolean
 }
 
 function toBadgeStatus(status: JobDocument['status']): StatusBadgeStatus {
@@ -232,11 +275,11 @@ export function ReviewedJobsQueue({
   loadingMore = false,
   onLoadMore,
   onJobUpdated,
+  showDecisionTime = false,
 }: ReviewedJobsQueueProps) {
   const { profile, claims, isOnline } = useAuth()
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [editingJob, setEditingJob] = useState<JobDocument | null>(null)
-  const [forwardingId, setForwardingId] = useState<string | null>(null)
   const {
     page,
     setPage,
@@ -259,34 +302,10 @@ export function ReviewedJobsQueue({
     }
   }, [jobs, selectedJobId])
 
-  const actorRole = claims?.role ?? profile?.role
+  const actorRole = isUserRole(profile?.role)
+    ? profile.role
+    : claims?.role
   const canManageApproved = isJobReviewerRole(actorRole)
-
-  async function handleForward(job: JobDocument) {
-    if (!profile || !actorRole || !canManageApproved) return
-    setForwardingId(job.id)
-    try {
-      const updated = await forwardJobToReporter(job.id, {
-        uid: profile.uid,
-        fullName: profile.fullName,
-        role: actorRole,
-      })
-      onJobUpdated?.(updated)
-      toast.success('İş muhabir çekim takvimine iletildi.')
-      // Muhabire ilet Excel SON DURUM yazmaz (yalnızca Konfirme/Reddedildi/Çekildi/İptal).
-    } catch (error) {
-      // Recover stale list if Firestore already forwarded but UI had not refreshed.
-      const fresh = await getJob(job.id).catch(() => null)
-      if (fresh?.forwardedToReporter) {
-        onJobUpdated?.(fresh)
-        toast.success('İş muhabir çekim takvimine iletildi.')
-      } else {
-        toast.error(mapAppError(error, 'İş muhabire iletilemedi.'))
-      }
-    } finally {
-      setForwardingId(null)
-    }
-  }
 
   if (loading) {
     return (
@@ -310,7 +329,9 @@ export function ReviewedJobsQueue({
               <TableCell header>Firma</TableCell>
               <TableCell header>Ekleyen kullanıcı</TableCell>
               <TableCell header>Durum</TableCell>
-              <TableCell header>Muhabir iletimi</TableCell>
+              {showDecisionTime ? (
+                <TableCell header>Red zamanı</TableCell>
+              ) : null}
               <TableCell header>İnceleyen</TableCell>
               <TableCell header>Tutar</TableCell>
               <TableCell header>İşlem</TableCell>
@@ -335,17 +356,15 @@ export function ReviewedJobsQueue({
                 <TableCell>
                   <StatusBadge status={toBadgeStatus(job.status)} />
                 </TableCell>
-                <TableCell>
-                  {job.forwardedToReporter ? (
-                    <span className="text-success">
-                      {job.forwardedToReporterByUid === 'system-auto-forward'
-                        ? 'İletildi (otomatik)'
-                        : 'İletildi'}
-                    </span>
-                  ) : (
-                    <span className="text-text-secondary">İletilmedi</span>
-                  )}
-                </TableCell>
+                {showDecisionTime ? (
+                  <TableCell>
+                    {job.reviewedAt
+                      ? formatDateTimeTr(job.reviewedAt.toDate())
+                      : job.updatedAt
+                        ? formatDateTimeTr(job.updatedAt.toDate())
+                        : '—'}
+                  </TableCell>
+                ) : null}
                 <TableCell>{job.reviewedByNameSnapshot ?? '—'}</TableCell>
                 <TableCell>{formatTryFromKurus(job.agreedAmountKurus)}</TableCell>
                 <TableCell>
@@ -359,33 +378,16 @@ export function ReviewedJobsQueue({
                       Detay
                     </Button>
                     {canManageApproved && job.status === 'approved' ? (
-                      <>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          disabled={!isOnline || forwardingId !== null}
-                          onClick={() => setEditingJob(job)}
-                        >
-                          <Pencil className="size-4" aria-hidden="true" />
-                          Düzenle
-                        </Button>
-                        {job.forwardedToReporter ? (
-                          <Button type="button" size="sm" variant="ghost" disabled>
-                            İletildi
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void handleForward(job)}
-                            loading={forwardingId === job.id}
-                            disabled={!isOnline || forwardingId !== null}
-                          >
-                            Muhabire ilet
-                          </Button>
-                        )}
-                      </>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={!isOnline}
+                        onClick={() => setEditingJob(job)}
+                      >
+                        <Pencil className="size-4" aria-hidden="true" />
+                        Düzenle
+                      </Button>
                     ) : null}
                   </div>
                 </TableCell>
@@ -403,14 +405,18 @@ export function ReviewedJobsQueue({
             subtitle={`Ekleyen: ${formatJobCreator(job)}`}
             badge={<StatusBadge status={toBadgeStatus(job.status)} />}
             rows={[
-              {
-                label: 'Muhabir iletimi',
-                value: job.forwardedToReporter
-                  ? job.forwardedToReporterByUid === 'system-auto-forward'
-                    ? 'İletildi (otomatik)'
-                    : 'İletildi'
-                  : 'İletilmedi',
-              },
+              ...(showDecisionTime
+                ? [
+                    {
+                      label: 'Red zamanı',
+                      value: job.reviewedAt
+                        ? formatDateTimeTr(job.reviewedAt.toDate())
+                        : job.updatedAt
+                          ? formatDateTimeTr(job.updatedAt.toDate())
+                          : '—',
+                    },
+                  ]
+                : []),
               {
                 label: 'İnceleyen',
                 value: job.reviewedByNameSnapshot ?? '—',
@@ -432,34 +438,16 @@ export function ReviewedJobsQueue({
                   Detay
                 </Button>
                 {canManageApproved && job.status === 'approved' ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      className="w-full"
-                      disabled={!isOnline || forwardingId !== null}
-                      onClick={() => setEditingJob(job)}
-                    >
-                      Düzenle
-                    </Button>
-                    {job.forwardedToReporter ? (
-                      <Button type="button" size="sm" variant="ghost" className="w-full" disabled>
-                        İletildi
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => void handleForward(job)}
-                        loading={forwardingId === job.id}
-                        disabled={!isOnline || forwardingId !== null}
-                      >
-                        Muhabire ilet
-                      </Button>
-                    )}
-                  </>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="w-full"
+                    disabled={!isOnline}
+                    onClick={() => setEditingJob(job)}
+                  >
+                    Düzenle
+                  </Button>
                 ) : null}
               </div>
             }

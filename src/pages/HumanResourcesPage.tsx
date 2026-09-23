@@ -3,7 +3,7 @@ import { TabNav } from '@/components/ui/TabNav'
 import { SHOW_MESAI_UI } from '@/config/featureFlags'
 import {
   HR_OWN_SECTIONS,
-  HR_VIEWER_SECTIONS,
+  HR_VIEWER_PAGE_TABS,
   visibleNavSections,
 } from '@/config/navSections'
 import { AccountAdminDashboard } from '@/features/account-admin/components/AccountAdminDashboard'
@@ -12,44 +12,32 @@ import { ShiftTrackerWidget } from '@/features/media-planning/components/ShiftTr
 import { HrJobStatsPanel } from '@/features/hr/components/HrJobStatsPanel'
 import { HrReportsPanel } from '@/features/hr/components/HrReportsPanel'
 import { HiringNotesPanel } from '@/features/hr/components/HiringNotesPanel'
-import { HrStaffAttendanceViewer } from '@/features/hr/components/HrStaffAttendanceViewer'
 import { ManagementHrInbox } from '@/features/hr/components/ManagementHrInbox'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { usePageTab } from '@/hooks/usePageTab'
 
-const VIEWER_SECTIONS = visibleNavSections(HR_VIEWER_SECTIONS)
-const VIEWER_TAB_IDS = VIEWER_SECTIONS.map((section) => section.id)
-type HrViewerTab = (typeof HR_VIEWER_SECTIONS)[number]['id']
-const VIEWER_DEFAULT_TAB: HrViewerTab = SHOW_MESAI_UI
-  ? 'attendance'
-  : 'reports'
+const VIEWER_TAB_IDS = HR_VIEWER_PAGE_TABS.map((section) => section.id)
+type HrViewerTab = (typeof HR_VIEWER_PAGE_TABS)[number]['id']
 
 function HrViewerPage() {
-  const [tab, setTab] = usePageTab(VIEWER_TAB_IDS, VIEWER_DEFAULT_TAB)
+  const [tab, setTab] = usePageTab(VIEWER_TAB_IDS, 'reports')
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="İnsan Kaynakları"
-        subtitle={
-          SHOW_MESAI_UI
-            ? 'İK çalışanlarının mesaileri, gelen raporlar ve iş görüşmesi notları.'
-            : 'Gelen raporlar ve iş görüşmesi notları.'
-        }
       />
 
       <TabNav
-        className="lg:hidden"
-        items={[...VIEWER_SECTIONS]}
+        items={[...HR_VIEWER_PAGE_TABS]}
         activeId={tab}
         onChange={(id) => setTab(id as HrViewerTab)}
-        aria-label="İK görünümü bölümleri"
+        aria-label="İK bölümleri"
       />
 
       <div key={tab} className="animate-fade-in-up">
-        {SHOW_MESAI_UI && tab === 'attendance' && <HrStaffAttendanceViewer />}
-        {tab === 'reports' && <ManagementHrInbox mode="reports" />}
-        {tab === 'interviews' && <ManagementHrInbox mode="interviews" />}
+        {tab === 'reports' ? <ManagementHrInbox mode="reports" /> : null}
+        {tab === 'interviews' ? <ManagementHrInbox mode="interviews" /> : null}
       </div>
     </div>
   )
@@ -73,11 +61,6 @@ export function HumanResourcesPage() {
     <div className="space-y-6">
       <PageHeader
         title="İnsan Kaynakları"
-        subtitle={
-          SHOW_MESAI_UI
-            ? 'Mesai, iş özeti, raporlar, işe alım notları ve hesap yönetimi.'
-            : 'İş özeti, raporlar, işe alım notları ve hesap yönetimi.'
-        }
         action={
           SHOW_MESAI_UI && user?.uid ? (
             <ShiftTrackerWidget uid={user.uid} />
@@ -95,12 +78,12 @@ export function HumanResourcesPage() {
 
       <div key={tab} className="animate-fade-in-up space-y-8">
         {SHOW_MESAI_UI && tab === 'attendance' && (
-          <AttendanceLogsDashboard startNumber={1} />
+          <AttendanceLogsDashboard />
         )}
-        {tab === 'jobs' && <HrJobStatsPanel sectionNumber="01" defaultOpen />}
-        {tab === 'reports' && <HrReportsPanel sectionNumber="01" defaultOpen />}
-        {tab === 'hiring' && <HiringNotesPanel sectionNumber="01" defaultOpen />}
-        {tab === 'accounts' && <AccountAdminDashboard startNumber={1} />}
+        {tab === 'jobs' && <HrJobStatsPanel defaultOpen />}
+        {tab === 'reports' && <HrReportsPanel defaultOpen />}
+        {tab === 'hiring' && <HiringNotesPanel defaultOpen />}
+        {tab === 'accounts' && <AccountAdminDashboard />}
       </div>
     </div>
   )

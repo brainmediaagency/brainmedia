@@ -4,21 +4,17 @@ import {
   query,
   where,
 } from 'firebase/firestore'
-import {
-  cancelJob,
-  jobsCollection,
-} from '@/features/jobs/services/jobService'
-import { exportJobReviewToSheet } from '@/features/jobs/services/sheetsExport'
+import { rejectJob, jobsCollection } from '@/features/jobs/services/jobService'
 import type { UserRole } from '@/config/roles'
 
 const THROTTLE_MS = 15 * 60 * 1000
 const FETCH_LIMIT = 50
 const STORAGE_KEY = 'brain.autoCancelPendingJobs.lastRunMs'
-/** Pending jobs older than this are auto-cancelled. */
+/** Pending jobs older than this are auto-rejected (Reddedildi). */
 export const STALE_PENDING_AFTER_MS = 48 * 60 * 60 * 1000
 
 export const AUTO_CANCEL_REVIEW_NOTE =
-  'Otomatik iptal: 48 saat içinde konfirme edilmedi.'
+  'Otomatik red: 48 saat içinde konfirme edilmedi.'
 
 /** Pure check — used by auto-cancel and unit tests. */
 export function isStalePendingJob(
@@ -56,12 +52,14 @@ export type AutoCancelActor = {
 export type AutoCancelResult = {
   skipped: boolean
   reason?: 'throttled' | 'unauthorized'
+  /** Number of pending jobs moved to rejected. */
   cancelled: number
 }
 
 /**
- * 48 saat içinde konfirme edilmeyen bekleyen işleri otomatik iptal eder.
+ * 48 saat içinde konfirme edilmeyen bekleyen işleri otomatik reddeder.
  * Yalnızca yönetim/koordinatör; 15 dk throttle; saat penceresi yok.
+ * Firestore red (`rejected`); Sheets satırı reject ile silinir.
  */
 export async function autoCancelStalePendingJobs(
   actor: AutoCancelActor,
@@ -92,16 +90,11 @@ export async function autoCancelStalePendingJobs(
     const createdMs = job.createdAt?.toMillis?.()
     if (!isStalePendingJob(createdMs, now)) continue
     try {
-      await cancelJob(docSnap.id, actor, AUTO_CANCEL_REVIEW_NOTE)
+      const updated = await rejectJob(docSnap.id, actor, AUTO_CANCEL_REVIEW_NOTE, {
+        activityCategory: 'system',
+      })
+      void updated
       cancelled += 1
-      try {
-        await exportJobReviewToSheet(job, 'cancelled', {
-          reviewedByName: actor.fullName,
-          reviewNote: AUTO_CANCEL_REVIEW_NOTE,
-        })
-      } catch {
-        // Sheet update is best-effort; cancel already succeeded.
-      }
     } catch {
       // Already transitioned / race — continue
     }

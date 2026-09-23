@@ -7,6 +7,10 @@ import type {
   OdometerSlot,
 } from '@/features/kameraman/types/odometer'
 import {
+  ODOMETER_PHOTO_MAX_BYTES,
+  ODOMETER_PHOTO_MAX_MB,
+} from '@/features/kameraman/types/odometer'
+import {
   subscribeOwnOdometerReadings,
   upsertOdometerReading,
 } from '@/features/kameraman/services/odometerService'
@@ -33,14 +37,16 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { cn } from '@/lib/classNames'
 import { driveUploadPhaseLabel } from '@/lib/driveUpload'
 import {
+  compressImageForDrive,
+  jpegDriveFileName,
+} from '@/lib/compressImageForDrive'
+import {
   formatDateOnlyLongTr,
   formatDateTimeTr,
   isValidDateOnly,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
-
-const MAX_BYTES = 8 * 1024 * 1024
 
 const WEEKDAY_SHORT_TR = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'] as const
 
@@ -144,7 +150,7 @@ function WeeklyOdometerTracker({
             {(
               [
                 { slot: 'morning' as const, label: 'Sabah' },
-                { slot: 'evening' as const, label: 'Gece' },
+                { slot: 'evening' as const, label: 'Akşam' },
               ] as const
             ).map((row) => (
               <tr key={row.slot} className="border-t border-border/70">
@@ -207,7 +213,7 @@ function WeeklyOdometerTracker({
         </table>
       </div>
       <p className="mt-2 text-[11px] leading-snug text-text-secondary">
-        ✓ = kadran yollandı · hücreye dokunarak o günün sabah/gece formunu aç
+        ✓ = kadran yollandı · hücreye dokunarak o günün sabah/akşam formunu aç
       </p>
     </section>
   )
@@ -398,26 +404,69 @@ export function KameramanOdometerPanel() {
   }
 
   const onFileChange = (next: File | null) => {
-    if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
-    if (!next) {
-      clearFile()
-      if (editingId || existingForSlot) {
-        const src =
-          existingForSlot ?? readings.find((r) => r.id === editingId) ?? null
-        if (src?.photoDownloadUrl) setPreview(src.photoDownloadUrl)
+    void (async () => {
+      if (preview?.startsWith('blob:')) URL.revokeObjectURL(preview)
+      if (!next) {
+        clearFile()
+        if (editingId || existingForSlot) {
+          const src =
+            existingForSlot ?? readings.find((r) => r.id === editingId) ?? null
+          if (src?.photoDownloadUrl) setPreview(src.photoDownloadUrl)
+        }
+        return
       }
-      return
-    }
-    if (!next.type.startsWith('image/')) {
-      toast.error('Yalnızca görsel dosyaları yüklenebilir (PNG/JPG).')
-      return
-    }
-    if (next.size > MAX_BYTES) {
-      toast.error('Görsel en fazla 8 MB olabilir.')
-      return
-    }
-    setFile(next)
-    setPreview(URL.createObjectURL(next))
+      if (
+        next.type
+        && !next.type.startsWith('image/')
+        && next.type !== 'application/octet-stream'
+      ) {
+        toast.error('Yalnızca görsel dosyaları yüklenebilir (PNG/JPG).')
+        return
+      }
+
+      let ready: File = next
+      // Shrink large camera originals before the size gate (and before upload).
+      if (next.size > 1.2 * 1024 * 1024) {
+        setUploadUi({
+          label: 'Görsel hazırlanıyor…',
+          detail: next.name || 'kadran.jpg',
+          percent: 8,
+        })
+        try {
+          const compressed = await compressImageForDrive(next, {
+            fast: true,
+            maxEdge: 1600,
+            maxBytes: Math.floor(1.4 * 1024 * 1024),
+            onProgress: (ratio) => {
+              setUploadUi({
+                label: 'Görsel hazırlanıyor…',
+                detail: next.name || 'kadran.jpg',
+                percent: Math.round(8 + ratio * 70),
+              })
+            },
+          })
+          if (compressed?.blob && compressed.blob.size > 0) {
+            ready = new File(
+              [compressed.blob],
+              jpegDriveFileName(next.name || 'kadran.jpg'),
+              { type: compressed.mimeType },
+            )
+          }
+        } catch {
+          // Keep original; size check below still applies.
+        } finally {
+          setUploadUi(null)
+        }
+      }
+
+      if (ready.size > ODOMETER_PHOTO_MAX_BYTES) {
+        toast.error(`Görsel en fazla ${ODOMETER_PHOTO_MAX_MB} MB olabilir.`)
+        if (inputRef.current) inputRef.current.value = ''
+        return
+      }
+      setFile(ready)
+      setPreview(URL.createObjectURL(ready))
+    })()
   }
 
   const onSubmit = async () => {
@@ -511,7 +560,6 @@ export function KameramanOdometerPanel() {
       />
 
       <AccordionSection
-        number="01"
         title="Km kadranı"
         description="Hangi günün sabah (giriş) veya akşam (çıkış) kadranı olduğunu seçin. Aynı gün zorunlu değil — örneğin 8’inde 6’sının kaydını girebilirsiniz."
         defaultOpen
@@ -608,7 +656,7 @@ export function KameramanOdometerPanel() {
             hint={
               isEditMode
                 ? 'Yeni görsel seçmezseniz mevcut kadran fotoğrafı korunur; yalnızca km/not güncellenir.'
-                : undefined
+                : `PNG/JPG · büyük fotoğraflar otomatik küçültülür (üst sınır ${ODOMETER_PHOTO_MAX_MB} MB)`
             }
           >
             <input
@@ -682,7 +730,6 @@ export function KameramanOdometerPanel() {
       </AccordionSection>
 
       <AccordionSection
-        number="02"
         title="Raporlarım"
         description="Geçmiş kadran girişleriniz. Her günün sabah/akşam kaydını düzenleyebilirsiniz."
         defaultOpen

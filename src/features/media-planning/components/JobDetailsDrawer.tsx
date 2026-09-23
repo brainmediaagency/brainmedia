@@ -13,6 +13,7 @@ import {
   formatJobStatusNoteLabel,
   shouldHighlightJobStatusNote,
 } from '@/features/jobs/utils/formatJobStatusNote'
+import { jobCallOutcomeLabel } from '@/features/jobs/utils/jobCallOutcome'
 
 export type JobDetailsDrawerProps = {
   job: JobDocument | null
@@ -132,6 +133,12 @@ export function JobDetailsDrawer({
         ) : null}
         {statusNote && !highlightStatusNote ? (
           <DetailRow label={statusNoteLabel} value={statusNote} />
+        ) : null}
+        {job.callOutcome ? (
+          <DetailRow
+            label="Arama son durum"
+            value={jobCallOutcomeLabel(job.callOutcome)}
+          />
         ) : null}
         {job.createdAt && (
           <DetailRow label="Oluşturulma" value={formatDateTimeTr(job.createdAt.toDate())} />

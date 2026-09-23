@@ -20,9 +20,8 @@ describe('year-month helpers', () => {
 
   it('formats Turkish long month labels', () => {
     expect(formatYearMonthLongTr('2026-08')).toMatch(/Ağustos\s+2026/)
-    // Ops window: 31 Temmuz – 30 Ağustos (ay sonu sonraki aya)
     expect(formatYearMonthRangeTr('2026-08')).toMatch(
-      /31\s+Temmuz\s+–\s+30\s+Ağustos\s+2026/,
+      /1\s+–\s+31\s+Ağustos\s+2026/,
     )
   })
 })

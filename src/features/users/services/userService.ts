@@ -36,9 +36,15 @@ function parseStats(raw: unknown): UserStats {
   }
 }
 
+function parseShootReporterRate(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null
+  if (raw <= 0 || raw > 1) return null
+  return raw
+}
+
 export const userConverter: FirestoreDataConverter<UserProfile> = {
   toFirestore(user: UserProfile): DocumentData {
-    return {
+    const data: DocumentData = {
       uid: user.uid,
       fullName: user.fullName,
       email: user.email,
@@ -51,6 +57,11 @@ export const userConverter: FirestoreDataConverter<UserProfile> = {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     }
+    // Omit when null so new accounts stay on the global default without a field.
+    if (user.shootReporterRate != null) {
+      data.shootReporterRate = user.shootReporterRate
+    }
+    return data
   },
   fromFirestore(
     snapshot: QueryDocumentSnapshot,
@@ -72,6 +83,7 @@ export const userConverter: FirestoreDataConverter<UserProfile> = {
         typeof data.shiftDurationMinutes === 'number'
           ? data.shiftDurationMinutes
           : null,
+      shootReporterRate: parseShootReporterRate(data.shootReporterRate),
       timezone: 'Europe/Istanbul',
       stats: parseStats(data.stats),
       createdAt: data.createdAt ?? null,
@@ -101,24 +113,54 @@ export function subscribeUserProfile(
   )
 }
 
+/** Aktifler üstte A→Z, dondurulanlar altta A→Z. */
+export function compareUsersActiveThenName(
+  a: Pick<UserProfile, 'fullName' | 'isActive'>,
+  b: Pick<UserProfile, 'fullName' | 'isActive'>,
+): number {
+  const aActive = a.isActive !== false
+  const bActive = b.isActive !== false
+  if (aActive !== bActive) return aActive ? -1 : 1
+  return a.fullName.localeCompare(b.fullName, 'tr')
+}
+
 export function subscribeMediaPlanners(
   onData: (users: UserProfile[]) => void,
   onError?: (error: Error) => void,
   searchLimit = DEFAULT_LIST_LIMIT,
+  options?: { includeInactive?: boolean; includeSoftDeleted?: boolean },
 ): Unsubscribe {
-  const q = query(
-    collection(getDb(), 'users').withConverter(userConverter),
-    where('role', '==', 'media_planning' satisfies UserRole),
-    where('isActive', '==', true),
-    orderBy('fullName', 'asc'),
-    limit(searchLimit),
-  )
+  const includeInactive = options?.includeInactive === true
+  const includeSoftDeleted = options?.includeSoftDeleted === true
+  const q = includeInactive
+    ? query(
+        collection(getDb(), 'users').withConverter(userConverter),
+        where('role', '==', 'media_planning' satisfies UserRole),
+        orderBy('fullName', 'asc'),
+        limit(searchLimit),
+      )
+    : query(
+        collection(getDb(), 'users').withConverter(userConverter),
+        where('role', '==', 'media_planning' satisfies UserRole),
+        where('isActive', '==', true),
+        orderBy('fullName', 'asc'),
+        limit(searchLimit),
+      )
   return onSnapshot(
     q,
     (snap) => {
       const users = snap.docs
         .map((d) => d.data())
-        .filter((u) => u.deletedAt == null)
+        .filter((u) => includeSoftDeleted || u.deletedAt == null)
+      // Active planners first (A→Z), then frozen (A→Z).
+      if (includeInactive) {
+        users.sort((a, b) => {
+          if (Boolean(a.deletedAt) !== Boolean(b.deletedAt)) {
+            return a.deletedAt ? 1 : -1
+          }
+          return compareUsersActiveThenName(a, b)
+        })
+      }
       onData(users)
     },
     (err) => onError?.(err),
@@ -219,6 +261,7 @@ export async function createUserProfileDoc(
     isActive: true,
     deletedAt: null,
     shiftDurationMinutes: input.shiftDurationMinutes ?? null,
+    shootReporterRate: null,
     timezone: 'Europe/Istanbul',
     stats: { jobsReceived: 0, jobsShot: 0, jobsCancelled: 0 },
     createdAt: serverTimestamp() as UserProfile['createdAt'],
@@ -292,6 +335,7 @@ export function subscribeManagedUsers(
       const users = snap.docs
         .map((d) => d.data())
         .filter((u) => u.deletedAt == null)
+      users.sort(compareUsersActiveThenName)
       onData(users)
     },
     (err) => onError?.(err),

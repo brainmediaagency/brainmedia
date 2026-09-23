@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   isSheetsWebhookConfigured,
   isSheetsWebhookVersionStale,
+  SHEETS_WEBHOOK_KAMERAMAN_DRIVE_VERSION,
   SHEETS_WEBHOOK_MIN_VERSION,
+  webhookSupportsKameramanDrive,
+  webhookVersionNumber,
 } from '@/lib/sheetsWebhook'
 
 describe('sheetsWebhook', () => {
@@ -55,5 +58,27 @@ describe('sheetsWebhook', () => {
         features: ['upsertJobRow'],
       }),
     ).toBe(true)
+  })
+
+  it('treats live v28 as kameraman-ready (no script-update nag)', () => {
+    expect(SHEETS_WEBHOOK_KAMERAMAN_DRIVE_VERSION).toBe(20)
+    expect(
+      webhookVersionNumber({
+        service: 'brain-sheets-drive-webhook-v28',
+        version: 'v28',
+      }),
+    ).toBe(28)
+    expect(
+      webhookSupportsKameramanDrive({
+        service: 'brain-sheets-drive-webhook-v28',
+        version: 'v28',
+      }),
+    ).toBe(true)
+    expect(
+      webhookSupportsKameramanDrive({
+        service: 'brain-sheets-drive-webhook-v19',
+        version: 'v19',
+      }),
+    ).toBe(false)
   })
 })

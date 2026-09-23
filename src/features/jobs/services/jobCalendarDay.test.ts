@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   jobPlannedDay,
   nextDateOnly,
+  REPORTER_CALENDAR_STATUSES,
 } from '@/features/jobs/services/jobService'
 
 describe('job calendar day helpers', () => {
+  it('keeps shot jobs on the reporter/kameraman calendar (not cancelled)', () => {
+    expect([...REPORTER_CALENDAR_STATUSES]).toEqual(['approved', 'shot'])
+  })
+
   it('extracts the calendar day from date-only and datetime schedules', () => {
     expect(jobPlannedDay({ plannedExecutionDate: '2026-08-06' })).toBe(
       '2026-08-06',

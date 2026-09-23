@@ -1,54 +1,140 @@
 import {
   collection,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
+  where,
   type Unsubscribe,
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
-import type { ReportCashGroup, ReportCashTotals } from '@/features/cash/types/cash'
+import type {
+  ReportCashExpenseParts,
+  ReportCashGroup,
+  ReportCashTotals,
+} from '@/features/cash/types/cash'
 import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
+import {
+  emptyReportCashTotals,
+  filterReportCashGroups,
+  filterReportCashGroupsByReportDateRange,
+  sumExpenseParts,
+  sumReportCashGroups,
+} from '@/features/cash/utils/filterReportCashGroups'
 import {
   dateToDateOnlyIstanbul,
   formatDateOnlyLongTr,
   isValidDateOnly,
+  isValidYearMonth,
+  statsMonthDateBounds,
   todayDateOnlyIstanbul,
 } from '@/lib/date'
 
-export function reportIncomeKurus(report: ReporterDailyReport): number {
+export {
+  emptyReportCashTotals,
+  filterReportCashGroups,
+  filterReportCashGroupsByReportDateRange,
+  sumExpenseParts,
+}
+
+const MONTHLY_CASH_FETCH_LIMIT = 2000
+
+function nonNegKurus(value: unknown): number {
+  return Math.max(0, Math.trunc(Number(value ?? 0) || 0))
+}
+
+/** Gelir kırılımı: matrah + KDV (= kasaya geçen toplam). */
+export function reportIncomeParts(report: ReporterDailyReport): {
+  vatBaseKurus: number
+  vatKurus: number
+  incomeKurus: number
+} {
   if (Array.isArray(report.companies) && report.companies.length > 0) {
-    return report.companies.reduce((sum, company) => {
-      const base = Number(company.vatBaseKurus ?? 0)
-      const vat = Number(company.vatKurus ?? 0)
-      return sum + base + vat
-    }, 0)
+    let vatBaseKurus = 0
+    let vatKurus = 0
+    for (const company of report.companies) {
+      vatBaseKurus += Number(company.vatBaseKurus ?? 0) || 0
+      vatKurus += Number(company.vatKurus ?? 0) || 0
+    }
+    vatBaseKurus = nonNegKurus(vatBaseKurus)
+    vatKurus = nonNegKurus(vatKurus)
+    return {
+      vatBaseKurus,
+      vatKurus,
+      incomeKurus: vatBaseKurus + vatKurus,
+    }
   }
-  return Math.max(0, Number(report.earningsKurus ?? 0))
+
+  const earningsKurus = nonNegKurus(report.earningsKurus)
+  const vatKurus = nonNegKurus(report.totalVatKurus)
+  const vatBaseKurus = nonNegKurus(earningsKurus - vatKurus)
+  return {
+    vatBaseKurus,
+    vatKurus: Math.min(vatKurus, earningsKurus),
+    incomeKurus: earningsKurus,
+  }
+}
+
+export function reportIncomeKurus(report: ReporterDailyReport): number {
+  return reportIncomeParts(report).incomeKurus
 }
 
 /**
- * Toplam gider = saha giderleri + ücretler.
- * KDV gelire dahildir, gidere eklenmez (eski kayıtlarda `totalExpenseKurus`
- * KDV içerebilir — her zaman işletme + çalışan üzerinden hesapla).
+ * Gider kırılımı (KDV hariç). Eski kayıtlarda yalnızca toplam
+ * `operatingExpenseKurus` / `employeeExpenseKurus` varsa tek kaleme yığılır.
+ */
+export function reportExpenseParts(
+  report: ReporterDailyReport,
+): ReportCashExpenseParts {
+  let hotelExpenseKurus = nonNegKurus(report.hotelExpenseKurus)
+  let stationeryExpenseKurus = nonNegKurus(report.stationeryExpenseKurus)
+  let fuelExpenseKurus = nonNegKurus(report.fuelExpenseKurus)
+  let mealExpenseKurus = nonNegKurus(report.mealExpenseKurus)
+  let extraExpenseKurus = nonNegKurus(report.extraExpenseKurus)
+  const operatingParts =
+    hotelExpenseKurus +
+    stationeryExpenseKurus +
+    fuelExpenseKurus +
+    mealExpenseKurus +
+    extraExpenseKurus
+  const operatingStored = Number(report.operatingExpenseKurus ?? NaN)
+  if (
+    operatingParts === 0 &&
+    Number.isFinite(operatingStored) &&
+    operatingStored > 0
+  ) {
+    extraExpenseKurus = Math.trunc(operatingStored)
+  }
+
+  let reporterEarningsKurus = nonNegKurus(report.totalReporterEarningsKurus)
+  let cameramanEarningsKurus = nonNegKurus(report.totalCameramanEarningsKurus)
+  const employeeParts = reporterEarningsKurus + cameramanEarningsKurus
+  const employeeStored = Number(report.employeeExpenseKurus ?? NaN)
+  if (
+    employeeParts === 0 &&
+    Number.isFinite(employeeStored) &&
+    employeeStored > 0
+  ) {
+    reporterEarningsKurus = Math.trunc(employeeStored)
+  }
+
+  return {
+    hotelExpenseKurus,
+    stationeryExpenseKurus,
+    fuelExpenseKurus,
+    mealExpenseKurus,
+    extraExpenseKurus,
+    reporterEarningsKurus,
+    cameramanEarningsKurus,
+  }
+}
+
+/**
+ * Toplam gider = saha giderleri + ücretler (KDV hariç).
  */
 export function reportExpenseKurus(report: ReporterDailyReport): number {
-  const hotel = Math.max(0, Number(report.hotelExpenseKurus ?? 0))
-  const stationery = Math.max(0, Number(report.stationeryExpenseKurus ?? 0))
-  const fuel = Math.max(0, Number(report.fuelExpenseKurus ?? 0))
-  const meal = Math.max(0, Number(report.mealExpenseKurus ?? 0))
-  const extra = Math.max(0, Number(report.extraExpenseKurus ?? 0))
-  const operatingStored = Number(report.operatingExpenseKurus ?? NaN)
-  const operating = Number.isFinite(operatingStored) && operatingStored >= 0
-    ? operatingStored
-    : hotel + stationery + fuel + meal + extra
-  const reporter = Math.max(0, Number(report.totalReporterEarningsKurus ?? 0))
-  const cameraman = Math.max(0, Number(report.totalCameramanEarningsKurus ?? 0))
-  const employeeStored = Number(report.employeeExpenseKurus ?? NaN)
-  const employee = Number.isFinite(employeeStored) && employeeStored >= 0
-    ? employeeStored
-    : reporter + cameraman
-  return Math.max(0, Math.trunc(operating + employee))
+  return sumExpenseParts(reportExpenseParts(report))
 }
 
 export function resolveReportDate(report: ReporterDailyReport): string {
@@ -61,68 +147,166 @@ export function resolveReportDate(report: ReporterDailyReport): string {
   return todayDateOnlyIstanbul()
 }
 
-export function emptyReportCashTotals(): ReportCashTotals {
+/** Build one cash group from a daily report (skips soft-deleted). */
+export function buildReportCashGroup(
+  reportId: string,
+  report: ReporterDailyReport,
+): ReportCashGroup | null {
+  if (report.deletedAt != null) return null
+
+  const reportDate = resolveReportDate(report)
+  const parts = reportExpenseParts(report)
+  const income = reportIncomeParts(report)
   return {
-    totalIncomeKurus: 0,
-    totalExpenseKurus: 0,
-    totalFieldPaidKurus: 0,
-    reportCount: 0,
+    reportId,
+    reportDate,
+    title: `${formatDateOnlyLongTr(reportDate)} tarihli rapor`,
+    reporterName: String(report.createdByNameSnapshot ?? 'Muhabir'),
+    createdByUid: String(report.createdByUid ?? ''),
+    createdAt: report.createdAt ?? null,
+    incomeKurus: income.incomeKurus,
+    vatBaseKurus: income.vatBaseKurus,
+    vatKurus: income.vatKurus,
+    expenseKurus: sumExpenseParts(parts),
+    fieldPaidKurus: nonNegKurus(report.fieldPaidKurus),
+    ...parts,
   }
+}
+
+export function sortReportCashGroups(
+  groups: ReportCashGroup[],
+): ReportCashGroup[] {
+  return [...groups].sort((a, b) => {
+    const byDate = b.reportDate.localeCompare(a.reportDate)
+    if (byDate !== 0) return byDate
+    return (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0)
+  })
+}
+
+/**
+ * Pure: reports → groups/totals for a calendar month (`statsMonthDateBounds`).
+ * Used by fetch + unit tests.
+ */
+export function reportCashGroupsForOpsMonth(
+  items: ReadonlyArray<{ id: string; report: ReporterDailyReport }>,
+  yearMonth: string,
+  createdByUid?: string | null,
+): { groups: ReportCashGroup[]; totals: ReportCashTotals } {
+  if (!isValidYearMonth(yearMonth)) {
+    return { groups: [], totals: emptyReportCashTotals() }
+  }
+  const { startDate, endDate } = statsMonthDateBounds(yearMonth)
+  const built: ReportCashGroup[] = []
+  for (const item of items) {
+    const group = buildReportCashGroup(item.id, item.report)
+    if (group) built.push(group)
+  }
+  const inRange = filterReportCashGroupsByReportDateRange(
+    built,
+    startDate,
+    endDate,
+  )
+  const { groups, totals } = filterReportCashGroups(inRange, createdByUid)
+  return { groups: sortReportCashGroups(groups), totals }
+}
+
+export type SubscribeReportCashOptions = {
+  /** When set, only that muhabir's reports. */
+  createdByUid?: string | null
+}
+
+function reportCashGroupsQuery(createdByUid?: string | null) {
+  const col = collection(getDb(), 'reporterDailyReports')
+  const uid = createdByUid?.trim() || ''
+  if (uid) {
+    return query(
+      col,
+      where('createdByUid', '==', uid),
+      orderBy('createdAt', 'desc'),
+      limit(2000),
+    )
+  }
+  return query(col, orderBy('createdAt', 'desc'), limit(2000))
 }
 
 /**
  * Muhabir günlük raporlarından kasa grupları + toplamlar.
+ * `createdByUid` verilince sorgu o uid ile sınırlanır — muhabir kuralları
+ * yalnızca kendi belgelerini okuyabilir.
  */
 export function subscribeReportCashGroups(
   onData: (groups: ReportCashGroup[], totals: ReportCashTotals) => void,
   onError?: (error: Error) => void,
+  options?: SubscribeReportCashOptions,
 ): Unsubscribe {
+  const filterUid = options?.createdByUid?.trim() || null
+
   return onSnapshot(
-    query(
-      collection(getDb(), 'reporterDailyReports'),
-      orderBy('createdAt', 'desc'),
-      limit(2000),
-    ),
+    reportCashGroupsQuery(filterUid),
     (snap) => {
       const groups: ReportCashGroup[] = []
-      const totals = emptyReportCashTotals()
 
       for (const reportDoc of snap.docs) {
         const report = reportDoc.data() as ReporterDailyReport
-        if (report.deletedAt != null) continue
-
-        const reportDate = resolveReportDate(report)
-        const income = reportIncomeKurus(report)
-        const expense = reportExpenseKurus(report)
-        const fieldPaid = Math.max(0, Number(report.fieldPaidKurus ?? 0))
-        const reporterName = String(report.createdByNameSnapshot ?? 'Muhabir')
-
-        totals.reportCount += 1
-        totals.totalIncomeKurus += income
-        totals.totalExpenseKurus += expense
-        totals.totalFieldPaidKurus += fieldPaid
-
-        groups.push({
-          reportId: reportDoc.id,
-          reportDate,
-          title: `${formatDateOnlyLongTr(reportDate)} tarihli rapor`,
-          reporterName,
-          createdByUid: String(report.createdByUid ?? ''),
-          createdAt: report.createdAt ?? null,
-          incomeKurus: income,
-          expenseKurus: expense,
-          fieldPaidKurus: fieldPaid,
-        })
+        const group = buildReportCashGroup(reportDoc.id, report)
+        if (group) groups.push(group)
       }
 
-      groups.sort((a, b) => {
-        const byDate = b.reportDate.localeCompare(a.reportDate)
-        if (byDate !== 0) return byDate
-        return (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0)
-      })
-
-      onData(groups, totals)
+      const sorted = sortReportCashGroups(groups)
+      const { groups: nextGroups, totals } = filterReportCashGroups(
+        sorted,
+        filterUid,
+      )
+      onData(nextGroups, totals)
     },
     (error) => onError?.(error),
   )
 }
+
+/**
+ * Ops-month cash groups (same window as Aylık Özet).
+ * Prefer reportDate range; fall back to recent createdAt + client filter.
+ */
+export async function fetchReportCashGroupsForMonth(
+  yearMonth: string,
+  options?: SubscribeReportCashOptions,
+): Promise<{ groups: ReportCashGroup[]; totals: ReportCashTotals }> {
+  if (!isValidYearMonth(yearMonth)) {
+    return { groups: [], totals: emptyReportCashTotals() }
+  }
+
+  const { startDate, endDate } = statsMonthDateBounds(yearMonth)
+  const filterUid = options?.createdByUid?.trim() || null
+  const col = collection(getDb(), 'reporterDailyReports')
+
+  let items: Array<{ id: string; report: ReporterDailyReport }>
+
+  try {
+    const snap = await getDocs(
+      query(
+        col,
+        where('reportDate', '>=', startDate),
+        where('reportDate', '<=', endDate),
+        orderBy('reportDate', 'desc'),
+        limit(MONTHLY_CASH_FETCH_LIMIT),
+      ),
+    )
+    items = snap.docs.map((d) => ({
+      id: d.id,
+      report: d.data() as ReporterDailyReport,
+    }))
+  } catch {
+    const snap = await getDocs(
+      query(col, orderBy('createdAt', 'desc'), limit(MONTHLY_CASH_FETCH_LIMIT)),
+    )
+    items = snap.docs.map((d) => ({
+      id: d.id,
+      report: d.data() as ReporterDailyReport,
+    }))
+  }
+
+  return reportCashGroupsForOpsMonth(items, yearMonth, filterUid)
+}
+
+/** Re-export for callers that only need totals after a custom filter. */
+export { sumReportCashGroups }

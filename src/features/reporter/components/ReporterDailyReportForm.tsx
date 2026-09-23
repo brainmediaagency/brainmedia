@@ -21,41 +21,49 @@ import {
 import type { ReporterDailyReport } from '@/features/reporter/types/reporter'
 import {
   buildDailyReportFees,
+  formatShootReporterRatePercent,
   formatTryFromKurus,
   parseTryToKurus,
+  resolveFieldPaidKurusForWrite,
   shootGrossTotalKurus,
   VAT_RATE_OPTIONS,
   type VatRate,
 } from '@/features/reporter/utils/feeCalc'
+import { getUserProfile } from '@/features/users/services/userService'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { formatTryInput, kurusToTry } from '@/lib/currency'
-import { formatJobScheduleTr, todayDateOnlyIstanbul } from '@/lib/date'
+import { todayDateOnlyIstanbul } from '@/lib/date'
 import { DateInput } from '@/components/ui/DateInput'
 import {
   fetchJobsForReportDate,
-  getJob,
-  markJobAsShotFromDailyReport,
 } from '@/features/jobs/services/jobService'
-import {
-  assertSheetsWebhookFresh,
-  isSheetsWebhookConfigured,
-  patchJobDkHaberInSheet,
-  patchJobSonDurumInSheet,
-  SHEET_SON_DURUM,
-} from '@/features/jobs/services/sheetsExport'
-import { buildDailyReportCompanySheetFields } from '@/features/reporter/utils/dailyReportSheetSync'
+import { filterJobsVisibleForReporterEmail } from '@/features/reporter/config/reporterJobVisibility'
+import { reporterAllowsPartialDayCompanies } from '@/features/reporter/config/reporterDailyReportRules'
 import type { JobDocument } from '@/features/jobs/types/job'
-import type { UserRole } from '@/config/roles'
 
 function emptyCompany(): DailyReportFormValues['companies'][number] {
   return {
     jobId: '',
     companyName: '',
+    cancelled: false,
     hasNews: false,
     newsTotalTry: '',
     chargeMode: 'vat',
     shootMinutes: '',
     vatRate: 20,
+  }
+}
+
+function companyFromJob(
+  job: JobDocument,
+  previous?: DailyReportFormValues['companies'][number],
+): DailyReportFormValues['companies'][number] {
+  return {
+    ...(previous ?? emptyCompany()),
+    jobId: job.id,
+    companyName: job.companyName,
+    // Already-shot jobs cannot be cancelled from the report.
+    cancelled: job.status === 'approved' ? Boolean(previous?.cancelled) : false,
   }
 }
 
@@ -85,20 +93,25 @@ export type ReporterDailyReportFormProps = {
 }
 
 function reportToFormValues(report: ReporterDailyReport): DailyReportFormValues {
+  const leaveDayCash = report.leaveDayCash === true
   return {
     reportDate: report.reportDate || todayDateOnlyIstanbul(),
-    companies: report.companies.map((company) => ({
-      jobId: company.jobId,
-      companyName: company.companyName,
-      hasNews: company.hasNews,
-      newsTotalTry:
-        company.newsTotalKurus === null
-          ? ''
-          : formatTryInput(kurusToTry(company.newsTotalKurus)),
-      chargeMode: company.chargeMode === 'cash' ? 'cash' : 'vat',
-      shootMinutes: String(company.shootMinutes),
-      vatRate: company.vatRate,
-    })),
+    leaveDayCash,
+    companies: leaveDayCash
+      ? []
+      : report.companies.map((company) => ({
+          jobId: company.jobId,
+          companyName: company.companyName,
+          cancelled: company.cancelled === true,
+          hasNews: company.hasNews,
+          newsTotalTry:
+            company.newsTotalKurus === null
+              ? ''
+              : formatTryInput(kurusToTry(company.newsTotalKurus)),
+          chargeMode: company.chargeMode === 'cash' ? 'cash' : 'vat',
+          shootMinutes: String(company.shootMinutes),
+          vatRate: company.vatRate,
+        })),
     note: report.note,
     hotelExpenseTry: formatTryInput(kurusToTry(report.hotelExpenseKurus)),
     stationeryExpenseTry: formatTryInput(kurusToTry(report.stationeryExpenseKurus)),
@@ -110,78 +123,6 @@ function reportToFormValues(report: ReporterDailyReport): DailyReportFormValues 
   }
 }
 
-/**
- * After daily report save: write Excel DK + HABER + KAZANÇ first, then mark
- * Firestore shot and patch SON DURUM=Çekildi (status-only; never wipes money cols).
- *
- * KAZANÇ = same per-company “Toplam gelir” (vatBase + vat / matrah+KDV).
- * Row match: FİRMA ADI + TARİH (TARİH = job acquiredDate, dd.MM.yyyy).
- * Never throws — the report is already saved in Firestore.
- */
-async function syncDailyReportToSheetAndShot(
-  companies: Array<{
-    jobId: string
-    hasNews: boolean
-    shootMinutes: number
-    newsTotalKurus: number | null
-    vatBaseKurus: number
-    vatKurus: number
-  }>,
-  dayJobs: JobDocument[],
-  actor: { uid: string; fullName: string; role: UserRole },
-): Promise<void> {
-  const seen = new Set<string>()
-  for (const company of companies) {
-    const jobId = company.jobId.trim()
-    if (!jobId || seen.has(jobId)) continue
-    seen.add(jobId)
-
-    let job: JobDocument | null | undefined =
-      dayJobs.find((item) => item.id === jobId) ?? null
-    if (!job) {
-      try {
-        job = await getJob(jobId)
-      } catch {
-        job = null
-      }
-    }
-    if (!job) continue
-
-    const sheetFields = buildDailyReportCompanySheetFields(company)
-
-    try {
-      // 1) Money + minutes in one patch (Apps Script v10+ writes KAZANÇ; status-only follows).
-      await patchJobDkHaberInSheet({
-        jobId: job.id,
-        firmaAdi: job.companyName,
-        tarih: formatJobScheduleTr(job.acquiredDate),
-        ...sheetFields,
-      })
-    } catch (error) {
-      toast.warning(
-        mapAppError(
-          error,
-          'Rapor Firestore’a kaydedildi. Excel (Sheets) DK/HABER/KAZANÇ yazılamadı — Excel sekmesinden kontrol edin veya raporu tekrar kaydederek deneyin.',
-        ),
-      )
-    }
-
-    try {
-      const result = await markJobAsShotFromDailyReport(jobId, actor)
-      if (result === 'skipped') continue
-      // 2) Status-only — never clears DK/HABER/KAZANÇ.
-      await patchJobSonDurumInSheet(job.id, SHEET_SON_DURUM.shot, {
-        firmaAdi: job.companyName,
-        tarih: formatJobScheduleTr(job.acquiredDate),
-      })
-    } catch {
-      toast.message(
-        'İş çekildi olarak güncellenemedi (rapor kaydedildi). Sheets DK/HABER/KAZANÇ etkilenmez.',
-      )
-    }
-  }
-}
-
 export function ReporterDailyReportForm({
   report = null,
   onSaved,
@@ -190,6 +131,10 @@ export function ReporterDailyReportForm({
   const { user, profile } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  /** Fee owner may differ from editor (management inbox). */
+  const [shootReporterRate, setShootReporterRate] = useState<number | null>(
+    profile?.shootReporterRate ?? null,
+  )
 
   const [dayJobs, setDayJobs] = useState<JobDocument[]>([])
   const [dayJobsLoading, setDayJobsLoading] = useState(false)
@@ -205,6 +150,7 @@ export function ReporterDailyReportForm({
     resolver: zodResolver(dailyReportSchema),
     defaultValues: {
       reportDate: todayDateOnlyIstanbul(),
+      leaveDayCash: false,
       companies: [emptyCompany()],
       note: '',
       hotelExpenseTry: '',
@@ -216,8 +162,9 @@ export function ReporterDailyReportForm({
     },
   })
 
-  const { fields, append, remove } = useFieldArray({ control, name: 'companies' })
+  const { fields, append, replace } = useFieldArray({ control, name: 'companies' })
   const reportDate = useWatch({ control, name: 'reportDate' }) ?? ''
+  const leaveDayCash = Boolean(useWatch({ control, name: 'leaveDayCash' }))
   const watchedCompanies = useWatch({ control, name: 'companies' }) ?? []
   const hotelExpenseTry = useWatch({ control, name: 'hotelExpenseTry' }) ?? ''
   const stationeryExpenseTry = useWatch({ control, name: 'stationeryExpenseTry' }) ?? ''
@@ -226,11 +173,22 @@ export function ReporterDailyReportForm({
   const extraExpenseTry = useWatch({ control, name: 'extraExpenseTry' }) ?? ''
   const fieldPaidTry = useWatch({ control, name: 'fieldPaidTry' }) ?? ''
 
+  const reporterIdentity =
+    profile?.role === 'reporter'
+      ? {
+          email: user?.email ?? profile.email ?? null,
+          uid: user?.uid ?? profile.uid ?? null,
+        }
+      : null
+  const allowPartialDayCompanies =
+    reporterAllowsPartialDayCompanies(reporterIdentity)
+
   const liveFees = buildDailyReportFees(
     watchedCompanies.map((c) => {
       const vatRate = (c.vatRate ?? 20) as VatRate
       return {
         companyName: c.companyName || '—',
+        cancelled: Boolean(c.cancelled),
         hasNews: Boolean(c.hasNews),
         newsTotalKurus: companyNewsTotalKurus({
           hasNews: Boolean(c.hasNews),
@@ -239,10 +197,12 @@ export function ReporterDailyReportForm({
         shootMinutes: Math.max(0, Math.min(1440, Number(c.shootMinutes) || 0)),
         vatRate,
         chargeMode: c.chargeMode === 'cash' ? 'cash' : 'vat',
+        shootReporterRate,
       }
     }),
   )
 
+  const shootReporterPercent = formatShootReporterRatePercent(shootReporterRate)
   const operatingExpenseKurus =
     parseTryToKurus(hotelExpenseTry) +
     parseTryToKurus(stationeryExpenseTry) +
@@ -253,24 +213,61 @@ export function ReporterDailyReportForm({
     liveFees.totalReporterEarningsKurus + liveFees.totalCameramanEarningsKurus
   const totalExpenseKurus = operatingExpenseKurus + employeeExpenseKurus
   const totalIncomeKurus = liveFees.totalIncomeKurus
-  const fieldPaidKurus = parseTryToKurus(fieldPaidTry)
+  const fieldPaidKurus = resolveFieldPaidKurusForWrite(
+    fieldPaidTry,
+    report?.fieldPaidKurus,
+  )
 
   useEffect(() => {
     if (report) reset(reportToFormValues(report))
   }, [report, reset])
 
   useEffect(() => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
+    const ownerUid = report?.createdByUid ?? profile?.uid ?? null
+    if (!ownerUid) {
+      setShootReporterRate(null)
+      return
+    }
+    if (ownerUid === profile?.uid) {
+      setShootReporterRate(profile.shootReporterRate ?? null)
+      return
+    }
+    let cancelled = false
+    void getUserProfile(ownerUid)
+      .then((owner) => {
+        if (!cancelled) setShootReporterRate(owner?.shootReporterRate ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setShootReporterRate(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [report?.createdByUid, profile?.uid, profile?.shootReporterRate])
+
+  useEffect(() => {
+    if (leaveDayCash || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
       setDayJobs([])
       return
     }
     let cancelled = false
     setDayJobsLoading(true)
+    const visibilityIdentity =
+      profile?.role === 'reporter'
+        ? {
+            email: user?.email ?? profile.email ?? null,
+            uid: user?.uid ?? profile.uid ?? null,
+          }
+        : null
     fetchJobsForReportDate(reportDate, {
       allowDailyReportId: report?.id ?? null,
     })
       .then((jobs) => {
-        if (!cancelled) setDayJobs(jobs)
+        if (!cancelled) {
+          setDayJobs(
+            filterJobsVisibleForReporterEmail(jobs, visibilityIdentity),
+          )
+        }
       })
       .catch((err) => {
         if (cancelled) return
@@ -283,40 +280,103 @@ export function ReporterDailyReportForm({
     return () => {
       cancelled = true
     }
-  }, [reportDate, report?.id])
+  }, [
+    reportDate,
+    report?.id,
+    leaveDayCash,
+    profile?.role,
+    profile?.email,
+    profile?.uid,
+    user?.email,
+    user?.uid,
+  ])
+
+  // New reports: force one row per day job so nothing can be skipped
+  // (except accounts allowed to file a partial day — e.g. test.muhabir).
+  useEffect(() => {
+    if (report || leaveDayCash || dayJobsLoading) return
+    if (allowPartialDayCompanies) return
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) return
+    const previousById = new Map(
+      watchedCompanies
+        .filter((c) => c?.jobId)
+        .map((c) => [c.jobId, c] as const),
+    )
+    replace(dayJobs.map((job) => companyFromJob(job, previousById.get(job.id))))
+    // Intentionally omit watchedCompanies — only re-sync when day job list changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    dayJobs,
+    dayJobsLoading,
+    leaveDayCash,
+    report,
+    reportDate,
+    replace,
+    allowPartialDayCompanies,
+  ])
 
   async function onSubmit(values: DailyReportFormValues) {
     if (!user) return
     setError(null)
     setSuccess(null)
     try {
-      // KAZANÇ sheet write is expected when webhook is configured — block stale Apps Script.
-      if (isSheetsWebhookConfigured()) {
-        await assertSheetsWebhookFresh()
+      const leaveDay = Boolean(values.leaveDayCash)
+      if (!leaveDay) {
+        if (dayJobsLoading) {
+          throw new UserFacingError('Günün işleri yükleniyor. Biraz bekleyip tekrar deneyin.')
+        }
+        if (dayJobs.length === 0) {
+          throw new UserFacingError(
+            'Bu günde raporlanacak iş yok. İzin günü kasası işaretleyin veya rapor tarihini kontrol edin.',
+          )
+        }
+        const selected = new Set(
+          values.companies.map((c) => c.jobId.trim()).filter(Boolean),
+        )
+        if (!allowPartialDayCompanies) {
+          const missing = dayJobs.filter((job) => !selected.has(job.id))
+          if (missing.length > 0) {
+            const names = missing
+              .slice(0, 3)
+              .map((job) => job.companyName)
+              .join(', ')
+            const extra =
+              missing.length > 3 ? ` ve ${missing.length - 3} iş daha` : ''
+            throw new UserFacingError(
+              `Bu günün tüm işlerini seçmelisiniz: ${names}${extra}.`,
+            )
+          }
+        }
       }
 
+      // Firestore is the only source of truth for job status / DK / fees.
+
+      const companiesForFees = leaveDay ? [] : values.companies
       const feeSummary = buildDailyReportFees(
-        values.companies.map((c) => {
+        companiesForFees.map((c) => {
           const vatRate = c.vatRate as VatRate
           return {
             companyName: c.companyName,
+            cancelled: Boolean(c.cancelled),
             hasNews: c.hasNews,
             newsTotalKurus: companyNewsTotalKurus({
               hasNews: c.hasNews,
               newsTotalTry: c.newsTotalTry,
             }),
-            shootMinutes: Number(c.shootMinutes),
+            shootMinutes: Number(c.shootMinutes) || 0,
             vatRate,
             chargeMode: c.chargeMode,
+            shootReporterRate,
           }
         }),
       )
 
       const writeInput = {
         reportDate: values.reportDate,
+        leaveDayCash: leaveDay,
         companies: feeSummary.companies.map((company, index) => ({
           ...company,
-          jobId: values.companies[index]?.jobId.trim() ?? '',
+          jobId: companiesForFees[index]?.jobId.trim() ?? '',
         })),
         note: values.note,
         hotelExpenseKurus: parseTryToKurus(values.hotelExpenseTry),
@@ -324,7 +384,10 @@ export function ReporterDailyReportForm({
         fuelExpenseKurus: parseTryToKurus(values.fuelExpenseTry),
         mealExpenseKurus: parseTryToKurus(values.mealExpenseTry),
         extraExpenseKurus: parseTryToKurus(values.extraExpenseTry),
-        fieldPaidKurus: parseTryToKurus(values.fieldPaidTry),
+        fieldPaidKurus: resolveFieldPaidKurusForWrite(
+          values.fieldPaidTry,
+          report?.fieldPaidKurus,
+        ),
         totalReporterEarningsKurus: feeSummary.totalReporterEarningsKurus,
         totalCameramanEarningsKurus: feeSummary.totalCameramanEarningsKurus,
         totalVatKurus: feeSummary.totalVatKurus,
@@ -343,11 +406,6 @@ export function ReporterDailyReportForm({
           name: profile.fullName,
           role,
         })
-        void syncDailyReportToSheetAndShot(writeInput.companies, dayJobs, {
-          uid: user.uid,
-          fullName: profile.fullName,
-          role,
-        })
       } else {
         if (!profile?.fullName || !profile.email) {
           throw new UserFacingError('Profil bilgileriniz yüklenemedi. Lütfen yeniden giriş yapın.')
@@ -360,17 +418,17 @@ export function ReporterDailyReportForm({
           createdByUid: user.uid,
           createdByNameSnapshot: profile.fullName,
           createdByEmailSnapshot: profile.email,
-        })
-        void syncDailyReportToSheetAndShot(writeInput.companies, dayJobs, {
-          uid: user.uid,
-          fullName: profile.fullName,
-          role: profile.role,
+          actorRole:
+            profile.role === 'coordinator' || profile.role === 'management'
+              ? profile.role
+              : 'reporter',
         })
       }
       setSuccess(report ? 'Günlük rapor güncellendi.' : 'Günlük rapor gönderildi.')
       if (!report) {
         reset({
           reportDate: todayDateOnlyIstanbul(),
+          leaveDayCash: false,
           companies: [emptyCompany()],
           note: '',
           hotelExpenseTry: '',
@@ -399,40 +457,74 @@ export function ReporterDailyReportForm({
           htmlFor="report-date"
           required
           error={errors.reportDate?.message}
-          hint="Yönetim kasasında bu tarihle listelenir."
+          hint={
+            leaveDayCash
+              ? 'İzin günü. İş seçilmez; kasa ve giderler kaydedilir.'
+              : allowPartialDayCompanies
+                ? 'Çekim gününü seçin. İstediğiniz firmaları tek tek ekleyebilirsiniz; günün tüm işlerini doldurmak zorunlu değil.'
+                : 'Çekim gününü seçin. O günün tüm işleri listelenir; her biri için ücret girin veya İptal edildi işaretleyin.'
+          }
         >
           <DateInput
             id="report-date"
             error={Boolean(errors.reportDate)}
             aria-invalid={Boolean(errors.reportDate)}
+            max={todayDateOnlyIstanbul()}
             {...register('reportDate')}
           />
         </FormField>
+        <label className="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] border border-border/80 bg-surface/90 px-3 py-2.5 shadow-[var(--shadow-xs)]">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-brand-cyan"
+            checked={leaveDayCash}
+            onChange={(event) => {
+              const checked = event.target.checked
+              setValue('leaveDayCash', checked, { shouldValidate: true })
+              if (checked) {
+                replace([])
+              } else if ((watchedCompanies?.length ?? 0) === 0) {
+                replace([emptyCompany()])
+              }
+            }}
+          />
+          <span className="text-sm font-medium text-text-primary">
+            İzin günü kasası
+          </span>
+        </label>
+        {leaveDayCash ? (
+          <p className="text-xs text-text-secondary">
+            Firma ve çekim seçilmez. Bu kayıt kasaya gider.
+          </p>
+        ) : null}
       </CategoryPanel>
 
+      {leaveDayCash ? null : (
+      <>
       <div className="space-y-3">
         {fields.map((field, index) => {
           const company = liveFees.companies[index]
           const hasNews = Boolean(watchedCompanies[index]?.hasNews)
+          const isCancelled = Boolean(watchedCompanies[index]?.cancelled)
           const companyError = errors.companies?.[index]
+          const selectedJob = dayJobs.find(
+            (job) => job.id === watchedCompanies[index]?.jobId,
+          )
+          const canCancelJob = selectedJob?.status === 'approved'
 
           return (
             <CategoryPanel
               key={field.id}
               title={`Firma ${index + 1}`}
-              description="Haber, çekim ve KDV bilgileri"
+              description={
+                isCancelled
+                  ? 'İptal — kasa/ücret yok'
+                  : 'Haber, çekim ve KDV bilgileri'
+              }
               icon={Building2}
-              tone="cyan"
+              tone={isCancelled ? 'orange' : 'cyan'}
               compact
             >
-              <div className="flex items-center justify-end">
-                {fields.length > 1 ? (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => remove(index)}>
-                    Kaldır
-                  </Button>
-                ) : null}
-              </div>
-
               <FormField
                 label="Firma"
                 htmlFor={`company-job-${index}`}
@@ -442,8 +534,10 @@ export function ReporterDailyReportForm({
                 }
                 hint={
                   !dayJobsLoading && dayJobs.length === 0
-                    ? 'Bu tarihte seçilebilir konfirme/çekilmiş iş yok (raporu girilmiş işler listelenmez).'
-                    : 'O günün konfirme/çekilmiş işlerinden seçin. Daha önce günlük rapora girilmiş işler görünmez.'
+                    ? 'Bu çekim gününde rapora girilmemiş konfirme/çekilmiş iş yok. Rapor tarihini ilgili güne alın veya izin günü kasası kullanın.'
+                    : allowPartialDayCompanies
+                      ? 'Listeden firma seçin. İsterseniz yalnızca bir firma ile kaydedebilirsiniz.'
+                      : 'Bu günün tüm işleri zorunlu. İptal edilen işler için “İptal edildi” işaretleyin.'
                 }
               >
                 <Controller
@@ -454,16 +548,13 @@ export function ReporterDailyReportForm({
                     const currentInList = dayJobs.some(
                       (job) => job.id === currentJobId,
                     )
-                    const pickedElsewhere = (jobId: string) =>
-                      watchedCompanies.some(
-                        (c, i) => i !== index && c?.jobId === jobId,
-                      )
                     return (
                       <Select
                         id={`company-job-${index}`}
                         value={currentJobId}
                         error={Boolean(companyError?.jobId)}
                         aria-invalid={Boolean(companyError?.jobId)}
+                        disabled={!report && dayJobs.length > 0 && !allowPartialDayCompanies}
                         onChange={(e) => {
                           const jobId = e.target.value
                           f.onChange(jobId)
@@ -473,6 +564,9 @@ export function ReporterDailyReportForm({
                             job?.companyName ?? '',
                             { shouldValidate: true },
                           )
+                          if (job?.status !== 'approved') {
+                            setValue(`companies.${index}.cancelled`, false)
+                          }
                         }}
                         onBlur={f.onBlur}
                       >
@@ -485,12 +579,9 @@ export function ReporterDailyReportForm({
                           </option>
                         ) : null}
                         {dayJobs.map((job) => (
-                          <option
-                            key={job.id}
-                            value={job.id}
-                            disabled={pickedElsewhere(job.id)}
-                          >
+                          <option key={job.id} value={job.id}>
                             {job.companyName}
+                            {job.status === 'shot' ? ' (çekildi)' : ''}
                           </option>
                         ))}
                       </Select>
@@ -499,6 +590,38 @@ export function ReporterDailyReportForm({
                 />
               </FormField>
 
+              {canCancelJob || isCancelled ? (
+                <label className="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] border border-border/80 bg-surface/90 px-3 py-2.5 shadow-[var(--shadow-xs)]">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-brand-cyan"
+                    checked={isCancelled}
+                    disabled={!canCancelJob && !isCancelled}
+                    onChange={(event) => {
+                      const checked = event.target.checked
+                      setValue(`companies.${index}.cancelled`, checked, {
+                        shouldValidate: true,
+                      })
+                      if (checked) {
+                        setValue(`companies.${index}.hasNews`, false)
+                        setValue(`companies.${index}.newsTotalTry`, '')
+                        setValue(`companies.${index}.shootMinutes`, '0')
+                        setValue(`companies.${index}.chargeMode`, 'cash')
+                      }
+                    }}
+                  />
+                  <span className="text-sm font-medium text-text-primary">
+                    İptal edildi
+                  </span>
+                </label>
+              ) : null}
+
+              {isCancelled ? (
+                <p className="rounded-[var(--radius-sm)] border border-warning/40 bg-warning/10 px-3 py-2.5 text-sm text-text-secondary">
+                  Bu iş kasaya girmez; durum “İptal edildi” olur.
+                </p>
+              ) : (
+                <>
               <label className="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-[var(--radius-sm)] border border-border/80 bg-surface/90 px-3 py-2.5 shadow-[var(--shadow-xs)]">
                 <input
                   type="checkbox"
@@ -591,7 +714,7 @@ export function ReporterDailyReportForm({
                   htmlFor={`shoot-minutes-${index}`}
                   required
                   error={companyError?.shootMinutes?.message}
-                  hint="1. dakika kasaya; muhabir %8 / kameraman %2 sonraki dakikalardan"
+                  hint={`1. dakika kasaya; muhabir %${shootReporterPercent} / kameraman %2 sonraki dakikalardan`}
                 >
                   <Input
                     id={`shoot-minutes-${index}`}
@@ -606,7 +729,7 @@ export function ReporterDailyReportForm({
                   valueKurus={shootGrossTotalKurus(company?.shootMinutes ?? 0)}
                 />
                 <MoneyRow
-                  label="Muhabir payı (%8, 1. dk hariç)"
+                  label={`Muhabir payı (%${shootReporterPercent}, 1. dk hariç)`}
                   valueKurus={company?.shootReporterFeeKurus ?? 0}
                 />
                 <MoneyRow
@@ -653,6 +776,8 @@ export function ReporterDailyReportForm({
                   Nakit seçildi — bu firma için KDV yok.
                 </p>
               )}
+                </>
+              )}
             </CategoryPanel>
           )
         })}
@@ -664,10 +789,14 @@ export function ReporterDailyReportForm({
         </p>
       ) : null}
 
-      <Button type="button" variant="secondary" size="sm" onClick={() => append(emptyCompany())}>
-        <Plus className="size-4" aria-hidden="true" />
-        Firma ekle
-      </Button>
+      {report || allowPartialDayCompanies ? (
+        <Button type="button" variant="secondary" size="sm" onClick={() => append(emptyCompany())}>
+          <Plus className="size-4" aria-hidden="true" />
+          Firma ekle
+        </Button>
+      ) : null}
+      </>
+      )}
 
       <CategoryPanel title="Not" icon={NotebookPen} tone="navy" compact>
         <FormField label="Not" htmlFor="daily-note" error={errors.note?.message}>
@@ -789,7 +918,11 @@ export function ReporterDailyReportForm({
           <FormField
             label="Sahaya ödenen tutar (₺)"
             htmlFor="field-paid"
-            hint="Boş bırakılırsa 0 kabul edilir"
+            hint={
+              report
+                ? 'Boş bırakılırsa önceki tutar korunur; sıfırlamak için 0 yazın'
+                : 'Boş bırakılırsa 0 kabul edilir'
+            }
             error={errors.fieldPaidTry?.message}
           >
             <Input

@@ -24,13 +24,14 @@ import {
 } from 'firebase/firestore'
 import { getDb } from '@/lib/firebase/firestore'
 import { getFirebaseAuth } from '@/lib/firebase/auth'
-import { JOB_STATUSES, DEFAULT_LIST_LIMIT, type JobStatus } from '@/config/roles'
+import { COMPANY_TIMEZONE, JOB_STATUSES, isJobReviewerRole, type JobStatus, type UserRole } from '@/config/roles'
 import type { JobDocument } from '@/features/jobs/types/job'
 import {
   getStatsDelta,
   isAllowedTransition,
   normalizeCompanyName,
 } from '@/features/jobs/utils/jobTransitions'
+import { maybeArmThirdShotCelebration } from '@/features/celebration/services/mpuCelebrationService'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { notifyManagement, notifyUser } from '@/features/notifications/services/notificationService'
 import {
@@ -41,8 +42,21 @@ import {
   isJobSchedulePast,
   isValidDateOnly,
   isValidDateTimeLocal,
+  todayDateOnlyIstanbul,
 } from '@/lib/date'
-import type { UserRole } from '@/config/roles'
+import { fromZonedTime } from 'date-fns-tz'
+import { writeActivityLog, writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
+import type { ActivityLogAction } from '@/features/activity-log/types/activityLog'
+import {
+  isJobOnReporterShootingCalendar,
+} from '@/features/jobs/utils/shootingCalendarVisibility'
+import { requireJobDecisionNote } from '@/features/jobs/utils/jobDecisionNote'
+import {
+  JOB_CALL_OUTCOME_LABELS,
+  isManualJobCallOutcome,
+  parseJobCallOutcome,
+  type ManualJobCallOutcome,
+} from '@/features/jobs/utils/jobCallOutcome'
 
 /** Push audience when a job already on the shoot calendar is content-edited. */
 const CALENDAR_JOB_EDIT_PUSH_ROLES: UserRole[] = [
@@ -52,6 +66,24 @@ const CALENDAR_JOB_EDIT_PUSH_ROLES: UserRole[] = [
   'kameraman',
   'sef',
 ]
+
+function logJobActivity(
+  action: Extract<ActivityLogAction, `job.${string}`>,
+  actor: { uid: string; fullName: string; role: UserRole },
+  job: { id: string; companyName: string },
+  options?: { category?: 'job' | 'system'; summary?: string },
+): void {
+  writeActivityLog({
+    actor,
+    category: options?.category ?? 'job',
+    action,
+    summary: options?.summary ?? job.companyName,
+    jobId: job.id,
+    jobCompanyName: job.companyName,
+    entityType: 'job',
+    entityId: job.id,
+  })
+}
 
 function parseStatus(value: unknown): JobStatus {
   if (typeof value === 'string' && (JOB_STATUSES as readonly string[]).includes(value)) {
@@ -135,6 +167,7 @@ export const jobConverter: FirestoreDataConverter<JobDocument> = {
       reviewedByNameSnapshot: data.reviewedByNameSnapshot ?? null,
       reviewedAt: data.reviewedAt ?? null,
       reviewNote: data.reviewNote ?? null,
+      callOutcome: parseJobCallOutcome(data.callOutcome),
       forwardedToReporter: data.forwardedToReporter === true,
       forwardedToReporterByUid:
         data.forwardedToReporterByUid === null ||
@@ -259,6 +292,16 @@ export async function createJob(input: CreateJobInput): Promise<string> {
     pushRoles: ['management', 'coordinator', 'media_planning', 'human_resources', 'sef'],
   })
 
+  logJobActivity(
+    'job.created',
+    {
+      uid: input.createdByUid,
+      fullName: input.createdByNameSnapshot,
+      role: 'media_planning',
+    },
+    { id: jobRef.id, companyName: input.companyName.trim() },
+  )
+
   return jobRef.id
 }
 
@@ -278,6 +321,8 @@ export type UpdatePendingJobInput = {
   acquiredDate: string
   plannedExecutionDate: string
   agreedAmountKurus: number
+  /** Optional hint shown in Kayıtlar (e.g. which field changed). */
+  activitySummary?: string
 }
 
 /**
@@ -320,8 +365,7 @@ export async function updatePendingJob(
     )
   }
 
-  const wasOnShootingCalendar =
-    job.status === 'approved' && job.forwardedToReporter === true
+  const wasOnShootingCalendar = isJobOnReporterShootingCalendar(job)
 
   await updateDoc(ref, {
     companyName: input.companyName.trim(),
@@ -368,9 +412,29 @@ export async function updatePendingJob(
     })
   }
 
+  writeActivityLogForCurrentUser({
+    category: 'job',
+    action: 'job.updated',
+    summary: input.activitySummary?.trim()
+      ? `${fresh.companyName} — ${input.activitySummary.trim()}`
+      : fresh.companyName,
+    jobId: fresh.id,
+    jobCompanyName: fresh.companyName,
+    entityType: 'job',
+    entityId: fresh.id,
+    actorNameFallback: fresh.reviewedByNameSnapshot ?? fresh.createdByNameSnapshot,
+  })
+
   return fresh
 }
 
+/**
+ * Max jobs loaded per status for planner İş Kayıtları.
+ * Separate per-status queries so iptal/red are not dropped from a shared top-N.
+ */
+export const PLANNER_JOBS_PER_STATUS_LIMIT = 100
+
+/** Pending queue for one planner. */
 export function subscribePendingJobs(
   ownerUid: string,
   onData: (jobs: JobDocument[]) => void,
@@ -381,7 +445,7 @@ export function subscribePendingJobs(
     where('createdByUid', '==', ownerUid),
     where('status', '==', 'pending'),
     orderBy('createdAt', 'desc'),
-    limit(DEFAULT_LIST_LIMIT),
+    limit(PLANNER_JOBS_PER_STATUS_LIMIT),
   )
   return onSnapshot(
     q,
@@ -390,7 +454,15 @@ export function subscribePendingJobs(
   )
 }
 
-/** Non-pending jobs owned by a media planner (konfirme / çekildi / iptal / reddedildi). */
+/**
+ * Non-pending jobs owned by a media planner (konfirme / çekildi / iptal / reddedildi).
+ *
+ * Single createdByUid feed (not per-status listeners): a failed/hung cancelled
+ * stream previously left İptal at 0 while shot/approved still rendered.
+ * Planners have far fewer than this limit, so iptal cannot be crowded out.
+ */
+export const PLANNER_JOBS_FEED_LIMIT = 300
+
 export function subscribeApprovedJobs(
   ownerUid: string,
   onData: (jobs: JobDocument[]) => void,
@@ -399,13 +471,23 @@ export function subscribeApprovedJobs(
   const q = query(
     jobsCollection(),
     where('createdByUid', '==', ownerUid),
-    where('status', 'in', ['approved', 'shot', 'cancelled', 'rejected']),
-    orderBy('updatedAt', 'desc'),
-    limit(DEFAULT_LIST_LIMIT),
+    orderBy('createdAt', 'desc'),
+    limit(PLANNER_JOBS_FEED_LIMIT),
   )
   return onSnapshot(
     q,
-    (snap) => onData(snap.docs.map((d) => d.data())),
+    (snap) => {
+      const jobs = snap.docs
+        .map((d) => d.data())
+        .filter(
+          (job) =>
+            job.status === 'approved' ||
+            job.status === 'shot' ||
+            job.status === 'cancelled' ||
+            job.status === 'rejected',
+        )
+      onData(jobs)
+    },
     (err) => onError?.(err),
   )
 }
@@ -422,7 +504,6 @@ function dayEnd(dateOnly: string): Timestamp {
 
 /**
  * Jobs created by a media planner within an inclusive date range (by createdAt).
- * Uses existing status-scoped indexes (avoids waiting on createdByUid+createdAt composite).
  */
 export async function fetchPlannerJobsInRange(params: {
   ownerUid: string
@@ -436,34 +517,17 @@ export async function fetchPlannerJobsInRange(params: {
     const startMs = dayStart(expanded.startDate).toMillis()
     const endMs = dayEnd(expanded.endDate).toMillis()
 
-    const [pendingSnap, nonPendingSnap] = await Promise.all([
-      getDocs(
-        query(
-          jobsCollection(),
-          where('createdByUid', '==', params.ownerUid),
-          where('status', '==', 'pending'),
-          orderBy('createdAt', 'desc'),
-          limit(100),
-        ),
+    const snap = await getDocs(
+      query(
+        jobsCollection(),
+        where('createdByUid', '==', params.ownerUid),
+        orderBy('createdAt', 'desc'),
+        limit(PLANNER_JOBS_FEED_LIMIT),
       ),
-      getDocs(
-        query(
-          jobsCollection(),
-          where('createdByUid', '==', params.ownerUid),
-          where('status', 'in', ['approved', 'shot', 'cancelled', 'rejected']),
-          orderBy('updatedAt', 'desc'),
-          limit(100),
-        ),
-      ),
-    ])
+    )
 
-    const byId = new Map<string, JobDocument>()
-    for (const docSnap of [...pendingSnap.docs, ...nonPendingSnap.docs]) {
-      const job = docSnap.data()
-      byId.set(job.id, job)
-    }
-
-    return [...byId.values()]
+    return snap.docs
+      .map((d) => d.data())
       .filter((job) => {
         const created = job.createdAt?.toDate?.()
         if (!created) return false
@@ -601,6 +665,7 @@ async function transitionJob(
       delta: { jobsReceived: number; jobsShot: number; jobsCancelled: number }
     } | null
   } = { value: null }
+  let celebrationOwnerUid: string | null = null
 
   await runTransaction(getDb(), async (tx) => {
     const ref = jobDocRef(jobId)
@@ -640,6 +705,10 @@ async function transitionJob(
     const nextVersion = job.statusVersion + 1
     const ownerRef = doc(getDb(), 'users', job.createdByUid)
 
+    if (toStatus === 'shot' && delta.jobsShot === 1) {
+      celebrationOwnerUid = String(job.createdByUid ?? '') || null
+    }
+
     // Rules compare reviewedByNameSnapshot / actorNameSnapshot to
     // callerProfile().fullName. Always prefer the live users/{actor} name
     // (reporters may read themselves; owner path reads the job owner = self).
@@ -663,18 +732,31 @@ async function transitionJob(
     }
 
     const revertingToPending = toStatus === 'pending'
+    /** Çekim / muhabir iptali konfirme inceleyenini ezmesin. */
+    const preserveReviewer =
+      toStatus === 'shot' ||
+      (toStatus === 'cancelled' && !isJobReviewerRole(actor.role))
 
     tx.update(ref, {
       status: toStatus,
       statusVersion: nextVersion,
       updatedAt: serverTimestamp(),
-      reviewedByUid: revertingToPending ? null : actor.uid,
-      reviewedByNameSnapshot: revertingToPending ? null : actorName,
-      reviewedAt: revertingToPending ? null : serverTimestamp(),
-      reviewNote: revertingToPending ? null : reviewNote,
+      ...(preserveReviewer
+        ? {}
+        : {
+            reviewedByUid: revertingToPending ? null : actor.uid,
+            reviewedByNameSnapshot: revertingToPending ? null : actorName,
+            reviewedAt: revertingToPending ? null : serverTimestamp(),
+          }),
+      ...(toStatus === 'shot'
+        ? {}
+        : {
+            reviewNote: revertingToPending ? null : reviewNote,
+          }),
       ...(nextPlannedExecutionDate
         ? { plannedExecutionDate: nextPlannedExecutionDate }
         : {}),
+      ...(toStatus === 'approved' ? { callOutcome: 'reached' } : {}),
       ...(revertingToPending
         ? {
             forwardedToReporter: false,
@@ -720,6 +802,10 @@ async function transitionJob(
       // Best-effort: job is already shot; stats drift is preferable to blocking.
     }
   }
+
+  if (celebrationOwnerUid) {
+    void maybeArmThirdShotCelebration(celebrationOwnerUid)
+  }
 }
 
 const REVIEWER_ROLES: UserRole[] = ['coordinator', 'management', 'sef']
@@ -732,6 +818,84 @@ async function requireFreshJob(jobId: string): Promise<JobDocument> {
   return fresh
 }
 
+const CALL_OUTCOME_PUSH_ROLES: UserRole[] = [
+  'management',
+  'coordinator',
+  'sef',
+]
+
+/**
+ * Pending job: Meşgul / Ulaşılamıyor / Cevapsız.
+ * Notifies şef, koordinatör, yönetim (push + yönetim inbox) and the MPU owner.
+ */
+export async function updateJobCallOutcome(
+  jobId: string,
+  actor: { uid: string; fullName: string; role: UserRole },
+  outcome: ManualJobCallOutcome,
+): Promise<JobDocument> {
+  if (!REVIEWER_ROLES.includes(actor.role)) {
+    throw new UserFacingError('Bu işlem için yetkiniz bulunmuyor.')
+  }
+  if (!isManualJobCallOutcome(outcome)) {
+    throw new UserFacingError('Geçersiz arama durumu.')
+  }
+
+  const fresh = await requireFreshJob(jobId)
+  if (fresh.status !== 'pending') {
+    throw new UserFacingError('Arama durumu yalnızca konfirme bekleyen işlerde güncellenir.')
+  }
+  if (fresh.callOutcome === outcome) {
+    return fresh
+  }
+
+  try {
+    await updateDoc(jobDocRef(jobId), {
+      callOutcome: outcome,
+      updatedAt: serverTimestamp(),
+    })
+  } catch (error) {
+    throw new UserFacingError(
+      mapAppError(error, 'Arama durumu güncellenemedi. Lütfen tekrar deneyin.'),
+    )
+  }
+
+  const updated = await requireFreshJob(jobId)
+  const label = JOB_CALL_OUTCOME_LABELS[outcome]
+  const company = updated.companyName || 'İş'
+  const title = `Arama: ${label}`
+  const body = `${company} — ${actor.fullName}`
+
+  try {
+    void notifyManagement({
+      type: 'job_call_status',
+      title,
+      body,
+      link: '/management',
+      createdByUid: actor.uid,
+      createdByNameSnapshot: actor.fullName,
+      pushRoles: CALL_OUTCOME_PUSH_ROLES,
+    })
+    void notifyUser({
+      recipientUid: updated.createdByUid,
+      type: 'job_call_status',
+      title,
+      body,
+      link: '/media-planning',
+      createdByUid: actor.uid,
+      createdByNameSnapshot: actor.fullName,
+    })
+  } catch {
+    /* notify is best-effort */
+  }
+
+  logJobActivity('job.updated', actor, {
+    id: updated.id,
+    companyName: updated.companyName,
+  }, { summary: `${updated.companyName} · arama ${label}` })
+
+  return updated
+}
+
 export async function approveJob(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
@@ -742,6 +906,13 @@ export async function approveJob(
     allowedRoles: REVIEWER_ROLES,
     plannedExecutionDate,
   })
+
+  // Separate write (rules budget): stamp forward so çekim takvimi + audit align.
+  try {
+    await stampForwardedToReporter(jobId, actor)
+  } catch {
+    /* Calendar visibility is status-based; stamp is best-effort audit. */
+  }
 
   const fresh = await requireFreshJob(jobId)
 
@@ -762,6 +933,11 @@ export async function approveJob(
     /* notify is best-effort */
   }
 
+  logJobActivity('job.approved', actor, {
+    id: fresh.id,
+    companyName: fresh.companyName,
+  })
+
   return fresh
 }
 
@@ -769,18 +945,25 @@ export async function rejectJob(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
   reviewNote?: string,
+  options?: { activityCategory?: 'job' | 'system' },
 ): Promise<JobDocument> {
-  await transitionJob(jobId, 'rejected', actor, reviewNote ?? null, {
+  const note = requireJobDecisionNote(reviewNote, actor.role, 'reject')
+  // Idempotent: concurrent double-submit / retry after success.
+  const current = await getJob(jobId)
+  if (current?.status === 'rejected') {
+    return current
+  }
+  await transitionJob(jobId, 'rejected', actor, note || null, {
     allowedRoles: REVIEWER_ROLES,
   })
 
   const fresh = await requireFreshJob(jobId)
+  const system = options?.activityCategory === 'system'
 
   try {
     const company = fresh.companyName || 'İş'
     const ownerUid = fresh.createdByUid
     if (ownerUid) {
-      const note = reviewNote?.trim() ?? ''
       void notifyUser({
         recipientUid: ownerUid,
         type: 'job_rejected',
@@ -795,6 +978,19 @@ export async function rejectJob(
     /* notify is best-effort */
   }
 
+  logJobActivity(
+    system ? 'job.auto_rejected' : 'job.rejected',
+    actor,
+    {
+      id: fresh.id,
+      companyName: fresh.companyName,
+    },
+    {
+      category: system ? 'system' : 'job',
+      summary: note ? `${fresh.companyName} — ${note}` : fresh.companyName,
+    },
+  )
+
   return fresh
 }
 
@@ -807,7 +1003,12 @@ export async function revertJobToPending(
   await transitionJob(jobId, 'pending', actor, note ?? null, {
     allowedRoles: REVIEWER_ROLES,
   })
-  return requireFreshJob(jobId)
+  const fresh = await requireFreshJob(jobId)
+  logJobActivity('job.reverted', actor, {
+    id: fresh.id,
+    companyName: fresh.companyName,
+  })
+  return fresh
 }
 
 export async function markJobAsShot(
@@ -819,7 +1020,12 @@ export async function markJobAsShot(
   })
 
   void notifyJobOwnerShot(jobId, actor)
-  return requireFreshJob(jobId)
+  const fresh = await requireFreshJob(jobId)
+  logJobActivity('job.shot', actor, {
+    id: fresh.id,
+    companyName: fresh.companyName,
+  })
+  return fresh
 }
 
 const DAILY_REPORT_SHOT_ROLES: UserRole[] = [
@@ -829,6 +1035,12 @@ const DAILY_REPORT_SHOT_ROLES: UserRole[] = [
 ]
 
 export type DailyReportShotResult = 'marked' | 'already_shot' | 'skipped'
+export type DailyReportCancelResult =
+  | 'marked'
+  | 'already_cancelled'
+  | 'skipped'
+
+export const DAILY_REPORT_CANCEL_NOTE = 'Günlük rapordan iptal'
 
 /**
  * When a daily report links a job, mark it çekildi (`shot`).
@@ -856,11 +1068,51 @@ export async function markJobAsShotFromDailyReport(
       deferOwnerStats: actor.role === 'reporter',
     })
     void notifyJobOwnerShot(jobId, actor, job)
+    logJobActivity('job.shot', actor, {
+      id: job.id,
+      companyName: job.companyName,
+    })
     return 'marked'
   } catch (error) {
     // Race: another writer moved status between get and transition.
     const fresh = await getJob(jobId)
     if (fresh?.status === 'shot') return 'already_shot'
+    throw error
+  }
+}
+
+/**
+ * Daily report “İptal edildi”: approved → cancelled (no kasa).
+ * Idempotent when already cancelled.
+ */
+export async function markJobAsCancelledFromDailyReport(
+  jobId: string,
+  actor: { uid: string; fullName: string; role: UserRole },
+): Promise<DailyReportCancelResult> {
+  if (!DAILY_REPORT_SHOT_ROLES.includes(actor.role)) {
+    throw new UserFacingError('Bu işlem için yetkiniz bulunmuyor.')
+  }
+
+  const job = await getJob(jobId)
+  if (!job) return 'skipped'
+  if (job.status === 'cancelled') return 'already_cancelled'
+  if (job.status !== 'approved') return 'skipped'
+
+  try {
+    await transitionJob(jobId, 'cancelled', actor, DAILY_REPORT_CANCEL_NOTE, {
+      allowedRoles: DAILY_REPORT_SHOT_ROLES,
+      deferOwnerStats: actor.role === 'reporter',
+    })
+    logJobActivity(
+      'job.cancelled',
+      actor,
+      { id: job.id, companyName: job.companyName },
+      { summary: `${job.companyName} — ${DAILY_REPORT_CANCEL_NOTE}` },
+    )
+    return 'marked'
+  } catch (error) {
+    const fresh = await getJob(jobId)
+    if (fresh?.status === 'cancelled') return 'already_cancelled'
     throw error
   }
 }
@@ -899,11 +1151,9 @@ export async function cancelJob(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
   reviewNote?: string,
+  options?: { activityCategory?: 'job' | 'system' },
 ): Promise<JobDocument> {
-  const note = reviewNote?.trim() ?? ''
-  if (note.length < 3) {
-    throw new UserFacingError('İptal için en az 3 karakterlik bir neden girin.')
-  }
+  const note = requireJobDecisionNote(reviewNote, actor.role, 'cancel')
   // Idempotent: concurrent double-submit / retry after success.
   const current = await getJob(jobId)
   if (current?.status === 'cancelled') {
@@ -912,7 +1162,18 @@ export async function cancelJob(
   await transitionJob(jobId, 'cancelled', actor, note, {
     allowedRoles: REVIEWER_ROLES,
   })
-  return requireFreshJob(jobId)
+  const fresh = await requireFreshJob(jobId)
+  const system = options?.activityCategory === 'system'
+  logJobActivity(
+    system ? 'job.auto_cancelled' : 'job.cancelled',
+    actor,
+    { id: fresh.id, companyName: fresh.companyName },
+    {
+      category: system ? 'system' : 'job',
+      summary: note ? `${fresh.companyName} — ${note}` : fresh.companyName,
+    },
+  )
+  return fresh
 }
 
 /**
@@ -929,6 +1190,13 @@ export async function confirmOwnJobAsShot(
     allowedRoles: ['media_planning'],
     requireOwnerUid: actor.uid,
   })
+  const shotJob = await getJob(jobId)
+  if (shotJob) {
+    logJobActivity('job.shot', actor, {
+      id: shotJob.id,
+      companyName: shotJob.companyName,
+    })
+  }
 }
 
 /**
@@ -947,35 +1215,40 @@ export async function cancelOwnJob(
     throw new UserFacingError('İptal için en az 3 karakterlik bir neden girin.')
   }
   const current = await getJob(jobId)
-  if (current?.status === 'cancelled') {
+  if (!current || current.status === 'cancelled') {
     return
   }
   await transitionJob(jobId, 'cancelled', actor, note, {
     allowedRoles: ['media_planning'],
     requireOwnerUid: actor.uid,
   })
+  logJobActivity(
+    'job.cancelled',
+    actor,
+    {
+      id: current.id,
+      companyName: current.companyName,
+    },
+    { summary: `${current.companyName} — ${note}` },
+  )
 }
 
-/** Yönetim/koordinatör: konfirme işi muhabir çekim takvimine iletir. */
-export async function forwardJobToReporter(
+/**
+ * Idempotent audit stamp used right after konfirme.
+ * Kept as a separate update so pending→approved rules stay within budget.
+ */
+async function stampForwardedToReporter(
   jobId: string,
   actor: { uid: string; fullName: string; role: UserRole },
-): Promise<JobDocument> {
-  if (!REVIEWER_ROLES.includes(actor.role)) {
-    throw new UserFacingError('Bu işlem yalnızca yönetim veya koordinatör içindir.')
-  }
+): Promise<void> {
+  if (!REVIEWER_ROLES.includes(actor.role)) return
 
   await runTransaction(getDb(), async (tx) => {
     const ref = jobDocRef(jobId)
     const snap = await tx.get(ref)
-    if (!snap.exists()) throw new UserFacingError('İş kaydı bulunamadı.')
+    if (!snap.exists()) return
     const job = snap.data()
-    if (job.status !== 'approved') {
-      throw new UserFacingError('Yalnızca konfirme işler muhabire iletilebilir.')
-    }
-    if (job.forwardedToReporter) {
-      throw new UserFacingError('Bu iş zaten muhabire iletilmiş.')
-    }
+    if (job.status !== 'approved' || job.forwardedToReporter === true) return
 
     tx.update(ref, {
       forwardedToReporter: true,
@@ -985,23 +1258,23 @@ export async function forwardJobToReporter(
       updatedAt: serverTimestamp(),
     })
   })
-
-  const fresh = await getJob(jobId)
-  if (!fresh) {
-    throw new UserFacingError('İş muhabire iletildi ancak yeniden okunamadı.')
-  }
-  return fresh
 }
 
-/** Muhabir çekim takvimi: yalnızca iletilmiş konfirme işler. */
+/**
+ * Muhabir / kameraman çekim takvimi: konfirme + çekilmiş işler.
+ * Çekildi (`shot`) olduktan sonra da gün/saat satırı kalır.
+ * Konfirme edildiği anda takvimde görünür.
+ */
+export const REPORTER_CALENDAR_STATUSES = ['approved', 'shot'] as const
+
+/** Directory feed for other-day chips + first-load jump (recently updated). */
 export function subscribeApprovedOpenJobs(
   onData: (jobs: JobDocument[]) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe {
   const q = query(
     jobsCollection(),
-    where('status', '==', 'approved'),
-    where('forwardedToReporter', '==', true),
+    where('status', 'in', [...REPORTER_CALENDAR_STATUSES]),
     orderBy('updatedAt', 'desc'),
     limit(100),
   )
@@ -1143,8 +1416,7 @@ export function subscribeJobsForCalendarDay(
     scope === 'reporter'
       ? query(
           jobsCollection(),
-          where('status', '==', 'approved'),
-          where('forwardedToReporter', '==', true),
+          where('status', 'in', [...REPORTER_CALENDAR_STATUSES]),
           where('plannedExecutionDate', '>=', day),
           where('plannedExecutionDate', '<', dayEnd),
           orderBy('plannedExecutionDate', 'asc'),
@@ -1161,11 +1433,13 @@ export function subscribeJobsForCalendarDay(
 
   return onSnapshot(
     q,
-    (snap) =>
-      onData(snap.docs.map((d) => d.data()), {
+    (snap) => {
+      const jobs = snap.docs.map((d) => d.data())
+      onData(scope === 'reporter' ? jobs.filter((job) => isJobOnReporterShootingCalendar(job)) : jobs, {
         truncated: snap.docs.length >= SCHEDULE_JOBS_FETCH_LIMIT,
         fetchLimit: SCHEDULE_JOBS_FETCH_LIMIT,
-      }),
+      })
+    },
     (err) => onError?.(err),
   )
 }
@@ -1194,30 +1468,40 @@ export function subscribeScheduleJobs(
 
 /**
  * One-shot list for the daily reporter report dropdown: approved/shot jobs
- * whose planned execution day equals the report date (`yyyy-MM-dd`).
+ * whose planned execution day equals the report date (`yyyy-MM-dd`), including
+ * past days (backfill) when no daily report was filed yet.
  * Excludes jobs already claimed by another daily report (`dailyReportId`).
  * When editing, pass `allowDailyReportId` so that report's own companies stay selectable.
- * Reuses the existing status+updatedAt index (same as subscribeScheduleJobs);
- * day filtering happens client-side.
+ *
+ * Queries by planned day range (same pattern as subscribeJobsForCalendarDay) so
+ * older finished jobs are not lost in the recent-updatedAt window.
  */
 export async function fetchJobsForReportDate(
   reportDate: string,
   options?: { allowDailyReportId?: string | null },
 ): Promise<JobDocument[]> {
   const allowId = options?.allowDailyReportId?.trim() || null
+  if (!isValidDateOnly(reportDate)) {
+    return []
+  }
   try {
+    const dayEnd = nextDateOnly(reportDate)
     const snap = await getDocs(
       query(
         jobsCollection(),
         where('status', 'in', ['approved', 'shot']),
-        orderBy('updatedAt', 'desc'),
-        limit(500),
+        where('plannedExecutionDate', '>=', reportDate),
+        where('plannedExecutionDate', '<', dayEnd),
+        orderBy('plannedExecutionDate', 'asc'),
+        limit(SCHEDULE_JOBS_FETCH_LIMIT),
       ),
     )
     return snap.docs
       .map((d) => d.data())
       .filter((job) => {
-        if (job.plannedExecutionDate.slice(0, 10) !== reportDate) return false
+        // Range query covers date-only + datetime-local values; keep day equality defensive.
+        if (jobPlannedDay(job) !== reportDate) return false
+        if (!isJobOnReporterShootingCalendar(job)) return false
         if (!job.dailyReportId) return true
         return allowId != null && job.dailyReportId === allowId
       })
@@ -1227,7 +1511,58 @@ export async function fetchJobsForReportDate(
   }
 }
 
-/** First / next page of approved / shot / cancelled jobs (reviewed queue). */
+/**
+ * Jobs confirmed today (`status === approved` and `reviewedAt` within today).
+ * Planned shoot day is ignored — yesterday's confirmations for today's shoot
+ * do not appear here.
+ */
+export async function fetchTodayConfirmedApprovedJobsPage(
+  after: JobQueueCursor | null = null,
+  pageSize = JOB_QUEUE_PAGE_SIZE,
+  today: string = todayDateOnlyIstanbul(),
+): Promise<JobQueuePage> {
+  if (!isValidDateOnly(today)) {
+    return { jobs: [], cursor: null, hasMore: false }
+  }
+  const start = Timestamp.fromDate(
+    fromZonedTime(`${today}T00:00:00`, COMPANY_TIMEZONE),
+  )
+  const end = Timestamp.fromDate(
+    fromZonedTime(`${nextDateOnly(today)}T00:00:00`, COMPANY_TIMEZONE),
+  )
+  try {
+    return await fetchJobQueuePage(
+      (pageLimit, cursor) =>
+        cursor
+          ? query(
+              jobsCollection(),
+              where('status', '==', 'approved'),
+              where('reviewedAt', '>=', start),
+              where('reviewedAt', '<', end),
+              orderBy('reviewedAt', 'desc'),
+              startAfter(cursor),
+              limit(pageLimit),
+            )
+          : query(
+              jobsCollection(),
+              where('status', '==', 'approved'),
+              where('reviewedAt', '>=', start),
+              where('reviewedAt', '<', end),
+              orderBy('reviewedAt', 'desc'),
+              limit(pageLimit),
+            ),
+      after,
+      pageSize,
+    )
+  } catch (error) {
+    throw new UserFacingError(mapAppError(error, 'Konfirme işler yüklenemedi.'))
+  }
+}
+
+/**
+ * First / next page of all konfirme (`approved`) jobs (any confirmation day).
+ * Used by Çekim Durumu / overdue.
+ */
 export async function fetchAllApprovedJobsPage(
   after: JobQueueCursor | null = null,
   pageSize = JOB_QUEUE_PAGE_SIZE,
@@ -1238,14 +1573,14 @@ export async function fetchAllApprovedJobsPage(
         cursor
           ? query(
               jobsCollection(),
-              where('status', 'in', ['approved', 'shot', 'cancelled']),
+              where('status', '==', 'approved'),
               orderBy('updatedAt', 'desc'),
               startAfter(cursor),
               limit(pageLimit),
             )
           : query(
               jobsCollection(),
-              where('status', 'in', ['approved', 'shot', 'cancelled']),
+              where('status', '==', 'approved'),
               orderBy('updatedAt', 'desc'),
               limit(pageLimit),
             ),
@@ -1264,7 +1599,7 @@ export function subscribeAllApprovedJobs(
 ): Unsubscribe {
   const q = query(
     jobsCollection(),
-    where('status', 'in', ['approved', 'shot', 'cancelled']),
+    where('status', '==', 'approved'),
     orderBy('updatedAt', 'desc'),
     limit(JOB_QUEUE_PAGE_SIZE),
   )
@@ -1275,7 +1610,7 @@ export function subscribeAllApprovedJobs(
   )
 }
 
-/** First / next page of rejected jobs. */
+/** First / next page of rejected jobs (newest decision first). */
 export async function fetchRecentlyRejectedJobsPage(
   after: JobQueueCursor | null = null,
   pageSize = JOB_QUEUE_PAGE_SIZE,
@@ -1287,14 +1622,14 @@ export async function fetchRecentlyRejectedJobsPage(
           ? query(
               jobsCollection(),
               where('status', '==', 'rejected'),
-              orderBy('updatedAt', 'desc'),
+              orderBy('reviewedAt', 'desc'),
               startAfter(cursor),
               limit(pageLimit),
             )
           : query(
               jobsCollection(),
               where('status', '==', 'rejected'),
-              orderBy('updatedAt', 'desc'),
+              orderBy('reviewedAt', 'desc'),
               limit(pageLimit),
             ),
       after,
@@ -1313,7 +1648,7 @@ export function subscribeRecentlyRejectedJobs(
   const q = query(
     jobsCollection(),
     where('status', '==', 'rejected'),
-    orderBy('updatedAt', 'desc'),
+    orderBy('reviewedAt', 'desc'),
     limit(JOB_QUEUE_PAGE_SIZE),
   )
   return onSnapshot(

@@ -11,13 +11,7 @@ import { ShiftTrackerCard } from '@/features/media-planning/components/ShiftTrac
 import { cn } from '@/lib/classNames'
 import { Search } from 'lucide-react'
 
-export type AttendanceLogsDashboardProps = {
-  startNumber?: number
-}
-
-export function AttendanceLogsDashboard({
-  startNumber = 1,
-}: AttendanceLogsDashboardProps) {
+export function AttendanceLogsDashboard() {
   const [workers, setWorkers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -47,14 +41,10 @@ export function AttendanceLogsDashboard({
   }, [workers, search])
 
   const selected = workers.find((u) => u.uid === selectedUid) ?? null
-  const sectionA = String(startNumber).padStart(2, '0')
-  const sectionB = String(startNumber + 1).padStart(2, '0')
-  const sectionC = String(startNumber + 2).padStart(2, '0')
 
   return (
     <div className="space-y-8">
       <AccordionSection
-        number={sectionA}
         title="Mesai Personeli"
         description="Medya planlama ve insan kaynakları çalışanlarını seçin."
         defaultOpen
@@ -133,7 +123,6 @@ export function AttendanceLogsDashboard({
       {selected ? (
         <>
           <AccordionSection
-            number={sectionB}
             title="Aktif Mesai Durumu"
             description={`${selected.fullName} — canlı mesai durumu.`}
           >
@@ -141,7 +130,6 @@ export function AttendanceLogsDashboard({
           </AccordionSection>
 
           <AccordionSection
-            number={sectionC}
             title="Mesai Geçmişi"
             description={`${selected.fullName} kullanıcısının tamamlanmış mesai kayıtları (başlangıç / bitiş).`}
           >

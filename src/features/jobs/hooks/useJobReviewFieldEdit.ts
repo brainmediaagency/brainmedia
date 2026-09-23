@@ -10,7 +10,7 @@ import {
 } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
 import { normalizeTurkishPhone } from '@/lib/phone'
-import { toTitleCaseTr } from '@/lib/text'
+import { activitySummaryForJobField } from '@/features/jobs/utils/jobActivitySummary'
 
 export type JobReviewEditField =
   | `contactName:${number}`
@@ -79,7 +79,7 @@ function validateAndBuildPayload(
 
   if (field.startsWith('contactName:')) {
     const index = Number(field.split(':')[1])
-    const name = toTitleCaseTr(String(draft).trim())
+    const name = String(draft).trim()
     if (name.length < 2) {
       throw new Error('USER_Yetkili adı en az 2 karakter olmalıdır.')
     }
@@ -120,7 +120,7 @@ function validateAndBuildPayload(
   }
 
   if (field === 'fullAddress') {
-    const fullAddress = toTitleCaseTr(String(draft).trim())
+    const fullAddress = String(draft).trim()
     if (fullAddress.length < 10) {
       throw new Error('USER_Adres en az 10 karakter olmalıdır.')
     }
@@ -211,7 +211,10 @@ export function useJobReviewFieldEdit(
     setError(null)
     try {
       const payload = validateAndBuildPayload(job, editingField, draft)
-      const updated = await updatePendingJob(payload)
+      const updated = await updatePendingJob({
+        ...payload,
+        activitySummary: activitySummaryForJobField(editingField),
+      })
       onUpdated?.(updated)
       toast.success('İş kaydı güncellendi.')
       setEditingField(null)

@@ -66,7 +66,6 @@ export function ReporterMyReports() {
   return (
     <>
       <AccordionSection
-        number="03"
         title="Gönderdiğim Raporlar"
         description="Günlük raporlarınızı görüntüleyin, düzenleyin veya silin."
       >

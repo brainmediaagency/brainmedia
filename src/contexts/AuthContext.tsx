@@ -21,6 +21,7 @@ import {
 import { useIdleSessionTimeout } from '@/features/auth/hooks/useIdleSessionTimeout'
 import type { AuthClaims, UserProfile } from '@/features/users/types/user'
 import { subscribeUserProfile } from '@/features/users/services/userService'
+import { clearMpuCelebrationSessionDismiss } from '@/features/celebration/utils/mpuCelebrationSession'
 import { getFirebaseAuth } from '@/lib/firebase/auth'
 import { logoutOneSignal } from '@/lib/onesignal'
 import { UserFacingError } from '@/lib/errors'
@@ -173,10 +174,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   )
 
   const logout = useCallback(async () => {
+    const uid = user?.uid
     await logoutOneSignal()
     await authLogout()
+    if (uid) clearMpuCelebrationSessionDismiss(uid)
     applySession(null)
-  }, [applySession])
+  }, [applySession, user?.uid])
 
   const handleIdleTimeout = useCallback(async () => {
     toast.info('Oturumunuz hareketsizlik nedeniyle sonlandırıldı.')

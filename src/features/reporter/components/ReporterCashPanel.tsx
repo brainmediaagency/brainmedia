@@ -1,80 +1,58 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
+import { MetricCard } from '@/components/ui/MetricCard'
 import { Skeleton } from '@/components/ui/Skeleton'
 import {
-  subscribeCompanyCashBalance,
-  type CompanyCashSnapshot,
-} from '@/features/cash/services/companyCashService'
+  emptyReportCashTotals,
+  subscribeReportCashGroups,
+} from '@/features/cash/services/cashService'
+import {
+  CASH_METRIC_VISUAL,
+  cashBalanceFooter,
+  cashBalanceVisual,
+} from '@/features/cash/config/cashMetricVisuals'
+import type { ReportCashTotals } from '@/features/cash/types/cash'
+import { useAuth } from '@/features/auth/hooks/useAuth'
 import { formatTryFromKurus } from '@/lib/currency'
 import { mapAppError } from '@/lib/errors'
 
-function SummaryCard({
-  label,
-  valueKurus,
-  hint,
-  tone,
-}: {
-  label: string
-  valueKurus: number
-  hint: string
-  tone: 'income' | 'expense' | 'field' | 'cash'
-}) {
-  const toneClass =
-    tone === 'income'
-      ? 'border-success/30 bg-success/5'
-      : tone === 'expense'
-        ? 'border-danger/30 bg-danger/5'
-        : tone === 'field'
-          ? 'border-warning/30 bg-warning/5'
-          : 'border-brand-blue/30 bg-brand-blue/5'
-
-  return (
-    <div className={`rounded-[var(--radius-md)] border p-4 ${toneClass}`}>
-      <p className="text-sm text-text-secondary">{label}</p>
-      <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-text-primary">
-        {formatTryFromKurus(valueKurus)}
-      </p>
-      <p className="mt-1 text-xs text-text-secondary">{hint}</p>
-    </div>
-  )
-}
-
 /**
- * Yalnızca muhabir + yönetim/koordinatör (muhabir paneli): şirket kasa özeti.
- * Aynı 4 kalem; rapor listesi yok. İK / kameraman / MPU bu sekmeyi görmez.
+ * Muhabir paneli: yalnızca giriş yapan muhabirin kendi kasası.
+ * Yönetim/koordinatör Muhabir → Kasa için `ManagementCashTab` kullanılır
+ * (Merve / Beste / Toplam); bu panel muhabir rolüne özeldir.
  */
 export function ReporterCashPanel() {
-  const [snapshot, setSnapshot] = useState<CompanyCashSnapshot | null | undefined>(
-    undefined,
-  )
+  const { profile } = useAuth()
+  const [totals, setTotals] = useState<ReportCashTotals | undefined>(undefined)
 
   useEffect(() => {
-    return subscribeCompanyCashBalance(
-      (next) => setSnapshot(next),
+    // Defense-in-depth: never subscribe without a reporter uid filter.
+    if (profile?.role !== 'reporter') {
+      setTotals(emptyReportCashTotals())
+      return
+    }
+    const uid = profile?.uid?.trim()
+    if (!uid) {
+      setTotals(emptyReportCashTotals())
+      return
+    }
+    return subscribeReportCashGroups(
+      (_groups, nextTotals) => setTotals(nextTotals),
       (error) => {
         toast.error(mapAppError(error, 'Kasa bakiyesi yüklenemedi.'))
-        setSnapshot(null)
+        setTotals(emptyReportCashTotals())
       },
+      { createdByUid: uid },
     )
-  }, [])
+  }, [profile?.role, profile?.uid])
 
-  const loading = snapshot === undefined
-  const totals = snapshot ?? {
-    cashBalanceKurus: 0,
-    totalFieldPaidKurus: 0,
-    totalExpenseKurus: 0,
-    totalIncomeKurus: 0,
-    reportCount: 0,
-  }
+  const loading = totals === undefined
+  const safe = totals ?? emptyReportCashTotals()
+  const cashBalanceKurus = safe.totalFieldPaidKurus - safe.totalExpenseKurus
 
   return (
-    <AccordionSection
-      number="01"
-      title="Kasa"
-      description="Günlük raporlardan gider, sahaya ödenen ve kasa bakiyesi."
-      defaultOpen
-    >
+    <AccordionSection title="Kasa" defaultOpen>
       {loading ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <Skeleton className="h-28 w-full" />
@@ -83,23 +61,23 @@ export function ReporterCashPanel() {
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <SummaryCard
+          <MetricCard
             label="Toplam gider"
-            valueKurus={totals.totalExpenseKurus}
-            hint="Saha giderleri + ücretler (KDV hariç)"
-            tone="expense"
+            valueText={formatTryFromKurus(safe.totalExpenseKurus)}
+            {...CASH_METRIC_VISUAL.expense}
+            footer="Saha giderleri + ücretler"
           />
-          <SummaryCard
+          <MetricCard
             label="Sahaya ödenen"
-            valueKurus={totals.totalFieldPaidKurus}
-            hint="Kasadan sahaya verilen tutar"
-            tone="field"
+            valueText={formatTryFromKurus(safe.totalFieldPaidKurus)}
+            {...CASH_METRIC_VISUAL.fieldPaid}
+            footer="Kasadan sahaya verilen tutar"
           />
-          <SummaryCard
+          <MetricCard
             label="Kasa"
-            valueKurus={totals.cashBalanceKurus}
-            hint="Sahaya ödenen − toplam gider"
-            tone="cash"
+            valueText={formatTryFromKurus(cashBalanceKurus)}
+            {...cashBalanceVisual(cashBalanceKurus)}
+            footer={cashBalanceFooter(cashBalanceKurus, 'Sahaya ödenen − toplam gider')}
           />
         </div>
       )}

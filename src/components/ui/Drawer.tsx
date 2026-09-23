@@ -3,6 +3,8 @@ import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/classNames'
 
+export type DrawerSide = 'bottom' | 'right' | 'responsive'
+
 export type DrawerProps = {
   open: boolean
   onClose: () => void
@@ -10,7 +12,10 @@ export type DrawerProps = {
   description?: string
   children: ReactNode
   className?: string
-  side?: 'bottom' | 'right'
+  /**
+   * `responsive` — bottom sheet on phones, right panel from `sm` up.
+   */
+  side?: DrawerSide
 }
 
 function useFocusTrap(containerRef: RefObject<HTMLElement | null>, active: boolean) {
@@ -93,14 +98,27 @@ export function Drawer({
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         className={cn(
-          'absolute z-10 flex flex-col border border-border bg-surface shadow-[var(--shadow-lg)]',
+          'absolute z-10 flex flex-col overflow-hidden border border-border bg-surface shadow-[var(--shadow-lg)]',
           side === 'bottom' &&
             'bottom-0 left-0 right-0 max-h-[90vh] w-full max-w-none animate-fade-in-up rounded-t-[var(--radius-lg)] pb-[var(--safe-bottom)]',
           side === 'right' &&
             'inset-y-0 right-0 h-dvh w-full max-w-md animate-[slide-in-right_0.25s_ease-out] rounded-none border-y-0 border-r-0 pt-[var(--safe-top)] pb-[var(--safe-bottom)] pl-[var(--safe-left)] sm:max-w-lg',
+          side === 'responsive' &&
+            'drawer-panel-responsive bottom-0 left-0 right-0 max-h-[92vh] w-full rounded-t-[var(--radius-lg)] pb-[var(--safe-bottom)] sm:inset-y-0 sm:left-auto sm:right-0 sm:h-dvh sm:max-h-none sm:w-full sm:max-w-lg sm:rounded-none sm:border-y-0 sm:border-r-0 sm:pt-[var(--safe-top)] sm:pl-[var(--safe-left)]',
           className,
         )}
       >
+        {side === 'bottom' || side === 'responsive' ? (
+          <div
+            className={cn(
+              'flex shrink-0 justify-center pt-2',
+              side === 'responsive' && 'sm:hidden',
+            )}
+            aria-hidden="true"
+          >
+            <span className="h-1 w-10 rounded-full bg-border" />
+          </div>
+        ) : null}
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div className="min-w-0">
             <h2

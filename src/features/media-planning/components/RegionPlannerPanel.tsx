@@ -106,10 +106,7 @@ export function RegionPlannerPanel() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-lg font-semibold text-text-primary">
-            Bölge seçimi
-          </h2>
+        <div className="max-w-2xl">
           <p className="text-sm text-text-secondary">
             Haftanın günlerine bölge yazın; emoji de ekleyebilirsiniz. Gün
             geldiğinde medya planlama sayfasında “Günün bölgesi” olarak görünür.

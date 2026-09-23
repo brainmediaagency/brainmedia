@@ -23,6 +23,7 @@ import type { HrMpuAttendanceEntry, HrReport } from '@/features/hr/types/hr'
 import { DEFAULT_LIST_LIMIT } from '@/config/roles'
 import { UserFacingError, mapAppError } from '@/lib/errors'
 import { notifyManagement } from '@/features/notifications/services/notificationService'
+import { writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
 import {
   dateToDateOnlyIstanbul,
   todayDateOnlyIstanbul,
@@ -307,6 +308,15 @@ export async function createHrReport(input: {
       pushRoles: ['management'],
     })
 
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.hr_created',
+      summary: input.title.trim(),
+      entityType: 'hr_report',
+      entityId: ref.id,
+      actorNameFallback: input.createdByNameSnapshot,
+    })
+
     return ref.id
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('USER_')) {
@@ -362,6 +372,14 @@ export async function updateHrReport(input: {
         console.warn('[hrReportService] same-day merge patch skipped', error)
       }
     }
+
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.hr_updated',
+      summary: input.title.trim(),
+      entityType: 'hr_report',
+      entityId: input.id,
+    })
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('USER_')) {
       throw new UserFacingError(error.message.replace(/^USER_/, ''))

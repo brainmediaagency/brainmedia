@@ -35,6 +35,10 @@ export type MonthPickerProps = {
   /** Inclusive latest `yyyy-MM` (default: current month). */
   maxYearMonth?: string
   disabled?: boolean
+  /**
+   * `compact` — prev/next + month label only (no range line or month/year selects).
+   */
+  variant?: 'default' | 'compact'
 }
 
 function buildYearOptions(minYm: string, maxYm: string): number[] {
@@ -64,6 +68,7 @@ export function MonthPicker({
   minYearMonth,
   maxYearMonth,
   disabled = false,
+  variant = 'default',
 }: MonthPickerProps) {
   const current = currentYearMonthIstanbul()
   const maxYm = maxYearMonth && isValidYearMonth(maxYearMonth) ? maxYearMonth : current
@@ -83,51 +88,62 @@ export function MonthPicker({
   const isCurrent = yearMonth === current
   const canGoPrev = yearMonth > minYm
   const canGoNext = yearMonth < maxYm
+  const compact = variant === 'compact'
 
   const setSafe = (next: string) => {
     onChange(clampYearMonth(next, minYm, maxYm))
   }
 
   return (
-    <div className={cn('space-y-2', className)}>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className={cn(!compact && 'space-y-2', className)}>
+      <div className={cn('flex items-center gap-1', compact ? 'gap-0.5' : 'flex-wrap gap-2')}>
         <Button
           type="button"
           size="sm"
-          variant="secondary"
+          variant={compact ? 'ghost' : 'secondary'}
           aria-label="Önceki ay"
-          className="shrink-0 px-2.5"
+          className={cn('shrink-0', compact ? 'size-8 px-0' : 'px-2.5')}
           disabled={disabled || !canGoPrev}
           onClick={() => setSafe(shiftYearMonth(yearMonth, -1))}
         >
           <ChevronLeft className="size-4" aria-hidden="true" />
         </Button>
 
-        <div className="min-w-0 flex-1 text-center sm:flex-none sm:px-2">
+        <div
+          className={cn(
+            'min-w-0 text-center',
+            compact ? 'px-1.5' : 'flex-1 sm:flex-none sm:px-2',
+          )}
+        >
           <p
             id={`${id}-label`}
-            className="font-display text-base font-semibold capitalize text-text-primary sm:text-lg"
+            className={cn(
+              'font-display font-semibold capitalize text-text-primary',
+              compact ? 'text-sm whitespace-nowrap' : 'text-base sm:text-lg',
+            )}
           >
             {formatYearMonthLongTr(yearMonth)}
           </p>
-          <p className="text-xs text-text-secondary">
-            {formatYearMonthRangeTr(yearMonth)}
-          </p>
+          {!compact ? (
+            <p className="text-xs text-text-secondary">
+              {formatYearMonthRangeTr(yearMonth)}
+            </p>
+          ) : null}
         </div>
 
         <Button
           type="button"
           size="sm"
-          variant="secondary"
+          variant={compact ? 'ghost' : 'secondary'}
           aria-label="Sonraki ay"
-          className="shrink-0 px-2.5"
+          className={cn('shrink-0', compact ? 'size-8 px-0' : 'px-2.5')}
           disabled={disabled || !canGoNext}
           onClick={() => setSafe(shiftYearMonth(yearMonth, 1))}
         >
           <ChevronRight className="size-4" aria-hidden="true" />
         </Button>
 
-        {!isCurrent ? (
+        {!compact && !isCurrent ? (
           <Button
             type="button"
             size="sm"
@@ -141,55 +157,57 @@ export function MonthPicker({
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:max-w-sm">
-        <div>
-          <label
-            htmlFor={`${id}-month`}
-            className="mb-1 block text-xs font-medium text-text-secondary"
-          >
-            Ay
-          </label>
-          <Select
-            id={`${id}-month`}
-            aria-labelledby={`${id}-label`}
-            value={month}
-            disabled={disabled}
-            onChange={(e) => setSafe(`${year}-${e.target.value}`)}
-          >
-            {MONTH_OPTIONS.map((opt) => (
-              <option
-                key={opt.value}
-                value={opt.value}
-                disabled={
-                  `${year}-${opt.value}` < minYm || `${year}-${opt.value}` > maxYm
-                }
-              >
-                {opt.label}
-              </option>
-            ))}
-          </Select>
+      {!compact ? (
+        <div className="grid grid-cols-2 gap-2 sm:max-w-sm">
+          <div>
+            <label
+              htmlFor={`${id}-month`}
+              className="mb-1 block text-xs font-medium text-text-secondary"
+            >
+              Ay
+            </label>
+            <Select
+              id={`${id}-month`}
+              aria-labelledby={`${id}-label`}
+              value={month}
+              disabled={disabled}
+              onChange={(e) => setSafe(`${year}-${e.target.value}`)}
+            >
+              {MONTH_OPTIONS.map((opt) => (
+                <option
+                  key={opt.value}
+                  value={opt.value}
+                  disabled={
+                    `${year}-${opt.value}` < minYm || `${year}-${opt.value}` > maxYm
+                  }
+                >
+                  {opt.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label
+              htmlFor={`${id}-year`}
+              className="mb-1 block text-xs font-medium text-text-secondary"
+            >
+              Yıl
+            </label>
+            <Select
+              id={`${id}-year`}
+              value={year}
+              disabled={disabled}
+              onChange={(e) => setSafe(`${e.target.value}-${month}`)}
+            >
+              {years.map((y) => (
+                <option key={y} value={String(y)}>
+                  {y}
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
-        <div>
-          <label
-            htmlFor={`${id}-year`}
-            className="mb-1 block text-xs font-medium text-text-secondary"
-          >
-            Yıl
-          </label>
-          <Select
-            id={`${id}-year`}
-            value={year}
-            disabled={disabled}
-            onChange={(e) => setSafe(`${e.target.value}-${month}`)}
-          >
-            {years.map((y) => (
-              <option key={y} value={String(y)}>
-                {y}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
+      ) : null}
     </div>
   )
 }

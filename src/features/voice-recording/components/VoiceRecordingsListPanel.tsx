@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, Mic, Trash2 } from 'lucide-react'
+import { Mic, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccordionSection } from '@/components/ui/AccordionSection'
 import { Button } from '@/components/ui/Button'
@@ -7,22 +7,16 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/features/auth/hooks/useAuth'
+import { VoiceRecordingPlayback } from '@/features/voice-recording/components/VoiceRecordingPlayback'
 import {
   deleteVoiceRecording,
   subscribeVoiceRecordings,
   voiceRecordingTitle,
 } from '@/features/voice-recording/services/voiceRecordingService'
 import type { VoiceRecordingDoc } from '@/features/voice-recording/types/voiceRecording'
-import { formatTimer } from '@/lib/date'
 import { mapAppError } from '@/lib/errors'
 
-export type VoiceRecordingsListPanelProps = {
-  sectionNumber?: string
-}
-
-export function VoiceRecordingsListPanel({
-  sectionNumber = '01',
-}: VoiceRecordingsListPanelProps) {
+export function VoiceRecordingsListPanel() {
   const { profile } = useAuth()
   const canDelete =
     profile?.role === 'management' || profile?.role === 'coordinator'
@@ -64,9 +58,8 @@ export function VoiceRecordingsListPanel({
   return (
     <>
       <AccordionSection
-        number={sectionNumber}
         title="Ses kayıtları"
-        description="Konfirme sırasında kaydedilen sesler (tarih · firma), Google Drive üzerinde. En fazla 30 dk; 3 günden eski kayıtlar otomatik silinir. Yönetim ve koordinatör kayıt silebilir."
+        description="Konfirme sırasında kaydedilen sesler (tarih · firma). Sitede dinleyebilirsiniz; dosyalar Google Drive’da. En fazla 30 dk; 3 günden eski kayıtlar otomatik silinir. Yönetim ve koordinatör kayıt silebilir."
         defaultOpen
       >
         {loading ? (
@@ -82,44 +75,24 @@ export function VoiceRecordingsListPanel({
           />
         ) : (
           <ul className="space-y-2">
-            {items.map((item) => {
-              const openHref = item.webViewLink || item.url
-              return (
-                <li
-                  key={item.id}
-                  className="flex items-stretch gap-2 rounded-[var(--radius-md)] border border-border bg-surface p-2 sm:items-center sm:px-3 sm:py-2"
-                >
-                  <a
-                    href={openHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-sm)] px-1 py-1 transition-colors hover:bg-brand-cyan/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-cyan/40"
-                  >
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface-muted text-text-secondary">
-                      <Mic className="size-4" aria-hidden />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-text-primary">
-                        {voiceRecordingTitle(item)}
-                      </span>
-                      <span className="block text-xs text-text-secondary">
-                        {formatTimer(Math.floor(item.durationMs / 1000))}
-                        {item.createdByNameSnapshot
-                          ? ` · ${item.createdByNameSnapshot}`
-                          : ''}
-                      </span>
-                    </span>
-                    <ExternalLink
-                      className="size-4 shrink-0 text-text-secondary"
-                      aria-hidden
-                    />
-                  </a>
+            {items.map((item) => (
+              <li
+                key={item.id}
+                className="rounded-[var(--radius-md)] border border-border bg-surface p-3"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface-muted text-text-secondary">
+                    <Mic className="size-4" aria-hidden />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <VoiceRecordingPlayback item={item} />
+                  </div>
                   {canDelete ? (
                     <Button
                       type="button"
                       size="sm"
                       variant="secondary"
-                      className="shrink-0 self-center"
+                      className="shrink-0"
                       aria-label={`${voiceRecordingTitle(item)} kaydını sil`}
                       onClick={() => setDeleteTarget(item)}
                     >
@@ -127,9 +100,9 @@ export function VoiceRecordingsListPanel({
                       Sil
                     </Button>
                   ) : null}
-                </li>
-              )
-            })}
+                </div>
+              </li>
+            ))}
           </ul>
         )}
       </AccordionSection>

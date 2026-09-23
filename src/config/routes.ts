@@ -1,20 +1,31 @@
 import type { AppRouteKey } from '@/config/permissions'
 import type { UserRole } from '@/config/roles'
 import {
-  Briefcase,
-  Camera,
-  Car,
+  BookOpen,
+  CalendarDays,
+  ClipboardCheck,
   Crown,
+  Gamepad2,
   LayoutDashboard,
+  MapPin,
+  Megaphone,
+  Mic,
   Newspaper,
+  PieChart,
   Shield,
   Users,
-  Zap,
+  Video,
   type LucideIcon,
 } from 'lucide-react'
 
 export const APP_ROUTES = {
   login: '/login',
+  shootingCalendar: '/shooting-calendar',
+  jobApprovals: '/job-approvals',
+  regionPlanning: '/region-planning',
+  opsLedger: '/ops-ledger',
+  /** Yönetim/koordinatör — aylık ciro payı (masa sekmelerinden ayrı). */
+  coordinatorShare: '/coordinator-share',
   mediaPlanning: '/media-planning',
   reporter: '/reporter',
   humanResources: '/human-resources',
@@ -37,22 +48,52 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   {
+    key: 'shooting-calendar',
+    path: APP_ROUTES.shootingCalendar,
+    label: 'Çekim Takvimi',
+    icon: CalendarDays,
+  },
+  {
+    key: 'job-approvals',
+    path: APP_ROUTES.jobApprovals,
+    label: 'İş Konfirmeleri',
+    icon: ClipboardCheck,
+  },
+  {
+    key: 'region-planning',
+    path: APP_ROUTES.regionPlanning,
+    label: 'Bölge Seçimi',
+    icon: MapPin,
+  },
+  {
+    key: 'ops-ledger',
+    path: APP_ROUTES.opsLedger,
+    label: 'Operasyon Defteri',
+    icon: BookOpen,
+  },
+  {
+    key: 'coordinator-share',
+    path: APP_ROUTES.coordinatorShare,
+    label: 'Koordinatör',
+    icon: PieChart,
+  },
+  {
     key: 'media-planning',
     path: APP_ROUTES.mediaPlanning,
     label: 'Medya Planlama',
-    icon: Briefcase,
+    icon: Megaphone,
   },
   {
     key: 'reporter',
     path: APP_ROUTES.reporter,
     label: 'Muhabir',
-    icon: Camera,
+    icon: Mic,
   },
   {
     key: 'kameraman-field',
     path: APP_ROUTES.kameramanField,
     label: 'Kameraman',
-    icon: Car,
+    icon: Video,
   },
   {
     key: 'human-resources',
@@ -88,7 +129,7 @@ export const NAV_ITEMS: NavItem[] = [
     key: 'game',
     path: APP_ROUTES.game,
     label: 'Oyun',
-    icon: Zap,
+    icon: Gamepad2,
   },
 ]
 
@@ -96,4 +137,9 @@ export const NAV_ITEMS: NavItem[] = [
 export function resolveNavItemLabel(item: NavItem, role: UserRole): string {
   if (item.key === 'reporter' && role === 'kameraman') return 'Kameraman'
   return item.label
+}
+
+export function resolveNavItemIcon(item: NavItem, role: UserRole): LucideIcon {
+  if (item.key === 'reporter' && role === 'kameraman') return Video
+  return item.icon
 }

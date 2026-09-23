@@ -107,14 +107,14 @@ describe('QA · journey · muhabir daily cash', () => {
   })
 })
 
-describe('QA · journey · month-end stats attribution', () => {
+describe('QA · journey · calendar month cash attribution', () => {
   it('uses Istanbul date-only validation for ops dates', () => {
     expect(isValidDateOnly('2026-08-06')).toBe(true)
     expect(isValidDateOnly('06-08-2026')).toBe(false)
   })
 
-  it('last day of month maps to next month for stats attribution', () => {
-    expect(statsAttributionDateOnly('2026-03-31')).toBe('2026-04-01')
+  it('keeps month-end report days in the same calendar month', () => {
+    expect(statsAttributionDateOnly('2026-03-31')).toBe('2026-03-31')
     expect(statsAttributionDateOnly('2026-03-30')).toBe('2026-03-30')
   })
 })

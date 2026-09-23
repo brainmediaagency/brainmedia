@@ -80,13 +80,11 @@ function DateRangeFilter({
 export type ManagementHrInboxMode = 'all' | 'reports' | 'interviews'
 
 export type ManagementHrInboxProps = {
-  startNumber?: number
   /** Which sections to show. Defaults to both. */
   mode?: ManagementHrInboxMode
 }
 
 export function ManagementHrInbox({
-  startNumber = 1,
   mode = 'all',
 }: ManagementHrInboxProps) {
   const defaults = useDefaultRange()
@@ -143,12 +141,6 @@ export function ManagementHrInbox({
     void loadNotes()
   }, [loadNotes, showInterviews])
 
-  const reportSection = String(startNumber).padStart(2, '0')
-  const noteSection = String(mode === 'interviews' ? startNumber : startNumber + 1).padStart(
-    2,
-    '0',
-  )
-
   return (
     <div className="space-y-6">
       {showReports ? (
@@ -159,7 +151,7 @@ export function ManagementHrInbox({
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-brand-blue">
-                {reportSection} · Gelen raporlar
+                Gelen raporlar
               </p>
               <h2 className="mt-1 font-display text-lg font-semibold text-text-primary">
                 İK Raporları
@@ -235,7 +227,7 @@ export function ManagementHrInbox({
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-brand-pink">
-                {noteSection} · Gelen notlar
+                Gelen notlar
               </p>
               <h2 className="mt-1 font-display text-lg font-semibold text-text-primary">
                 İş Görüşmesi Raporları

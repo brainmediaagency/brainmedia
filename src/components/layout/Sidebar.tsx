@@ -12,6 +12,7 @@ export function Sidebar() {
         <div className="min-w-0">
           <BrandLogo
             variant="white"
+            themeAdaptive={false}
             className="h-7 w-auto max-w-[148px]"
           />
           <p className="mt-0.5 truncate text-[11px] text-white/60">

@@ -5,6 +5,7 @@ function validCompany(overrides: Record<string, unknown> = {}) {
   return {
     jobId: 'job-1',
     companyName: 'Acme Medya',
+    cancelled: false,
     hasNews: false,
     newsTotalTry: '',
     chargeMode: 'cash' as const,
@@ -17,6 +18,7 @@ function validCompany(overrides: Record<string, unknown> = {}) {
 function validReport(overrides: Record<string, unknown> = {}) {
   return {
     reportDate: '2026-07-24',
+    leaveDayCash: false,
     companies: [validCompany()],
     note: '',
     hotelExpenseTry: '',
@@ -41,10 +43,49 @@ describe('dailyReportSchema', () => {
     ).toBe(false)
   })
 
-  it('requires at least one company', () => {
+  it('requires at least one company unless leave-day cash is checked', () => {
     expect(
       dailyReportSchema.safeParse(validReport({ companies: [] })).success,
     ).toBe(false)
+    expect(
+      dailyReportSchema.safeParse(
+        validReport({ leaveDayCash: true, companies: [] }),
+      ).success,
+    ).toBe(true)
+  })
+
+  it('accepts cancelled company without shoot minutes or fees', () => {
+    expect(
+      dailyReportSchema.safeParse(
+        validReport({
+          companies: [
+            validCompany({
+              cancelled: true,
+              shootMinutes: '',
+              hasNews: false,
+              newsTotalTry: '',
+            }),
+          ],
+        }),
+      ).success,
+    ).toBe(true)
+  })
+
+  it('skips news validation when cancelled', () => {
+    expect(
+      dailyReportSchema.safeParse(
+        validReport({
+          companies: [
+            validCompany({
+              cancelled: true,
+              hasNews: true,
+              newsTotalTry: '',
+              shootMinutes: '',
+            }),
+          ],
+        }),
+      ).success,
+    ).toBe(true)
   })
 
   it('rejects duplicate jobId in the same report', () => {

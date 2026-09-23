@@ -111,7 +111,6 @@ export function ReporterNotebookPanel() {
   return (
     <>
       <AccordionSection
-        number="01"
         title="Not defteri"
         description={
           isReporter

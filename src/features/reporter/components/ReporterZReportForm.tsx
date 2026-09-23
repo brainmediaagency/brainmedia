@@ -194,7 +194,6 @@ export function ReporterZReportForm() {
   return (
     <div className="space-y-6">
       <AccordionSection
-        number="03"
         title="Z Raporu"
         description={
           editingId
@@ -314,7 +313,6 @@ export function ReporterZReportForm() {
       </AccordionSection>
 
       <AccordionSection
-        number="04"
         title="Önceki Z raporlarım"
         description="Yalnızca sizin oluşturduğunuz kayıtlar. Düzenleyebilir veya silebilirsiniz."
         defaultOpen

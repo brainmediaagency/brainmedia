@@ -1,22 +1,23 @@
 import { useId, useState, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
-import { SectionNumber } from '@/components/ui/SectionNumber'
+import { SectionTitleMark } from '@/components/ui/SectionTitleMark'
 import { cn } from '@/lib/classNames'
 
 export type AccordionSectionProps = {
-  number: number | string
   title: string
   description?: string
+  /** Shown next to the title (e.g. item count) — visible while collapsed. */
+  badge?: ReactNode
   defaultOpen?: boolean
   children: ReactNode
   className?: string
 }
 
 export function AccordionSection({
-  number,
   title,
   description,
+  badge,
   defaultOpen = false,
   children,
   className,
@@ -24,6 +25,9 @@ export function AccordionSection({
   const [open, setOpen] = useState(defaultOpen)
   const panelId = useId()
   const headerId = useId()
+  const titleId = useId()
+  const descriptionId = useId()
+  const badgeId = useId()
 
   return (
     <Card
@@ -40,16 +44,24 @@ export function AccordionSection({
           id={headerId}
           aria-expanded={open}
           aria-controls={panelId}
+          aria-labelledby={badge ? `${titleId} ${badgeId}` : titleId}
+          aria-describedby={description ? descriptionId : undefined}
           onClick={() => setOpen((value) => !value)}
-          className="flex w-full items-start gap-3 p-4 text-left transition-colors duration-150 hover:bg-surface-muted/50 sm:p-5"
+          className="section-header flex w-full items-start gap-3 p-4 text-left transition-colors duration-150 sm:p-5"
         >
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex items-center gap-2.5 font-display text-base font-semibold text-text-primary sm:text-lg">
-              <SectionNumber value={number} />
-              <span>{title}</span>
+            <div className="flex items-center gap-2.5 font-display text-base font-semibold sm:text-lg">
+              <SectionTitleMark />
+              <span id={titleId} className="section-header__title">
+                {title}
+              </span>
+              {badge ? <span id={badgeId}>{badge}</span> : null}
             </div>
             {description ? (
-              <p className="text-sm font-normal leading-relaxed text-text-secondary">
+              <p
+                id={descriptionId}
+                className="pl-[calc(0.25rem+0.625rem)] text-sm font-normal leading-relaxed text-text-secondary"
+              >
                 {description}
               </p>
             ) : null}
@@ -66,7 +78,7 @@ export function AccordionSection({
       <div
         id={panelId}
         role="region"
-        aria-labelledby={headerId}
+        aria-labelledby={titleId}
         hidden={!open}
         className={cn(
           open &&

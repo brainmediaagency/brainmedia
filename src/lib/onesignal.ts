@@ -109,9 +109,11 @@ export function initOneSignal(): Promise<OneSignalSdk | null> {
     await OneSignal.init({
       appId,
       allowLocalhostAsSecureOrigin: import.meta.env.DEV === true,
-      serviceWorkerPath: 'OneSignalSDKWorker.js',
+      // Absolute path — relative resolves against /reporter etc. and hits SPA HTML.
+      serviceWorkerPath: '/OneSignalSDKWorker.js',
       serviceWorkerParam: { scope: '/' },
       notifyButton: { enable: false },
+      autoResubscribe: true,
     })
     cachedSdk = OneSignal
     return OneSignal
@@ -188,12 +190,9 @@ export async function requestOneSignalPushPermission(): Promise<boolean> {
 
   try {
     await os.User.PushSubscription.optIn()
-    return (
-      Boolean(os.User.PushSubscription.optedIn) ||
-      getBrowserNotificationPermission() === 'granted'
-    )
+    return Boolean(os.User.PushSubscription.optedIn)
   } catch {
-    return getBrowserNotificationPermission() === 'granted'
+    return false
   }
 }
 
@@ -248,11 +247,50 @@ export function isIosDevice(): boolean {
   return iOS || iPadOs
 }
 
+/**
+ * Chrome / Firefox / in-app browsers on iOS. Web Push only works in
+ * Safari Home Screen PWA (iOS 16.4+). A Chrome bookmark icon is not enough.
+ */
+export function isIosNonSafariBrowser(ua = typeof navigator === 'undefined' ? '' : navigator.userAgent): boolean {
+  return /CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|Instagram|FBAN|FBAV|Line\//i.test(
+    ua,
+  )
+}
+
 export function isStandaloneDisplayMode(): boolean {
   if (typeof window === 'undefined') return false
-  const mq = window.matchMedia('(display-mode: standalone)').matches
+  const mqStandalone = window.matchMedia('(display-mode: standalone)').matches
+  const mqFullscreen = window.matchMedia('(display-mode: fullscreen)').matches
   const iosStandalone =
     'standalone' in navigator &&
     Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
-  return mq || iosStandalone
+  return mqStandalone || mqFullscreen || iosStandalone
+}
+
+/** iOS Safari in a tab (not the Home Screen icon). */
+export function needsIosHomeScreenForPush(): boolean {
+  return isIosDevice() && !isStandaloneDisplayMode() && !isIosNonSafariBrowser()
+}
+
+export function iosPushBlockedInThisBrowser(): boolean {
+  return isIosDevice() && isIosNonSafariBrowser()
+}
+
+export const ONESIGNAL_BANNER_DISMISS_HINT = 'brain-onesignal-banner-dismissed'
+export const ONESIGNAL_BANNER_DISMISS_ENABLE =
+  'brain-onesignal-banner-dismissed-enable'
+
+export const IOS_PUSH_SETUP_HINT =
+  'Yer imi (bookmark) yetmez. Safari’de Paylaş → Ana Ekrana Ekle, sonra ana ekrandaki B’RAIN ikonundan açın. App Store uygulaması olmadığı için Ayarlar → Bildirimler’de Brain görünmez; izin ikondan açınca çıkan pencereden verilir.'
+
+export const IOS_PUSH_DENIED_HINT =
+  'App Store uygulaması yok; Ayarlar’da Brain aramayın. Safari’den Ana Ekrana Ekle ile ekleyip ikondan açın, Bildirimleri aç’a basın ve İzin Ver’i seçin.'
+
+/** A2HS hint dismiss must not hide the PWA “Bildirimleri aç” prompt. */
+export function onesignalBannerDismissKey(
+  kind: 'homescreen-hint' | 'enable',
+): string {
+  return kind === 'enable'
+    ? ONESIGNAL_BANNER_DISMISS_ENABLE
+    : ONESIGNAL_BANNER_DISMISS_HINT
 }

@@ -23,6 +23,7 @@ import {
 } from '@/features/reporter/types/reporterDayNote'
 import { isValidDateOnly } from '@/lib/date'
 import { UserFacingError, mapAppError } from '@/lib/errors'
+import { writeActivityLogForCurrentUser } from '@/features/activity-log/services/activityLogService'
 
 const converter: FirestoreDataConverter<ReporterDayNote> = {
   toFirestore(item: ReporterDayNote): DocumentData {
@@ -151,6 +152,14 @@ export async function saveOwnDayNote(input: {
         body,
         updatedAt: serverTimestamp(),
       })
+      writeActivityLogForCurrentUser({
+        category: 'report',
+        action: 'report.note_updated',
+        summary: input.noteDate,
+        entityType: 'day_note',
+        entityId: docId,
+        actorNameFallback: name,
+      })
       return docId
     }
 
@@ -161,6 +170,14 @@ export async function saveOwnDayNote(input: {
       createdByNameSnapshot: name,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+    })
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.note_updated',
+      summary: input.noteDate,
+      entityType: 'day_note',
+      entityId: docId,
+      actorNameFallback: name,
     })
     return docId
   } catch (error) {
@@ -190,6 +207,13 @@ export async function deleteOwnDayNote(noteDate: string): Promise<void> {
       throw new UserFacingError('Bu not size ait değil.')
     }
     await deleteDoc(ref)
+    writeActivityLogForCurrentUser({
+      category: 'report',
+      action: 'report.note_deleted',
+      summary: noteDate,
+      entityType: 'day_note',
+      entityId: docId,
+    })
   } catch (error) {
     if (error instanceof UserFacingError) throw error
     throw new UserFacingError(mapAppError(error, 'Not silinemedi.'))

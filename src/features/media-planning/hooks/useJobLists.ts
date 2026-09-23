@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import {
   subscribeApprovedJobs,
   subscribePendingJobs,
 } from '@/features/jobs/services/jobService'
 import type { JobDocument } from '@/features/jobs/types/job'
+import { mapAppError } from '@/lib/errors'
 
 export function useJobLists(ownerUid: string | null) {
   const [pendingJobs, setPendingJobs] = useState<JobDocument[]>([])
@@ -29,7 +31,10 @@ export function useJobLists(ownerUid: string | null) {
         setPendingJobs(jobs)
         setPendingLoading(false)
       },
-      () => setPendingLoading(false),
+      (error) => {
+        setPendingLoading(false)
+        toast.error(mapAppError(error, 'Bekleyen işler yüklenemedi.'))
+      },
     )
 
     const unsubApproved = subscribeApprovedJobs(
@@ -38,7 +43,10 @@ export function useJobLists(ownerUid: string | null) {
         setApprovedJobs(jobs)
         setApprovedLoading(false)
       },
-      () => setApprovedLoading(false),
+      (error) => {
+        setApprovedLoading(false)
+        toast.error(mapAppError(error, 'İş kayıtları yüklenemedi.'))
+      },
     )
 
     return () => {

@@ -1,5 +1,5 @@
 import { FirebaseError } from 'firebase/app'
-import type { UserRole } from '@/config/roles'
+import { ROLE_DISPLAY_NAMES, type UserRole } from '@/config/roles'
 import { createAuthUserOnSecondary } from '@/lib/firebase/secondaryAuth'
 import {
   createUserProfileDoc,
@@ -14,6 +14,7 @@ import {
   isAccountAdminRole,
 } from '@/features/account-admin/utils/accountPermissions'
 import { UserFacingError, mapAppError } from '@/lib/errors'
+import { writeActivityLogForActor } from '@/features/activity-log/services/activityLogService'
 
 export type CreateManagedAccountInput = {
   fullName: string
@@ -54,6 +55,14 @@ export async function createManagedAccount(
         input.role === 'media_planning'
           ? (input.shiftDurationMinutes ?? null)
           : null,
+    })
+
+    writeActivityLogForActor(input.actor, {
+      category: 'account',
+      action: 'account.created',
+      summary: `${input.fullName.trim()} · ${ROLE_DISPLAY_NAMES[input.role]}`,
+      entityType: 'user',
+      entityId: user.uid,
     })
 
     return { uid: user.uid }
@@ -118,6 +127,13 @@ async function mutateManagedAccountActive(
 
   try {
     await setUserActiveState(targetUid, isActive)
+    writeActivityLogForActor(actor, {
+      category: 'account',
+      action: isActive ? 'account.unfrozen' : 'account.frozen',
+      summary: `${target.fullName} · ${ROLE_DISPLAY_NAMES[target.role]}`,
+      entityType: 'user',
+      entityId: targetUid,
+    })
   } catch (error) {
     throw new UserFacingError(
       mapAppError(
@@ -151,6 +167,13 @@ export async function softDeleteManagedAccount(
 
   try {
     await softDeleteUserProfile(targetUid)
+    writeActivityLogForActor(actor, {
+      category: 'account',
+      action: 'account.deleted',
+      summary: `${target.fullName} · ${ROLE_DISPLAY_NAMES[target.role]}`,
+      entityType: 'user',
+      entityId: targetUid,
+    })
   } catch (error) {
     throw new UserFacingError(mapAppError(error, 'Hesap silinemedi.'))
   }

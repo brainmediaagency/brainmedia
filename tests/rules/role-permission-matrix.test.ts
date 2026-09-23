@@ -11,12 +11,18 @@ import {
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
   Timestamp,
   updateDoc,
+  deleteDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
@@ -97,6 +103,29 @@ function dbFor(uid: string, role: string) {
   return testEnv.authenticatedContext(uid, authClaims(role)).firestore()
 }
 
+function odometerPayload(
+  uid: string,
+  reportDate: string,
+  slot: 'morning' | 'evening',
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    reportDate,
+    slot,
+    odometerKm: slot === 'morning' ? 1000 : 1150,
+    note: null,
+    photoStoragePath: `drive-${uid}-${reportDate}-${slot}`,
+    photoDownloadUrl: 'https://drive.google.com/thumbnail?id=test',
+    driveFolderKey: `User_${uid}_${reportDate}`,
+    createdByUid: uid,
+    createdByNameSnapshot: `User ${uid}`,
+    createdByEmailSnapshot: `${uid}@brain.local`,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  }
+}
+
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -121,6 +150,7 @@ beforeEach(async () => {
     seedUser('coord1', 'coordinator'),
     seedUser('mgmt1', 'management'),
     seedUser('cam1', 'kameraman'),
+    seedUser('sef1', 'sef'),
   ])
 })
 
@@ -232,6 +262,7 @@ describe('Role matrix — reporter', () => {
     await assertSucceeds(
       setDoc(doc(db, 'reporterDailyReports', 'rd1'), {
         reportDate: '2026-07-27',
+        leaveDayCash: false,
         companyCount: 1,
         companies: [
           {
@@ -283,7 +314,13 @@ describe('Role matrix — reporter', () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(
         doc(ctx.firestore(), 'jobs', 'job-shot'),
-        jobPayload({ status: 'approved', statusVersion: 2 }),
+        jobPayload({
+          status: 'approved',
+          statusVersion: 2,
+          reviewedByUid: 'coord1',
+          reviewedByNameSnapshot: 'User coord1',
+          reviewedAt: Timestamp.now(),
+        }),
       )
     })
     const db = dbFor('reporter1', 'reporter')
@@ -292,10 +329,6 @@ describe('Role matrix — reporter', () => {
         status: 'shot',
         statusVersion: 3,
         updatedAt: serverTimestamp(),
-        reviewedByUid: 'reporter1',
-        reviewedByNameSnapshot: 'User reporter1',
-        reviewedAt: serverTimestamp(),
-        reviewNote: null,
       }),
     )
   })
@@ -436,6 +469,27 @@ describe('Role matrix — coordinator', () => {
     )
   })
 
+  it('cannot read activityLogs', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'activityLogs', 'a-coord'), {
+        actorUid: 'media1',
+        actorNameSnapshot: 'User media1',
+        actorRole: 'media_planning',
+        category: 'job',
+        action: 'job.created',
+        title: 'İş oluşturuldu',
+        summary: 'Test Firma',
+        jobId: null,
+        jobCompanyName: null,
+        entityType: null,
+        entityId: null,
+        createdAt: Timestamp.now(),
+      })
+    })
+    const db = dbFor('coord1', 'coordinator')
+    await assertFails(getDoc(doc(db, 'activityLogs', 'a-coord')))
+  })
+
   it('can set daily region and soft-delete MPU', async () => {
     const db = dbFor('coord1', 'coordinator')
     await assertSucceeds(
@@ -483,6 +537,39 @@ describe('Role matrix — coordinator', () => {
       }),
     )
   })
+
+  it('can coordinate odometer retention metadata; field roles cannot', async () => {
+    const payload = {
+      claimedPurgeDate: '2026-09-01',
+      claimedAt: serverTimestamp(),
+      claimedByUid: 'coord1',
+      claimedByName: 'User coord1',
+      status: 'running',
+    }
+
+    await assertSucceeds(
+      setDoc(
+        doc(dbFor('coord1', 'coordinator'), 'appMeta', 'odometerRetention'),
+        payload,
+      ),
+    )
+    await assertFails(
+      setDoc(
+        doc(dbFor('cam1', 'kameraman'), 'appMeta', 'odometerRetention'),
+        { ...payload, claimedByUid: 'cam1', claimedByName: 'User cam1' },
+      ),
+    )
+    await assertFails(
+      setDoc(
+        doc(dbFor('reporter1', 'reporter'), 'appMeta', 'odometerRetention'),
+        {
+          ...payload,
+          claimedByUid: 'reporter1',
+          claimedByName: 'User reporter1',
+        },
+      ),
+    )
+  })
 })
 
 describe('Role matrix — management', () => {
@@ -521,6 +608,31 @@ describe('Role matrix — management', () => {
         updatedAt: serverTimestamp(),
       }),
     )
+  })
+
+  it('can read activityLogs and cannot update or delete them', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'activityLogs', 'a1'), {
+        actorUid: 'media1',
+        actorNameSnapshot: 'User media1',
+        actorRole: 'media_planning',
+        category: 'job',
+        action: 'job.created',
+        title: 'İş oluşturuldu',
+        summary: 'Test Firma',
+        jobId: 'job1',
+        jobCompanyName: 'Test Firma',
+        entityType: 'job',
+        entityId: 'job1',
+        createdAt: Timestamp.now(),
+      })
+    })
+    const db = dbFor('mgmt1', 'management')
+    await assertSucceeds(getDoc(doc(db, 'activityLogs', 'a1')))
+    await assertFails(
+      updateDoc(doc(db, 'activityLogs', 'a1'), { summary: 'x' }),
+    )
+    await assertFails(deleteDoc(doc(db, 'activityLogs', 'a1')))
   })
 
   it('cannot create hrReport as management', async () => {
@@ -602,6 +714,175 @@ describe('Role matrix — kameraman', () => {
     })
     await assertFails(
       getDoc(doc(dbFor('cam1', 'kameraman'), 'managementNotifications', 'n-cam')),
+    )
+  })
+
+  it('creates and updates only the stable own odometer day+slot document', async () => {
+    const camDb = dbFor('cam1', 'kameraman')
+    const id = 'cam1_2026-09-01_morning'
+
+    await assertSucceeds(
+      setDoc(
+        doc(camDb, 'kameramanOdometerReadings', id),
+        odometerPayload('cam1', '2026-09-01', 'morning'),
+      ),
+    )
+    await assertSucceeds(
+      updateDoc(doc(camDb, 'kameramanOdometerReadings', id), {
+        odometerKm: 1010,
+        updatedAt: serverTimestamp(),
+      }),
+    )
+
+    await assertFails(
+      setDoc(
+        doc(camDb, 'kameramanOdometerReadings', 'duplicate-random-id'),
+        odometerPayload('cam1', '2026-09-01', 'morning'),
+      ),
+    )
+    await assertFails(
+      setDoc(
+        doc(camDb, 'kameramanOdometerReadings', 'cam2_2026-09-01_evening'),
+        odometerPayload('cam2', '2026-09-01', 'evening'),
+      ),
+    )
+  })
+
+  it('lists only own odometer rows while management/coordinator can query all', async () => {
+    await seedUser('cam2', 'kameraman')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore()
+      await Promise.all([
+        setDoc(
+          doc(db, 'kameramanOdometerReadings', 'cam1_2026-09-01_morning'),
+          {
+            ...odometerPayload('cam1', '2026-09-01', 'morning'),
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
+          },
+        ),
+        setDoc(
+          doc(db, 'kameramanOdometerReadings', 'cam2_2026-09-01_morning'),
+          {
+            ...odometerPayload('cam2', '2026-09-01', 'morning'),
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
+          },
+        ),
+      ])
+    })
+
+    const camDb = dbFor('cam1', 'kameraman')
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(camDb, 'kameramanOdometerReadings'),
+          where('createdByUid', '==', 'cam1'),
+          orderBy('reportDate', 'desc'),
+        ),
+      ),
+    )
+    await assertFails(getDocs(collection(camDb, 'kameramanOdometerReadings')))
+    await assertFails(
+      getDoc(
+        doc(
+          camDb,
+          'kameramanOdometerReadings',
+          'cam2_2026-09-01_morning',
+        ),
+      ),
+    )
+
+    for (const [uid, role] of [
+      ['mgmt1', 'management'],
+      ['coord1', 'coordinator'],
+    ] as const) {
+      const reviewerDb = dbFor(uid, role)
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(reviewerDb, 'kameramanOdometerReadings'),
+            where('reportDate', '>=', '2026-09-01'),
+            where('reportDate', '<=', '2026-09-30'),
+            orderBy('reportDate', 'desc'),
+          ),
+        ),
+      )
+    }
+
+    await assertFails(
+      getDoc(
+        doc(
+          dbFor('reporter1', 'reporter'),
+          'kameramanOdometerReadings',
+          'cam1_2026-09-01_morning',
+        ),
+      ),
+    )
+  })
+
+  it('can create own job clock with only giriş; reviewers can read; reporter cannot', async () => {
+    const clockId = 'job-clock-1_cam1'
+    const payload = {
+      jobId: 'job-clock-1',
+      jobCompanyNameSnapshot: 'Firma A',
+      jobProvinceSnapshot: 'İstanbul',
+      jobDistrictSnapshot: 'Beşiktaş',
+      plannedExecutionDateSnapshot: '2026-09-01',
+      clockInTime: '09:00',
+      clockOutTime: null,
+      clockInSubmittedAtHHmm: '09:05',
+      clockOutSubmittedAtHHmm: null,
+      note: null,
+      createdByUid: 'cam1',
+      createdByNameSnapshot: 'User cam1',
+      createdByEmailSnapshot: 'cam1@brain.local',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }
+    const camDb = dbFor('cam1', 'kameraman')
+    await assertSucceeds(setDoc(doc(camDb, 'kameramanJobClocks', clockId), payload))
+    await assertSucceeds(
+      updateDoc(doc(camDb, 'kameramanJobClocks', clockId), {
+        clockOutTime: '12:30',
+        clockOutSubmittedAtHHmm: '12:32',
+        updatedAt: serverTimestamp(),
+      }),
+    )
+    await assertSucceeds(getDoc(doc(dbFor('mgmt1', 'management'), 'kameramanJobClocks', clockId)))
+    await assertSucceeds(getDoc(doc(dbFor('coord1', 'coordinator'), 'kameramanJobClocks', clockId)))
+    await assertSucceeds(getDoc(doc(dbFor('sef1', 'sef'), 'kameramanJobClocks', clockId)))
+    await assertFails(
+      getDoc(doc(dbFor('reporter1', 'reporter'), 'kameramanJobClocks', clockId)),
+    )
+  })
+
+  it('cannot read another kameraman job clock by id', async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'kameramanJobClocks', 'job-x_cam2'), {
+        jobId: 'job-x',
+        jobCompanyNameSnapshot: 'Firma B',
+        jobProvinceSnapshot: '',
+        jobDistrictSnapshot: '',
+        plannedExecutionDateSnapshot: '2026-09-01',
+        clockInTime: '10:00',
+        clockOutTime: '11:00',
+        clockInSubmittedAtHHmm: '10:02',
+        clockOutSubmittedAtHHmm: '11:01',
+        note: null,
+        createdByUid: 'cam2',
+        createdByNameSnapshot: 'User cam2',
+        createdByEmailSnapshot: 'cam2@brain.local',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      })
+    })
+    await seedUser('cam2', 'kameraman')
+    await assertFails(
+      getDoc(doc(dbFor('cam1', 'kameraman'), 'kameramanJobClocks', 'job-x_cam2')),
+    )
+    await assertSucceeds(
+      getDoc(doc(dbFor('cam2', 'kameraman'), 'kameramanJobClocks', 'job-x_cam2')),
     )
   })
 })

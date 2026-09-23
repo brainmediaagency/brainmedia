@@ -2,20 +2,34 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CircleDot, Construction } from 'lucide-react'
 import { toast } from 'sonner'
 import { CategoryPanel, EmptyState, PageHeader } from '@/components/ui'
+import {
+  GAME_MANAGEMENT_SECTIONS,
+  GAME_SECTIONS,
+} from '@/config/navSections'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { ChampionsTable } from '@/features/game/components/ChampionsTable'
+import { GameTestPanel } from '@/features/game/components/GameTestPanel'
 import { HoopGame } from '@/features/game/components/HoopGame'
 import { HoopLeaderboard } from '@/features/game/components/HoopLeaderboard'
 import {
-  HOOP_PUBLIC_TEST_MODE,
   canPlayHoopGame,
   submitShot,
   subscribeTodayHoopScores,
 } from '@/features/game/services/hoopScoreService'
 import type { HoopDailyScore } from '@/features/game/types/hoop'
+import { usePageTab } from '@/hooks/usePageTab'
 import { mapAppError } from '@/lib/errors'
 
-export function GamePage() {
+type GameTab = 'hoop' | 'test'
+
+function gameTabsForRole(role: string | undefined): readonly GameTab[] {
+  if (role === 'management') {
+    return GAME_MANAGEMENT_SECTIONS.map((s) => s.id as GameTab)
+  }
+  return GAME_SECTIONS.map((s) => s.id as GameTab)
+}
+
+function HoopGameContent() {
   const { profile } = useAuth()
   const [scores, setScores] = useState<HoopDailyScore[]>([])
   const [loadingScores, setLoadingScores] = useState(true)
@@ -73,7 +87,7 @@ export function GamePage() {
   if (!profile) {
     return (
       <div className="space-y-6 animate-fade-in-up">
-        <PageHeader title="3’lük Atış" subtitle="Oturum gerekli." />
+        <PageHeader title="3’lük Atış" />
       </div>
     )
   }
@@ -81,19 +95,12 @@ export function GamePage() {
   if (!canPlay) {
     return (
       <div className="space-y-6 animate-fade-in-up">
-        <PageHeader
-          title="3’lük Atış"
-          subtitle="Oyun kısa bir test ve güncelleme sürecinde."
-        />
+        <PageHeader title="3’lük Atış" />
         <div className="rounded-[var(--radius-md)] border border-border bg-surface px-4 py-10 shadow-sm sm:px-8">
           <EmptyState
             icon={Construction}
-            title="Oyun güncelleniyor"
-            description={
-              HOOP_PUBLIC_TEST_MODE
-                ? 'Yeni 3’lük oyun test aşamasında. Yakında tüm ekip için açılacak — şimdilik sabırlı ol.'
-                : 'Bu sayfa geçici olarak kapalı. Lütfen daha sonra tekrar dene.'
-            }
+            title="Oynayamıyorsun"
+            description="Bu oyunu oynamak için geçerli bir hesap gerekli."
           />
         </div>
       </div>
@@ -104,7 +111,6 @@ export function GamePage() {
     <div className="space-y-4 animate-fade-in-up sm:space-y-6">
       <PageHeader
         title="3’lük Atış"
-        subtitle="Test · yönetim & koordinatör · limit yok"
       />
 
       <CategoryPanel
@@ -118,7 +124,6 @@ export function GamePage() {
           shotsUsed={shotsUsed}
           makes={makes}
           attempts={myScore?.attempts ?? []}
-          unlimited
           onShotComplete={handleShotComplete}
         />
       </CategoryPanel>
@@ -134,7 +139,6 @@ export function GamePage() {
             scores={scores}
             loading={loadingScores}
             currentUid={profile.uid}
-            unlimited
           />
         </CategoryPanel>
 
@@ -149,4 +153,17 @@ export function GamePage() {
       </div>
     </div>
   )
+}
+
+export function GamePage() {
+  const { profile, claims } = useAuth()
+  const role = profile?.role ?? claims?.role
+  const tabs = useMemo(() => gameTabsForRole(role), [role])
+  const [tab] = usePageTab(tabs, 'hoop')
+
+  if (tab === 'test' && role === 'management') {
+    return <GameTestPanel />
+  }
+
+  return <HoopGameContent />
 }

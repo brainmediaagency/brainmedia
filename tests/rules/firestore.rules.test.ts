@@ -710,7 +710,7 @@ describe('Job update', () => {
     )
   })
 
-  it('20b. media planner can mark own approved job as shot with stats+history', async () => {
+  it('20b. media planner can mark own approved job as shot with history', async () => {
     await testEnv.clearFirestore()
     await seedUser('media1', 'media_planning', {
       shiftDurationMinutes: 360,
@@ -732,26 +732,17 @@ describe('Job update', () => {
     const db = testEnv
       .authenticatedContext('media1', authClaims('media_planning'))
       .firestore()
-    const { runTransaction, collection: col } = await import('firebase/firestore')
+    const { runTransaction, collection: col, increment, updateDoc } = await import(
+      'firebase/firestore'
+    )
     await assertSucceeds(
       runTransaction(db, async (tx) => {
         const jobRef = doc(db, 'jobs', 'job1')
-        const userRef = doc(db, 'users', 'media1')
-        const userSnap = await tx.get(userRef)
         await tx.get(jobRef)
-        const stats = userSnap.data()!.stats as {
-          jobsReceived: number
-          jobsShot: number
-          jobsCancelled: number
-        }
         tx.update(jobRef, {
           status: 'shot',
           statusVersion: 3,
-          reviewedByUid: 'media1',
-          reviewedByNameSnapshot: 'User media1',
-          reviewedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          reviewNote: null,
         })
         tx.set(doc(col(db, 'jobs', 'job1', 'history')), {
           version: 3,
@@ -763,13 +754,12 @@ describe('Job update', () => {
           note: null,
           createdAt: serverTimestamp(),
         })
-        tx.update(userRef, {
-          stats: {
-            ...stats,
-            jobsShot: stats.jobsShot + 1,
-          },
-          updatedAt: serverTimestamp(),
-        })
+      }),
+    )
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', 'media1'), {
+        'stats.jobsShot': increment(1),
+        updatedAt: serverTimestamp(),
       }),
     )
   })
@@ -821,11 +811,7 @@ describe('Job update', () => {
         tx.update(jobRef, {
           status: 'shot',
           statusVersion: 3,
-          reviewedByUid: 'reporter1',
-          reviewedByNameSnapshot: 'User reporter1',
-          reviewedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          reviewNote: null,
         })
         tx.set(doc(col(db, 'jobs', 'job1', 'history')), {
           version: 3,
@@ -848,6 +834,105 @@ describe('Job update', () => {
     )
   })
 
+  it('20d0. reporter cannot overwrite reviewedBy when marking shot', async () => {
+    await testEnv.clearFirestore()
+    await seedUser('media1', 'media_planning', {
+      shiftDurationMinutes: 360,
+      stats: { jobsReceived: 1, jobsShot: 0, jobsCancelled: 0 },
+    })
+    await seedUser('reporter1', 'reporter')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), 'jobs', 'job1'),
+        jobPayload({
+          status: 'approved',
+          statusVersion: 2,
+          reviewedByUid: 'coord1',
+          reviewedByNameSnapshot: 'User coord1',
+          reviewedAt: Timestamp.now(),
+        }),
+      )
+    })
+
+    const db = testEnv
+      .authenticatedContext('reporter1', authClaims('reporter'))
+      .firestore()
+    const { runTransaction } = await import('firebase/firestore')
+    await assertFails(
+      runTransaction(db, async (tx) => {
+        const jobRef = doc(db, 'jobs', 'job1')
+        await tx.get(jobRef)
+        tx.update(jobRef, {
+          status: 'shot',
+          statusVersion: 3,
+          reviewedByUid: 'reporter1',
+          reviewedByNameSnapshot: 'User reporter1',
+          reviewedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          reviewNote: null,
+        })
+      }),
+    )
+  })
+
+  it('20d1. reporter can mark approved job as cancelled via daily report', async () => {
+    await testEnv.clearFirestore()
+    await seedUser('media1', 'media_planning', {
+      shiftDurationMinutes: 360,
+      stats: { jobsReceived: 1, jobsShot: 0, jobsCancelled: 0 },
+    })
+    await seedUser('reporter1', 'reporter')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), 'jobs', 'job-cancel'),
+        jobPayload({
+          status: 'approved',
+          statusVersion: 2,
+          reviewedByUid: 'coord1',
+          reviewedByNameSnapshot: 'User coord1',
+          reviewedAt: Timestamp.now(),
+        }),
+      )
+    })
+
+    const db = testEnv
+      .authenticatedContext('reporter1', authClaims('reporter'))
+      .firestore()
+    const { runTransaction, collection: col, increment, updateDoc } = await import(
+      'firebase/firestore'
+    )
+    await assertSucceeds(
+      runTransaction(db, async (tx) => {
+        const jobRef = doc(db, 'jobs', 'job-cancel')
+        const selfRef = doc(db, 'users', 'reporter1')
+        await tx.get(selfRef)
+        await tx.get(jobRef)
+        tx.update(jobRef, {
+          status: 'cancelled',
+          statusVersion: 3,
+          updatedAt: serverTimestamp(),
+          reviewNote: 'Günlük rapordan iptal',
+        })
+        tx.set(doc(col(db, 'jobs', 'job-cancel', 'history')), {
+          version: 3,
+          fromStatus: 'approved',
+          toStatus: 'cancelled',
+          actorUid: 'reporter1',
+          actorNameSnapshot: 'User reporter1',
+          actorRole: 'reporter',
+          note: 'Günlük rapordan iptal',
+          createdAt: serverTimestamp(),
+        })
+      }),
+    )
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', 'media1'), {
+        'stats.jobsCancelled': increment(1),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
   it('20d2. reporter daily-report create with jobId + chargeMode succeeds', async () => {
     await seedUser('reporter1', 'reporter')
     const reporterDb = testEnv
@@ -857,6 +942,7 @@ describe('Job update', () => {
     const reportBatch = writeBatch(reporterDb)
     reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd-jobid'), {
       reportDate: '2026-07-20',
+      leaveDayCash: false,
       companyCount: 1,
       companies: [
         {
@@ -912,6 +998,104 @@ describe('Job update', () => {
     await assertSucceeds(reportBatch.commit())
   })
 
+  it('reporter can create leave-day cash report with no companies', async () => {
+    await seedUser('reporter1', 'reporter')
+    const reporterDb = testEnv
+      .authenticatedContext('reporter1', authClaims('reporter'))
+      .firestore()
+    const { writeBatch } = await import('firebase/firestore')
+    const reportBatch = writeBatch(reporterDb)
+    reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd-leave'), {
+      reportDate: '2026-08-19',
+      leaveDayCash: true,
+      companyCount: 0,
+      companies: [],
+      note: '',
+      hotelExpenseKurus: 0,
+      stationeryExpenseKurus: 0,
+      fuelExpenseKurus: 0,
+      mealExpenseKurus: 0,
+      extraExpenseKurus: 0,
+      operatingExpenseKurus: 0,
+      employeeExpenseKurus: 0,
+      totalExpenseKurus: 0,
+      earningsKurus: 0,
+      fieldPaidKurus: 150000,
+      totalReporterEarningsKurus: 0,
+      totalCameramanEarningsKurus: 0,
+      totalVatKurus: 0,
+      createdByUid: 'reporter1',
+      createdByNameSnapshot: 'User reporter1',
+      createdByEmailSnapshot: 'reporter1@brain.local',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      editVersion: 0,
+      updatedByUid: 'reporter1',
+      updatedByNameSnapshot: 'User reporter1',
+      deletedAt: null,
+      deletedByUid: null,
+      deletedByNameSnapshot: null,
+    })
+    reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd-leave', 'history', '0'), {
+      action: 'create',
+      version: 0,
+      actorUid: 'reporter1',
+      actorNameSnapshot: 'User reporter1',
+      actorRole: 'reporter',
+      createdAt: serverTimestamp(),
+    })
+    await assertSucceeds(reportBatch.commit())
+  })
+
+  it('reporter cannot create empty-company report without leaveDayCash', async () => {
+    await seedUser('reporter1', 'reporter')
+    const reporterDb = testEnv
+      .authenticatedContext('reporter1', authClaims('reporter'))
+      .firestore()
+    const { writeBatch } = await import('firebase/firestore')
+    const reportBatch = writeBatch(reporterDb)
+    reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd-empty'), {
+      reportDate: '2026-08-19',
+      leaveDayCash: false,
+      companyCount: 0,
+      companies: [],
+      note: '',
+      hotelExpenseKurus: 0,
+      stationeryExpenseKurus: 0,
+      fuelExpenseKurus: 0,
+      mealExpenseKurus: 0,
+      extraExpenseKurus: 0,
+      operatingExpenseKurus: 0,
+      employeeExpenseKurus: 0,
+      totalExpenseKurus: 0,
+      earningsKurus: 0,
+      fieldPaidKurus: 0,
+      totalReporterEarningsKurus: 0,
+      totalCameramanEarningsKurus: 0,
+      totalVatKurus: 0,
+      createdByUid: 'reporter1',
+      createdByNameSnapshot: 'User reporter1',
+      createdByEmailSnapshot: 'reporter1@brain.local',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      editVersion: 0,
+      updatedByUid: 'reporter1',
+      updatedByNameSnapshot: 'User reporter1',
+      deletedAt: null,
+      deletedByUid: null,
+      deletedByNameSnapshot: null,
+    })
+    reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd-empty', 'history', '0'), {
+      action: 'create',
+      version: 0,
+      actorUid: 'reporter1',
+      actorNameSnapshot: 'User reporter1',
+      actorRole: 'reporter',
+      createdAt: serverTimestamp(),
+    })
+    await assertFails(reportBatch.commit())
+  })
+
   it('FUNC-04: reporter daily report with 10 companies succeeds', async () => {
     await seedUser('reporter1', 'reporter')
     const reporterDb = testEnv
@@ -939,6 +1123,7 @@ describe('Job update', () => {
     const reportBatch = writeBatch(reporterDb)
     reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd-ten'), {
       reportDate: '2026-07-20',
+      leaveDayCash: false,
       companyCount: 10,
       companies,
       note: '',
@@ -1263,6 +1448,84 @@ describe('Job update', () => {
     )
   })
 
+  it('20c2. coordinator reject requires reviewNote >= 10 chars', async () => {
+    await testEnv.clearFirestore()
+    await seedUser('media1', 'media_planning', { shiftDurationMinutes: 360 })
+    await seedUser('coord1', 'coordinator')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'jobs', 'job1'), jobPayload())
+    })
+
+    const db = testEnv
+      .authenticatedContext('coord1', authClaims('coordinator'))
+      .firestore()
+    const { runTransaction, collection: col } = await import('firebase/firestore')
+
+    await assertFails(
+      runTransaction(db, async (tx) => {
+        const jobRef = doc(db, 'jobs', 'job1')
+        const userRef = doc(db, 'users', 'media1')
+        await tx.get(jobRef)
+        await tx.get(userRef)
+        tx.update(jobRef, {
+          status: 'rejected',
+          statusVersion: 2,
+          reviewedByUid: 'coord1',
+          reviewedByNameSnapshot: 'User coord1',
+          reviewedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          reviewNote: 'kısa not',
+        })
+        tx.set(doc(col(db, 'jobs', 'job1', 'history')), {
+          version: 2,
+          fromStatus: 'pending',
+          toStatus: 'rejected',
+          actorUid: 'coord1',
+          actorNameSnapshot: 'User coord1',
+          actorRole: 'coordinator',
+          note: 'kısa not',
+          createdAt: serverTimestamp(),
+        })
+      }),
+    )
+
+    await assertSucceeds(
+      runTransaction(db, async (tx) => {
+        const jobRef = doc(db, 'jobs', 'job1')
+        const userRef = doc(db, 'users', 'media1')
+        const userSnap = await tx.get(userRef)
+        const stats = userSnap.data()!.stats as {
+          jobsReceived: number
+          jobsShot: number
+          jobsCancelled: number
+        }
+        tx.update(jobRef, {
+          status: 'rejected',
+          statusVersion: 2,
+          reviewedByUid: 'coord1',
+          reviewedByNameSnapshot: 'User coord1',
+          reviewedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          reviewNote: 'Yeterli uzunlukta red nedeni',
+        })
+        tx.set(doc(col(db, 'jobs', 'job1', 'history')), {
+          version: 2,
+          fromStatus: 'pending',
+          toStatus: 'rejected',
+          actorUid: 'coord1',
+          actorNameSnapshot: 'User coord1',
+          actorRole: 'coordinator',
+          note: 'Yeterli uzunlukta red nedeni',
+          createdAt: serverTimestamp(),
+        })
+        tx.update(userRef, {
+          stats: { ...stats },
+          updatedAt: serverTimestamp(),
+        })
+      }),
+    )
+  })
+
   it('20d. management can cancel approved with stats+history', async () => {
     await testEnv.clearFirestore()
     await seedUser('media1', 'media_planning', {
@@ -1329,7 +1592,7 @@ describe('Job update', () => {
     )
   })
 
-  it('20e. coordinator can cancel pending (48h auto-cancel) with stats+history', async () => {
+  it('20e. coordinator can reject pending (48h auto-reject) with history', async () => {
     await testEnv.clearFirestore()
     await seedUser('media1', 'media_planning', { shiftDurationMinutes: 360 })
     await seedUser('coord1', 'coordinator')
@@ -1345,38 +1608,25 @@ describe('Job update', () => {
     await assertSucceeds(
       runTransaction(db, async (tx) => {
         const jobRef = doc(db, 'jobs', 'job1')
-        const userRef = doc(db, 'users', 'media1')
-        const userSnap = await tx.get(userRef)
-        const stats = userSnap.data()!.stats as {
-          jobsReceived: number
-          jobsShot: number
-          jobsCancelled: number
-        }
+        await tx.get(jobRef)
         tx.update(jobRef, {
-          status: 'cancelled',
+          status: 'rejected',
           statusVersion: 2,
           reviewedByUid: 'coord1',
           reviewedByNameSnapshot: 'User coord1',
           reviewedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          reviewNote: 'Otomatik iptal: 48 saat içinde konfirme edilmedi.',
+          reviewNote: 'Otomatik red: 48 saat içinde konfirme edilmedi.',
         })
         tx.set(doc(col(db, 'jobs', 'job1', 'history')), {
           version: 2,
           fromStatus: 'pending',
-          toStatus: 'cancelled',
+          toStatus: 'rejected',
           actorUid: 'coord1',
           actorNameSnapshot: 'User coord1',
           actorRole: 'coordinator',
-          note: 'Otomatik iptal: 48 saat içinde konfirme edilmedi.',
+          note: 'Otomatik red: 48 saat içinde konfirme edilmedi.',
           createdAt: serverTimestamp(),
-        })
-        tx.update(userRef, {
-          stats: {
-            ...stats,
-            jobsCancelled: stats.jobsCancelled + 1,
-          },
-          updatedAt: serverTimestamp(),
         })
       }),
     )
@@ -1534,6 +1784,39 @@ describe('Job update', () => {
           stats: { jobsReceived: 0, jobsShot: 0, jobsCancelled: 0 },
           updatedAt: serverTimestamp(),
         })
+      }),
+    )
+  })
+
+  it('26b. reviewer can set pending callOutcome; reporter cannot; reached is not manual', async () => {
+    await seedUser('media1', 'media_planning')
+    await seedUser('coord1', 'coordinator')
+    await seedUser('reporter1', 'reporter')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'jobs', 'job1'), jobPayload())
+    })
+    const coordDb = testEnv
+      .authenticatedContext('coord1', authClaims('coordinator'))
+      .firestore()
+    await assertSucceeds(
+      updateDoc(doc(coordDb, 'jobs', 'job1'), {
+        callOutcome: 'busy',
+        updatedAt: serverTimestamp(),
+      }),
+    )
+    await assertFails(
+      updateDoc(doc(coordDb, 'jobs', 'job1'), {
+        callOutcome: 'reached',
+        updatedAt: serverTimestamp(),
+      }),
+    )
+    const reporterDb = testEnv
+      .authenticatedContext('reporter1', authClaims('reporter'))
+      .firestore()
+    await assertFails(
+      updateDoc(doc(reporterDb, 'jobs', 'job1'), {
+        callOutcome: 'unanswered',
+        updatedAt: serverTimestamp(),
       }),
     )
   })
@@ -2282,6 +2565,7 @@ describe('Reporter reports', () => {
     const reportBatch = writeBatch(reporterDb)
     reportBatch.set(doc(reporterDb, 'reporterDailyReports', 'd1'), {
         reportDate: '2026-07-20',
+        leaveDayCash: false,
         companyCount: 1,
         companies: [
           {
@@ -2564,8 +2848,8 @@ describe('Reaction daily winners (legacy read-only)', () => {
   })
 })
 
-describe('Hoop daily scores (test: mgmt/coord only)', () => {
-  it('management can create first shot and append beyond 6', async () => {
+describe('Hoop daily scores (all roles, 6-shot cap)', () => {
+  it('management can create first shot and append within 6', async () => {
     await seedUser('mgmt1', 'management')
     const db = testEnv
       .authenticatedContext('mgmt1', authClaims('management'))
@@ -2591,12 +2875,12 @@ describe('Hoop daily scores (test: mgmt/coord only)', () => {
     )
   })
 
-  it('reporter cannot create hoop scores during test gate', async () => {
+  it('reporter can create hoop scores after public launch', async () => {
     await seedUser('rep1', 'reporter')
     const db = testEnv
       .authenticatedContext('rep1', authClaims('reporter'))
       .firestore()
-    await assertFails(
+    await assertSucceeds(
       setDoc(doc(db, 'hoopDailyScores', '2026-08-07_rep1'), {
         date: '2026-08-07',
         uid: 'rep1',
@@ -2609,7 +2893,40 @@ describe('Hoop daily scores (test: mgmt/coord only)', () => {
     )
   })
 
-  it('management can exceed former 6-shot list cap', async () => {
+  it('kameraman and media planning can create hoop scores', async () => {
+    await seedUser('cam1', 'kameraman')
+    await seedUser('mpu1', 'media_planning')
+    const camDb = testEnv
+      .authenticatedContext('cam1', authClaims('kameraman'))
+      .firestore()
+    const mpuDb = testEnv
+      .authenticatedContext('mpu1', authClaims('media_planning'))
+      .firestore()
+    await assertSucceeds(
+      setDoc(doc(camDb, 'hoopDailyScores', '2026-08-07_cam1'), {
+        date: '2026-08-07',
+        uid: 'cam1',
+        fullName: 'User cam1',
+        attempts: [0],
+        makes: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+    await assertSucceeds(
+      setDoc(doc(mpuDb, 'hoopDailyScores', '2026-08-07_mpu1'), {
+        date: '2026-08-07',
+        uid: 'mpu1',
+        fullName: 'User mpu1',
+        attempts: [1],
+        makes: 1,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    )
+  })
+
+  it('nobody can append a 7th shot', async () => {
     await seedUser('mgmt2', 'management')
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), 'hoopDailyScores', '2026-08-07_mgmt2'), {
@@ -2625,13 +2942,164 @@ describe('Hoop daily scores (test: mgmt/coord only)', () => {
     const db = testEnv
       .authenticatedContext('mgmt2', authClaims('management'))
       .firestore()
-    await assertSucceeds(
+    await assertFails(
       updateDoc(doc(db, 'hoopDailyScores', '2026-08-07_mgmt2'), {
         attempts: [1, 1, 1, 1, 1, 1, 0],
         makes: 6,
         updatedAt: serverTimestamp(),
       }),
     )
+  })
+})
+
+describe('activityLogs', () => {
+  function activityLogPayload(
+    uid: string,
+    role: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      actorUid: uid,
+      actorNameSnapshot: `User ${uid}`,
+      actorRole: role,
+      category: 'job',
+      action: 'job.created',
+      title: 'İş oluşturuldu',
+      summary: 'Test Firma',
+      jobId: 'job1',
+      jobCompanyName: 'Test Firma',
+      entityType: 'job',
+      entityId: 'job1',
+      createdAt: serverTimestamp(),
+      ...overrides,
+    }
+  }
+
+  it('authenticated actor can create a log in their own name', async () => {
+    await seedUser('media1', 'media_planning')
+    const db = testEnv
+      .authenticatedContext('media1', authClaims('media_planning'))
+      .firestore()
+    await assertSucceeds(
+      setDoc(doc(db, 'activityLogs', 'log1'), activityLogPayload('media1', 'media_planning')),
+    )
+  })
+
+  it('cannot create a log for another uid or spoofed role', async () => {
+    await seedUser('media1', 'media_planning')
+    await seedUser('media2', 'media_planning')
+    const db = testEnv
+      .authenticatedContext('media1', authClaims('media_planning'))
+      .firestore()
+    await assertFails(
+      setDoc(
+        doc(db, 'activityLogs', 'log-other'),
+        activityLogPayload('media2', 'media_planning'),
+      ),
+    )
+    await assertFails(
+      setDoc(
+        doc(db, 'activityLogs', 'log-role'),
+        activityLogPayload('media1', 'management'),
+      ),
+    )
+  })
+
+  it('rejects unknown action and update/delete', async () => {
+    await seedUser('media1', 'media_planning')
+    const db = testEnv
+      .authenticatedContext('media1', authClaims('media_planning'))
+      .firestore()
+    await assertFails(
+      setDoc(
+        doc(db, 'activityLogs', 'log-bad'),
+        activityLogPayload('media1', 'media_planning', {
+          action: 'job.secret',
+        }),
+      ),
+    )
+    await assertSucceeds(
+      setDoc(
+        doc(db, 'activityLogs', 'log-ok'),
+        activityLogPayload('media1', 'media_planning'),
+      ),
+    )
+    await assertFails(
+      updateDoc(doc(db, 'activityLogs', 'log-ok'), { title: 'changed' }),
+    )
+    await assertFails(deleteDoc(doc(db, 'activityLogs', 'log-ok')))
+  })
+
+  it('management can read; coordinator, sef, and reporter cannot', async () => {
+    await seedUser('mgmt1', 'management')
+    await seedUser('coord1', 'coordinator')
+    await seedUser('sef1', 'sef')
+    await seedUser('reporter1', 'reporter')
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'activityLogs', 'seed'), {
+        ...activityLogPayload('mgmt1', 'management'),
+        createdAt: Timestamp.now(),
+      })
+    })
+
+    await assertSucceeds(
+      getDoc(
+        doc(
+          testEnv
+            .authenticatedContext('mgmt1', authClaims('management'))
+            .firestore(),
+          'activityLogs',
+          'seed',
+        ),
+      ),
+    )
+    await assertFails(
+      getDoc(
+        doc(
+          testEnv
+            .authenticatedContext('coord1', authClaims('coordinator'))
+            .firestore(),
+          'activityLogs',
+          'seed',
+        ),
+      ),
+    )
+    await assertFails(
+      getDoc(
+        doc(
+          testEnv
+            .authenticatedContext('sef1', authClaims('sef'))
+            .firestore(),
+          'activityLogs',
+          'seed',
+        ),
+      ),
+    )
+    await assertFails(
+      getDoc(
+        doc(
+          testEnv
+            .authenticatedContext('reporter1', authClaims('reporter'))
+            .firestore(),
+          'activityLogs',
+          'seed',
+        ),
+      ),
+    )
+  })
+
+  it('management cannot update or delete even their own log', async () => {
+    await seedUser('mgmt1', 'management')
+    const db = testEnv
+      .authenticatedContext('mgmt1', authClaims('management'))
+      .firestore()
+    await assertSucceeds(
+      setDoc(doc(db, 'activityLogs', 'mgmt-log'), activityLogPayload('mgmt1', 'management')),
+    )
+    await assertFails(
+      updateDoc(doc(db, 'activityLogs', 'mgmt-log'), { summary: 'x' }),
+    )
+    await assertFails(deleteDoc(doc(db, 'activityLogs', 'mgmt-log')))
   })
 })
 

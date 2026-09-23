@@ -4,8 +4,10 @@ import {
   DRIVE_HARD_MAX_BYTES,
   DRIVE_SINGLE_SHOT_MAX_BYTES,
   directPutTimeoutMs,
+  formatDriveWebhookError,
   parseResumableRangeEnd,
   uint8ToBase64,
+  base64ToUint8Array,
 } from '@/lib/driveUpload'
 
 describe('driveUpload chunk helpers', () => {
@@ -16,6 +18,7 @@ describe('driveUpload chunk helpers', () => {
     const out = new Uint8Array(bin.length)
     for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i)
     expect([...out]).toEqual([...bytes])
+    expect([...base64ToUint8Array(b64)]).toEqual([...bytes])
   })
 
   it('keeps single-shot modest and hard max above long voice files', () => {
@@ -43,9 +46,41 @@ describe('direct Drive upload helpers (v28)', () => {
 
   it('scales the PUT stall guard with size, never below 45s, caps slice at 3m', () => {
     expect(directPutTimeoutMs(1)).toBe(45_000)
-    // One 512 KB direct slice at ~16 KB/s floor → 45s floor still applies
-    expect(directPutTimeoutMs(512 * 1024)).toBe(45_000)
+    // One 2 MB direct slice at ~16 KB/s floor → ~128s
+    expect(directPutTimeoutMs(2 * 1024 * 1024)).toBe(128_000)
     // Unusually large single payload still hard-capped
     expect(directPutTimeoutMs(80 * 1024 * 1024)).toBe(180_000)
+  })
+})
+
+describe('formatDriveWebhookError (kameraman v28 false-positive)', () => {
+  const v28 = {
+    service: 'brain-sheets-drive-webhook-v28',
+    version: 'v28',
+  }
+
+  it('does not ask to update Code.gs when Drive resumable fails on v28', () => {
+    const message = formatDriveWebhookError(
+      { ...v28, ok: false, error: 'Drive resumable session failed' },
+      'fallback',
+    )
+    expect(message).not.toMatch(/Code\.gs|script güncelle|v24\+|v27\+|New version/i)
+    expect(message).toMatch(/Drive/)
+  })
+
+  it('does not treat invalid islem as stale when version is v28', () => {
+    const message = formatDriveWebhookError(
+      { ...v28, ok: false, error: 'Invalid islem' },
+      'fallback',
+    )
+    expect(message).not.toMatch(/Code\.gs|New version/i)
+  })
+
+  it('still asks to update Code.gs for invalid islem without a current version', () => {
+    const message = formatDriveWebhookError(
+      { ok: false, error: 'Invalid islem' },
+      'fallback',
+    )
+    expect(message).toMatch(/Code\.gs/)
   })
 })

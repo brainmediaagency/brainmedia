@@ -1,5 +1,9 @@
 export type OdometerSlot = 'morning' | 'evening'
 
+/** Kameraman kadran fotoğrafı üst sınırı (Drive hard max ile uyumlu). */
+export const ODOMETER_PHOTO_MAX_BYTES = 100 * 1024 * 1024
+export const ODOMETER_PHOTO_MAX_MB = 100
+
 export type KameramanOdometerReading = {
   id: string
   reportDate: string

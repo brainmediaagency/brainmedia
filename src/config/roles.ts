@@ -22,7 +22,7 @@ export const ROLE_DISPLAY_NAMES: Record<UserRole, string> = {
 
 /**
  * Roles that review jobs (approve with time / reject / schedule edits).
- * Not full coordinator/management ops (kasa, Excel, hesaplar…).
+ * Not full coordinator/management ops (kasa, operasyon defteri, hesaplar…).
  */
 export const JOB_REVIEWER_ROLES = [
   'coordinator',
@@ -38,6 +38,30 @@ export function isJobReviewerRole(
   return (
     typeof value === 'string'
     && (JOB_REVIEWER_ROLES as readonly string[]).includes(value)
+  )
+}
+
+/**
+ * Who may list/play voice recordings (çekim takvimi + ses sekmesi).
+ * Kameraman is intentionally excluded.
+ */
+export const VOICE_RECORDING_VIEW_ROLES = [
+  'coordinator',
+  'management',
+  'sef',
+  'reporter',
+  'human_resources',
+] as const satisfies readonly UserRole[]
+
+export type VoiceRecordingViewerRole =
+  (typeof VOICE_RECORDING_VIEW_ROLES)[number]
+
+export function isVoiceRecordingViewerRole(
+  value: unknown,
+): value is VoiceRecordingViewerRole {
+  return (
+    typeof value === 'string'
+    && (VOICE_RECORDING_VIEW_ROLES as readonly string[]).includes(value)
   )
 }
 

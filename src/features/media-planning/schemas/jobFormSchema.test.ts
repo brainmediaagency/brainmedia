@@ -143,9 +143,10 @@ describe('job transitions', () => {
     expect(getStatsDelta('pending', 'cancelled')).toEqual({
       jobsReceived: 0,
       jobsShot: 0,
-      jobsCancelled: 1,
+      jobsCancelled: 0,
     })
-    expect(isAllowedTransition('pending', 'cancelled')).toBe(true)
+    expect(isAllowedTransition('pending', 'cancelled')).toBe(false)
+    expect(isAllowedTransition('pending', 'rejected')).toBe(true)
     expect(isAllowedTransition('pending', 'shot')).toBe(false)
     expect(isAllowedTransition('approved', 'rejected')).toBe(false)
     expect(isAllowedTransition('approved', 'pending')).toBe(true)
